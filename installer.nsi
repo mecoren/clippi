@@ -8,6 +8,8 @@ ManifestDPIAware true
 !define APP_NAME "Clippi"
 !define APP_PUBLISHER "Rains"
 !define APP_EXE "clippi.exe"
+; Frozen: this exact name is registered/deleted by already-installed copies,
+; so renaming it would leave orphaned logon tasks behind on upgrade.
 !define AUTOSTART_TASK_NAME "Clippi AutoStart (Ruszero01)"
 !define REG_UNINST "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}"
 
@@ -165,7 +167,7 @@ Section "!Clippi" SectionCore
   WriteRegStr HKLM "${REG_UNINST}" "DisplayIcon" "$INSTDIR\${APP_EXE}"
   WriteRegStr HKLM "${REG_UNINST}" "Publisher" "${APP_PUBLISHER}"
   WriteRegStr HKLM "${REG_UNINST}" "DisplayVersion" "${VERSION}"
-  WriteRegStr HKLM "${REG_UNINST}" "URLInfoAbout" "https://github.com/Ruszero01/clippi"
+  WriteRegStr HKLM "${REG_UNINST}" "URLInfoAbout" "https://github.com/mecoren/clippi"
   WriteRegDWORD HKLM "${REG_UNINST}" "NoModify" 1
   WriteRegDWORD HKLM "${REG_UNINST}" "NoRepair" 1
 

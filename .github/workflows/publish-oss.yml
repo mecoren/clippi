@@ -1,8 +1,10 @@
 name: Publish website installers
 
 on:
-  release:
-    types: [released]
+  # Manual only. The OSS bucket (rains-ailurus-cn) and its credentials belong to
+  # the upstream project, so this fork does not publish automatically: it would
+  # fail without those secrets, and publishing a fork build to that CDN is not
+  # something a release should trigger on its own.
   workflow_dispatch:
     inputs:
       tag:
@@ -14,7 +16,6 @@ permissions:
 
 jobs:
   publish:
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.release.prerelease == false && github.event.release.draft == false) }}
     runs-on: ubuntu-22.04
     # Serialize automatic publications and manual backfills.
     # `queue: max` keeps every publication queued instead of letting a
@@ -24,7 +25,7 @@ jobs:
       cancel-in-progress: false
       queue: max
     env:
-      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      TAG: ${{ inputs.tag }}
       GH_TOKEN: ${{ github.token }}
       OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
       OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}

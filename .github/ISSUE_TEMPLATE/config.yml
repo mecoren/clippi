@@ -1,8 +1,9 @@
 blank_issues_enabled: true
 contact_links:
   - name: "💬 讨论 / 提问"
+    # Discussions 只有上游开着；本项目没有自己的讨论区。
     url: https://github.com/Ruszero01/clippi/discussions
     about: "使用问题、功能想法讨论请发布到 Discussions 区。"
   - name: "📖 使用文档"
-    url: https://github.com/Ruszero01/clippi/blob/main/README.md
+    url: https://github.com/mecoren/clippi/blob/wait/README.md
     about: "请先查阅 README 中的使用说明。"

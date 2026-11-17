@@ -4,7 +4,8 @@ on:
   pull_request_target:
     types: [closed]
   push:
-    branches: [main]
+    # `wait` is this fork's default branch.
+    branches: [wait]
     paths:
       - .github/contributors.json
       - .github/contributors-font.json
