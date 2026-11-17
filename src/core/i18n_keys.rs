@@ -309,6 +309,9 @@ define_i18n! {
     BtnRestartNow:      ("立即重启", "Restart now"),
     BtnResetDataDir:    ("重置数据目录", "Reset Data Dir"),
     SettingMaxItems:    ("保留条目数", "Max items"),
+    // ─── Control states (ui/widgets.rs) ───
+    ToggleOn:           ("开", "On"),
+    ToggleOff:          ("关", "Off"),
     DescMaxItems:         ("设为 0 不限制", "Set to 0 for unlimited"),
     SettingRetentionDays: ("保留时限", "Retention days"),
     DescRetentionDays:    ("设为 0 永久保留", "Set to 0 to keep forever"),

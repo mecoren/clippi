@@ -29,4 +29,7 @@ pub mod theme;
 pub mod titlebar;
 pub mod transition;
 pub mod type_filter_config;
+// M2 控件工厂：逐屏替换（M3+）前尚无调用方，过渡期允许未引用。
+#[allow(dead_code)]
+pub mod widgets;
 pub mod window_manager;
