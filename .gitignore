@@ -19,10 +19,9 @@ clippi.toml
 __pycache__/
 *.pyc
 
-# Claude Code
+# Local AI agent config (AGENTS.md is project rules and is tracked on purpose)
 .claude/
 CLAUDE.md
-AGENTS.md
 .superpowers/
 .tang/
 
