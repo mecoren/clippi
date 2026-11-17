@@ -260,9 +260,9 @@ impl Render for SearchBox {
                             .items_center()
                             .flex_1()
                             .min_w(px(0.))
-                            .h(Ctrl::Input.px())
+                            .h(Ctrl::Input.scaled())
                             .bg(surface)
-                            .rounded(Radius::Card.px())
+                            .rounded(Radius::Card.scaled())
                             .border(px(1.))
                             .border_color(divider)
                             .overflow_hidden()
@@ -397,9 +397,15 @@ impl Render for SearchBox {
                                     .h_full()
                                     .px(px(0.))
                                     .text_size(typography::font(type_role::BODY))
-                                    .prefix(div().pl(Space::Md.px()).pr(Space::Xxs.px()).child(
-                                        widgets::icon("\u{e688}", IconSize::Md.px(), text_3.into()),
-                                    )),
+                                    .prefix(
+                                        div().pl(Space::Md.scaled()).pr(Space::Xxs.scaled()).child(
+                                            widgets::icon(
+                                                "\u{e688}",
+                                                IconSize::Md.scaled(),
+                                                text_3.into(),
+                                            ),
+                                        ),
+                                    ),
                             ),
                     )
                     .child({
@@ -415,9 +421,9 @@ impl Render for SearchBox {
                             .items_center()
                             .flex_shrink_0()
                             .w(px(new_item_w))
-                            .h(Ctrl::Input.px())
+                            .h(Ctrl::Input.scaled())
                             .bg(new_item_bg)
-                            .rounded(Radius::Card.px())
+                            .rounded(Radius::Card.scaled())
                             .border(px(1.))
                             .border_color(new_item_border)
                             .overflow_hidden()
@@ -450,10 +456,10 @@ impl Render for SearchBox {
                                     // compress instead of wiping into view.
                                     .flex_shrink_0()
                                     // Centers the glyph inside the collapsed 28px pill.
-                                    .pl(Space::Sm.px())
+                                    .pl(Space::Sm.scaled())
                                     .child(
                                         div()
-                                            .w(IconSize::Md.px())
+                                            .w(IconSize::Md.scaled())
                                             .flex()
                                             .items_center()
                                             .justify_center()
@@ -461,7 +467,7 @@ impl Render for SearchBox {
                                             .text_color(new_item_fg)
                                             .child("+"),
                                     )
-                                    .child(div().w(Space::Xs.px()))
+                                    .child(div().w(Space::Xs.scaled()))
                                     .child(
                                         div()
                                             .w(px(NEW_ITEM_LABEL_WIDTH))

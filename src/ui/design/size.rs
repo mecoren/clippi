@@ -30,6 +30,12 @@ impl Radius {
             Radius::Pill => px(999.),
         }
     }
+
+    /// 跟随用户字号设置的像素值。页面与卡片用它，与既有的 `sc()` 一致；
+    /// 只有托盘、菜单这类不参与缩放的固定尺寸才用 [`Self::px`]。
+    pub fn scaled(self) -> Pixels {
+        super::super::font::sc(f32::from(self.px()))
+    }
 }
 
 /// 间距档位（4pt 网格）。
@@ -63,6 +69,11 @@ impl Space {
             Space::Xxl => px(24.),
         }
     }
+
+    /// 跟随用户字号设置的像素值。
+    pub fn scaled(self) -> Pixels {
+        super::super::font::sc(f32::from(self.px()))
+    }
 }
 
 /// 控件高度档位。
@@ -87,6 +98,11 @@ impl Ctrl {
             Ctrl::Btn => px(32.),
         }
     }
+
+    /// 跟随用户字号设置的像素值。
+    pub fn scaled(self) -> Pixels {
+        super::super::font::sc(f32::from(self.px()))
+    }
 }
 
 /// 图标尺寸档位（`layout.iconSm/Md/Lg`）。
@@ -104,5 +120,10 @@ impl IconSize {
             IconSize::Md => super::tokens::dimension("iconMd"),
             IconSize::Lg => super::tokens::dimension("iconLg"),
         }
+    }
+
+    /// 跟随用户字号设置的像素值。
+    pub fn scaled(self) -> Pixels {
+        super::super::font::sc(f32::from(self.px()))
     }
 }

@@ -20,8 +20,8 @@ fn titlebar_button(id: &'static str, p: &Palette) -> Stateful<Div> {
     let p = *p;
     div()
         .id(id)
-        .size(Ctrl::Input.px())
-        .rounded(Radius::Md.px())
+        .size(Ctrl::Input.scaled())
+        .rounded(Radius::Md.scaled())
         .flex()
         .items_center()
         .justify_center()
@@ -228,9 +228,9 @@ impl Render for Titlebar {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .pl(Space::Lg.px())
-                    .pr(Space::Xs.px())
-                    .gap(Space::Md.px())
+                    .pl(Space::Lg.scaled())
+                    .pr(Space::Xs.scaled())
+                    .gap(Space::Md.scaled())
                     .window_control_area(WindowControlArea::Drag)
                     // --- Logo (20x20, loaded from assets) ---
                     .child(gpui::img(logo).w(px(20.)).h(px(20.)))
@@ -256,8 +256,8 @@ impl Render for Titlebar {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap(Space::Xxs.px())
-                    .pr(Space::Xs.px())
+                    .gap(Space::Xxs.scaled())
+                    .pr(Space::Xs.scaled())
                     .when(emoji_enabled, |bar| {
                         bar.child(
                             div()
@@ -276,7 +276,7 @@ impl Render for Titlebar {
                                         .child(
                                             svg()
                                                 .path("picker-icons/smile.svg")
-                                                .size(IconSize::Md.px())
+                                                .size(IconSize::Md.scaled())
                                                 .text_color(if emoji_active {
                                                     accent
                                                 } else {
@@ -327,7 +327,7 @@ impl Render for Titlebar {
                                         )
                                         .child(widgets::icon(
                                             "\u{e66b}",
-                                            IconSize::Md.px(),
+                                            IconSize::Md.scaled(),
                                             if hotkeys_active { accent } else { text_2 },
                                         )),
                                 )
@@ -368,7 +368,7 @@ impl Render for Titlebar {
                                         )
                                         .child(widgets::icon(
                                             "\u{e794}",
-                                            IconSize::Md.px(),
+                                            IconSize::Md.scaled(),
                                             if transfer_active { accent } else { text_2 },
                                         )),
                                 )
@@ -415,7 +415,7 @@ impl Render for Titlebar {
                                         )
                                         .child(widgets::icon(
                                             "\u{e630}",
-                                            IconSize::Md.px(),
+                                            IconSize::Md.scaled(),
                                             if fav_active { fav_color } else { text_2 },
                                         )),
                                 )
@@ -449,7 +449,7 @@ impl Render for Titlebar {
                             })
                             .child(widgets::icon(
                                 "\u{e633}",
-                                IconSize::Md.px(),
+                                IconSize::Md.scaled(),
                                 if pinned { accent } else { text_2 },
                             )),
                     )
@@ -464,7 +464,7 @@ impl Render for Titlebar {
                                     cx.emit(TitlebarEvent::OpenSettings);
                                 });
                             })
-                            .child(widgets::icon("\u{e6b6}", IconSize::Md.px(), text_2)),
+                            .child(widgets::icon("\u{e6b6}", IconSize::Md.scaled(), text_2)),
                     ),
             )
     }

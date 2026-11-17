@@ -217,14 +217,14 @@ fn button_face(
     let p = *p;
     let (bg, fg, border) = tone.face(&p);
     let height = if small {
-        Ctrl::Small.px()
+        Ctrl::Small.scaled()
     } else {
-        Ctrl::Btn.px()
+        Ctrl::Btn.scaled()
     };
     let pad = if small {
-        Space::Md.px()
+        Space::Md.scaled()
     } else {
-        Space::Lg.px()
+        Space::Lg.scaled()
     };
     let icon_only = text.is_empty() && glyph.is_some();
 
@@ -232,8 +232,8 @@ fn button_face(
         .relative()
         .h(height)
         .flex_shrink_0()
-        .gap(Space::Sm.px())
-        .rounded(Radius::Md.px())
+        .gap(Space::Sm.scaled())
+        .rounded(Radius::Md.scaled())
         .border_1()
         .border_color(border)
         .bg(bg)
@@ -258,7 +258,7 @@ fn button_face(
         button = button.child(control_edge(&p));
     }
     if let Some(glyph) = glyph {
-        button = button.child(icon(glyph, IconSize::Sm.px(), fg));
+        button = button.child(icon(glyph, IconSize::Sm.scaled(), fg));
     }
     if !text.is_empty() {
         button = button.child(text);
@@ -275,11 +275,11 @@ pub fn chip(p: &Palette, id: impl Into<ElementId>, active: bool) -> Stateful<Div
     let p = *p;
     div()
         .id(id)
-        .h(Ctrl::Chip.px())
+        .h(Ctrl::Chip.scaled())
         .flex_1()
         .min_w(px(0.))
         .flex_shrink_0()
-        .rounded(Radius::Md.px())
+        .rounded(Radius::Md.scaled())
         .bg(if active { p.accent_soft() } else { p.hover })
         .text_color(if active { p.ink } else { p.ink_2 })
         .flex()
@@ -334,7 +334,7 @@ pub fn segments(
                 .bottom_0()
                 .left(relative(left))
                 .w(relative(width))
-                .rounded(Radius::Sm.px())
+                .rounded(Radius::Sm.scaled())
                 .border_1()
                 .border_color(p.stroke)
                 .bg(p.control_checked),
@@ -342,8 +342,8 @@ pub fn segments(
 
     let mut track = div()
         .relative()
-        .h(Ctrl::Chip.px())
-        .rounded(Radius::Md.px())
+        .h(Ctrl::Chip.scaled())
+        .rounded(Radius::Md.scaled())
         .border_1()
         .border_color(p.stroke)
         .bg(p.control_face)
@@ -425,7 +425,7 @@ pub fn toggle(
     div()
         .flex()
         .items_center()
-        .gap(Space::Md.px())
+        .gap(Space::Md.scaled())
         .flex_shrink_0()
         .child(
             div()
@@ -489,7 +489,7 @@ pub fn text_field(
     cx: &App,
 ) -> Div {
     let p = *p;
-    let pad = Space::Md.px();
+    let pad = Space::Md.scaled();
     let input_state = state.read(cx);
     let focused = enabled && input_state.focus_handle(cx).is_focused(window);
     let empty = input_state.value().is_empty();
@@ -503,7 +503,7 @@ pub fn text_field(
         .items_center()
         .border_1()
         .border_color(p.stroke)
-        .rounded(Radius::Md.px())
+        .rounded(Radius::Md.scaled())
         .bg(p.control_face)
         .when(!focused, |el| el.child(control_edge(&p)))
         .when(empty, |el| {
@@ -523,7 +523,7 @@ pub fn text_field(
 
     div()
         .relative()
-        .h(Ctrl::Btn.px())
+        .h(Ctrl::Btn.scaled())
         .child(face)
         .when(focused, |el| el.child(accent_edge(p.accent, px(2.))))
 }
@@ -538,16 +538,16 @@ pub fn keycaps(p: &Palette, keys: &[String], off: bool) -> Div {
     div()
         .flex()
         .items_center()
-        .gap(Space::Xs.px())
+        .gap(Space::Xs.scaled())
         .children(keys.iter().map(move |key| {
             div()
-                .px(Space::Md.px())
+                .px(Space::Md.scaled())
                 .py(px(2.))
                 .border_1()
                 .border_b(px(2.))
                 .when(off, |el| el.border_dashed())
                 .border_color(if off { p.stroke } else { p.stroke_strong })
-                .rounded(Radius::Sm.px())
+                .rounded(Radius::Sm.scaled())
                 .bg(p.control_face)
                 .text_size(typography::font(type_role::BODY))
                 .text_color(if off { p.ink_3 } else { p.ink })
@@ -613,7 +613,7 @@ pub fn spinner(id: impl Into<ElementId>, size: f32, color: Hsla) -> AnyElement {
 /// 通用卡片：`layer` 面 + 1 px 描边，无阴影。
 pub fn card(p: &Palette) -> Div {
     div()
-        .rounded(Radius::Card.px())
+        .rounded(Radius::Card.scaled())
         .bg(p.layer)
         .border_1()
         .border_color(p.stroke)
@@ -629,7 +629,7 @@ pub fn settings_group(p: &Palette, title: &str, rows: Vec<AnyElement>) -> Div {
     let show_title = rows.len() > 1;
 
     let mut card = div()
-        .rounded(Radius::Lg.px())
+        .rounded(Radius::Lg.scaled())
         .bg(p.layer)
         .border_1()
         .border_color(p.stroke)
@@ -638,7 +638,7 @@ pub fn settings_group(p: &Palette, title: &str, rows: Vec<AnyElement>) -> Div {
         .overflow_hidden();
     for (index, row) in rows.into_iter().enumerate() {
         if index > 0 {
-            card = card.child(div().h(px(1.)).mx(Space::Lg.px()).bg(p.stroke));
+            card = card.child(div().h(px(1.)).mx(Space::Lg.scaled()).bg(p.stroke));
         }
         card = card.child(row);
     }
@@ -646,11 +646,11 @@ pub fn settings_group(p: &Palette, title: &str, rows: Vec<AnyElement>) -> Div {
     div()
         .flex()
         .flex_col()
-        .gap(Space::Sm.px())
+        .gap(Space::Sm.scaled())
         .when(show_title, |group| {
             group.child(
                 div()
-                    .px(Space::Xs.px())
+                    .px(Space::Xs.scaled())
                     .text_size(typography::font(type_role::CAPTION))
                     .font_weight(typography::LABEL_WEIGHT)
                     .text_color(p.ink_3)
@@ -665,13 +665,13 @@ pub fn settings_group(p: &Palette, title: &str, rows: Vec<AnyElement>) -> Div {
 pub fn row_shell() -> Div {
     div()
         .min_h(super::design::tokens::dimension("settingsRowHeight"))
-        .px(Space::Lg.px())
-        .py(Space::Lg.px())
+        .px(Space::Lg.scaled())
+        .py(Space::Lg.scaled())
         .flex()
         .flex_row()
         .items_center()
         .justify_between()
-        .gap(Space::Md.px())
+        .gap(Space::Md.scaled())
 }
 
 /// 设置行的左列：标题单行省略，描述可换行并把行撑高。
@@ -716,10 +716,10 @@ pub fn toolbar() -> Div {
         .flex()
         .flex_row()
         .items_center()
-        .gap(Space::Sm.px())
-        .h(Ctrl::Chip.px())
+        .gap(Space::Sm.scaled())
+        .h(Ctrl::Chip.scaled())
         .w_full()
-        .px(Space::Md.px())
+        .px(Space::Md.scaled())
         .flex_shrink_0()
 }
 
@@ -731,9 +731,9 @@ pub fn empty_state(p: &Palette, glyph: &str, title: &str, detail: &str) -> Div {
         .flex_col()
         .items_center()
         .justify_center()
-        .gap(Space::Sm.px())
-        .py(Space::Xxl.px())
-        .child(icon(glyph, IconSize::Lg.px() * 1.8, p.ink_3))
+        .gap(Space::Sm.scaled())
+        .py(Space::Xxl.scaled())
+        .child(icon(glyph, IconSize::Lg.scaled() * 1.8, p.ink_3))
         .child(
             div()
                 .text_size(typography::font(type_role::TITLE))
@@ -760,12 +760,12 @@ pub fn empty_state(p: &Palette, glyph: &str, title: &str, detail: &str) -> Div {
 /// 菜单/下拉面板：`flyout` 不透明面 + 1 px 描边 + 8 px 圆角 + 一层投影。
 pub fn menu_panel(p: &Palette) -> Div {
     div()
-        .rounded(Radius::Lg.px())
+        .rounded(Radius::Lg.scaled())
         .border_1()
         .border_color(p.stroke)
         .bg(solid(p.flyout))
         .shadow_lg()
-        .p(Space::Xs.px())
+        .p(Space::Xs.scaled())
         .flex()
         .flex_col()
 }
@@ -782,19 +782,19 @@ pub fn menu_item(
     let ink = if danger { p.danger } else { p.ink };
     let mut item = div()
         .id(id)
-        .h(Ctrl::Small.px())
-        .px(Space::Md.px())
+        .h(Ctrl::Small.scaled())
+        .px(Space::Md.scaled())
         .flex()
         .items_center()
-        .gap(Space::Md.px())
-        .rounded(Radius::Sm.px())
+        .gap(Space::Md.scaled())
+        .rounded(Radius::Sm.scaled())
         .text_size(typography::font(type_role::BODY))
         .text_color(ink)
         .whitespace_nowrap()
         .cursor_pointer()
         .hover(move |style| style.bg(p.hover));
     if let Some(glyph) = glyph {
-        item = item.child(icon(glyph, IconSize::Sm.px(), ink));
+        item = item.child(icon(glyph, IconSize::Sm.scaled(), ink));
     }
     item.child(label.into())
 }
@@ -802,7 +802,7 @@ pub fn menu_item(
 /// 对话框面板：`flyout` 不透明面、1 px 描边、8 px 圆角、一层浮起投影。
 pub fn dialog_panel(p: &Palette) -> Div {
     div()
-        .rounded(Radius::Lg.px())
+        .rounded(Radius::Lg.scaled())
         .border_1()
         .border_color(p.stroke)
         .bg(solid(p.flyout))
@@ -815,9 +815,9 @@ pub fn dialog_panel(p: &Palette) -> Div {
 /// 对话框标题行。
 pub fn dialog_title(p: &Palette, text: &str) -> Div {
     div()
-        .px(Space::Xl.px())
-        .pt(Space::Xl.px())
-        .pb(Space::Sm.px())
+        .px(Space::Xl.scaled())
+        .pt(Space::Xl.scaled())
+        .pb(Space::Sm.scaled())
         .text_size(typography::font(type_role::TITLE))
         .font_weight(typography::LABEL_WEIGHT)
         .text_color(p.ink)

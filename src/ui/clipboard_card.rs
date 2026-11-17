@@ -36,6 +36,8 @@ use crate::core::types::{
 
 use super::components::sensitive_text::SensitiveText;
 use super::components::spinner::activity_spinner;
+use super::design::palette::Palette;
+use super::design::size::Radius;
 use super::font::{sc, scale};
 use super::hover_toolbar::{HoverToolbar, HoverToolbarProps, ToolbarBounds};
 use super::rich_preview::{self, StyledHtmlSpan};
@@ -1495,43 +1497,31 @@ impl RenderOnce for ClipboardCard {
             on_hotkey_format_change,
         } = self;
 
-        let surface = theme.surface;
-        let divider = theme.divider;
-        let accent = theme.accent;
-        let fav_color = theme.fav_color;
-        let tag_bg = theme.tag_bg;
-        let tag_text = theme.tag_text;
-        let text_1 = theme.text_1;
-        let text_2 = theme.text_2;
-        let text_3 = theme.text_3;
-        let danger = theme.danger;
-        let path_warn = rgb(0xeab308);
-        let is_dark = theme.dark;
-        let pill_bg = if is_dark {
-            rgba(0x232425e8)
-        } else {
-            rgba(0xffffffe8)
-        };
-        let pill_border = if is_dark {
-            rgba(0xffffff20)
-        } else {
-            rgba(0x00000014)
-        };
-        let color_border = if is_dark {
-            rgba(0xffffff20)
-        } else {
-            rgba(0x00000018)
-        };
-        let subtle_row_bg = if is_dark {
-            rgb(0x2b2c2d)
-        } else {
-            rgb(0xf4f5fb)
-        };
-        let hover_bg = if is_dark {
-            rgba(0xffffff10)
-        } else {
-            rgba(0x0000000a)
-        };
+        // 取色统一走 `Palette`；卡片内部大量辅助函数与 `TextView` 样式仍以
+        // `Rgba` 为接口，这里转一次，下游保持原样。
+        let p = Palette::current(cx);
+        let surface: Rgba = p.layer.into();
+        let divider: Rgba = p.stroke.into();
+        let accent: Rgba = p.accent.into();
+        let on_accent: Rgba = p.on_accent.into();
+        let ok: Rgba = p.ok.into();
+        let fav_color: Rgba = p.fav.into();
+        let tag_bg: Rgba = p.tag_bg.into();
+        let tag_text: Rgba = p.tag_ink.into();
+        let text_1: Rgba = p.ink.into();
+        let text_2: Rgba = p.ink_2.into();
+        let text_3: Rgba = p.ink_3.into();
+        let danger: Rgba = p.danger.into();
+        let path_warn: Rgba = p.warn.into();
+        let pin: Rgba = p.pin.into();
+        let media_scrim: Rgba = p.media_scrim.into();
+        let media_scrim_hover: Rgba = p.media_scrim_hover.into();
+        let is_dark = p.dark;
+        let pill_bg: Rgba = p.on_card("layer-strong").into();
+        let pill_border: Rgba = p.stroke_strong.into();
+        let color_border: Rgba = p.stroke_strong.into();
+        let subtle_row_bg: Rgba = p.on_card("control").into();
+        let hover_bg: Rgba = p.hover.into();
         let highlight_bg = theme.accent_highlight();
         let highlight_text = theme.accent_highlight_text();
         let time_str = format_relative_time(&item.updated_at);
@@ -1631,6 +1621,13 @@ impl RenderOnce for ClipboardCard {
         let color_swatch = swatch_color(full_text, accent);
 
         let border_color = if selected { accent } else { divider };
+        // 卡片不用阴影：靠 1 px 描边 + `layer` 面与窗口底做亮度差分层
+        // （Argus 的 Fluent 分层）。选中态在面与描边上同时强调。
+        let card_face: Rgba = if selected {
+            p.accent_soft().into()
+        } else {
+            surface
+        };
 
         let base = div()
             .relative()
@@ -1640,13 +1637,10 @@ impl RenderOnce for ClipboardCard {
             .capture_any_mouse_up(|_ev, _window, cx| {
                 cx.stop_propagation();
             })
-            .bg(surface)
+            .bg(card_face)
             .border(sc(1.))
             .border_color(border_color)
-            .rounded(sc(10.))
-            .overflow_hidden()
-            .when(is_dark, |el| el.shadow_md())
-            .when(!is_dark, |el| el.shadow_sm())
+            .rounded(Radius::Card.scaled())
             .flex()
             .flex_row()
             .p(sc(10.))
@@ -2070,11 +2064,7 @@ impl RenderOnce for ClipboardCard {
                                     .child(
                                         div()
                                             .text_size(sc(9.))
-                                            .text_color(if selected {
-                                                rgb(0xffffff)
-                                            } else {
-                                                text_2
-                                            })
+                                            .text_color(if selected { on_accent } else { text_2 })
                                             .child(hotkey_paste_format_label(format)),
                                     )
                             })),
@@ -2920,9 +2910,9 @@ impl RenderOnce for ClipboardCard {
                         .bg(pill_bg)
                         .shadow(vec![BoxShadow {
                             color: if is_dark {
-                                rgba(0x00000066)
+                                media_scrim
                             } else {
-                                rgba(0x00000030)
+                                media_scrim_hover
                             }
                             .into(),
                             offset: point(sc(0.), sc(1.)),
@@ -2951,9 +2941,9 @@ impl RenderOnce for ClipboardCard {
                     .bg(pill_bg)
                     .shadow(vec![BoxShadow {
                         color: if is_dark {
-                            rgba(0x00000066)
+                            media_scrim
                         } else {
-                            rgba(0x00000030)
+                            media_scrim_hover
                         }
                         .into(),
                         offset: point(sc(0.), sc(1.)),
@@ -2981,9 +2971,9 @@ impl RenderOnce for ClipboardCard {
                         .bg(pill_bg)
                         .shadow(vec![BoxShadow {
                             color: if is_dark {
-                                rgba(0x00000066)
+                                media_scrim
                             } else {
-                                rgba(0x00000030)
+                                media_scrim_hover
                             }
                             .into(),
                             offset: point(sc(0.), sc(1.)),
@@ -3013,9 +3003,9 @@ impl RenderOnce for ClipboardCard {
                         .bg(pill_bg)
                         .shadow(vec![BoxShadow {
                             color: if is_dark {
-                                rgba(0x00000066)
+                                media_scrim
                             } else {
-                                rgba(0x00000030)
+                                media_scrim_hover
                             }
                             .into(),
                             offset: point(sc(0.), sc(1.)),
@@ -3041,8 +3031,8 @@ impl RenderOnce for ClipboardCard {
             })
             .when_some(transfer_pill, |el, (label, kind)| {
                 let pill_text_color = match kind {
-                    TransferPillKind::Local => rgb(0x22C55E),
-                    TransferPillKind::Cloud | TransferPillKind::Downloading => rgb(0x3B82F6),
+                    TransferPillKind::Local => ok,
+                    TransferPillKind::Cloud | TransferPillKind::Downloading => pin,
                 };
                 let animation_id: SharedString =
                     format!("transfer-download-spinner-{}", item.id).into();
@@ -3053,9 +3043,9 @@ impl RenderOnce for ClipboardCard {
                         .bg(pill_bg)
                         .shadow(vec![BoxShadow {
                             color: if is_dark {
-                                rgba(0x00000066)
+                                media_scrim
                             } else {
-                                rgba(0x00000030)
+                                media_scrim_hover
                             }
                             .into(),
                             offset: point(sc(0.), sc(1.)),
@@ -3101,9 +3091,9 @@ impl RenderOnce for ClipboardCard {
                         .bg(pill_bg)
                         .shadow(vec![BoxShadow {
                             color: if is_dark {
-                                rgba(0x00000066)
+                                media_scrim
                             } else {
-                                rgba(0x00000030)
+                                media_scrim_hover
                             }
                             .into(),
                             offset: point(sc(0.), sc(1.)),
@@ -3116,9 +3106,9 @@ impl RenderOnce for ClipboardCard {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .text_color(rgb(0x3B82F6))
+                        .text_color(pin)
                         .child(if source_is_uploading {
-                            activity_spinner(uploading_spinner_id, rgb(0x3B82F6), 14.)
+                            activity_spinner(uploading_spinner_id, pin, 14.)
                         } else {
                             div()
                                 .font_family("iconfont")
@@ -3143,9 +3133,9 @@ impl RenderOnce for ClipboardCard {
                         .bg(pill_bg)
                         .shadow(vec![BoxShadow {
                             color: if is_dark {
-                                rgba(0x00000066)
+                                media_scrim
                             } else {
-                                rgba(0x00000030)
+                                media_scrim_hover
                             }
                             .into(),
                             offset: point(sc(0.), sc(1.)),
@@ -3173,9 +3163,9 @@ impl RenderOnce for ClipboardCard {
                     .bg(pill_bg)
                     .shadow(vec![BoxShadow {
                         color: if is_dark {
-                            rgba(0x00000066)
+                            media_scrim
                         } else {
-                            rgba(0x00000030)
+                            media_scrim_hover
                         }
                         .into(),
                         offset: point(sc(0.), sc(1.)),
@@ -3252,7 +3242,7 @@ impl RenderOnce for ClipboardCard {
                         div()
                             .text_size(sc(8.))
                             .font_weight(FontWeight::BOLD)
-                            .text_color(rgb(0xffffff))
+                            .text_color(on_accent)
                             .child(format!("{}", selection_order)),
                     ),
             )
@@ -3315,7 +3305,6 @@ impl RenderOnce for ClipboardCard {
                                     .child(
                                         HoverToolbar::new(toolbar_props)
                                             .below_card(toolbar_below)
-                                            .theme(theme.clone())
                                             .when_some(toolbar_bounds, |toolbar, tracker| {
                                                 toolbar.track_bounds(item.id, tracker)
                                             })

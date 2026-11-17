@@ -17,7 +17,9 @@ use gpui_kit::component::tooltip::Tooltip;
 use crate::core::i18n_keys::I18nKey;
 use crate::core::types::{ContentType, RichData};
 
-use super::theme::ClippiTheme;
+use super::design::motion;
+use super::design::palette::Palette;
+use super::design::size::Radius;
 use crate::ui::transition::keyed_transition;
 
 /// Properties that determine which toolbar buttons to show.
@@ -121,7 +123,6 @@ fn single_open_action(props: &HoverToolbarProps) -> Option<&'static str> {
 #[derive(IntoElement)]
 pub struct HoverToolbar {
     props: HoverToolbarProps,
-    theme: ClippiTheme,
     below_card: bool,
     on_action: Option<ToolbarActionHandler>,
     bounds_tracker: Option<(i64, ToolbarBounds)>,
@@ -131,7 +132,6 @@ impl HoverToolbar {
     pub fn new(props: HoverToolbarProps) -> Self {
         Self {
             props,
-            theme: ClippiTheme::dark(),
             below_card: false,
             on_action: None,
             bounds_tracker: None,
@@ -148,11 +148,6 @@ impl HoverToolbar {
         self
     }
 
-    pub fn theme(mut self, theme: ClippiTheme) -> Self {
-        self.theme = theme;
-        self
-    }
-
     pub fn on_action(mut self, handler: impl Fn(&str, &mut Window, &mut App) + 'static) -> Self {
         self.on_action = Some(Rc::new(handler));
         self
@@ -163,45 +158,29 @@ impl RenderOnce for HoverToolbar {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let Self {
             props,
-            theme,
             below_card,
             on_action,
             bounds_tracker,
         } = self;
 
+        let p = Palette::current(cx);
         // Filled glyphs look heavier than body text at the same color. Soften
         // light-theme icons without losing the dark-theme contrast boost.
-        let accent = theme.accent;
-        let icon_color = if theme.dark {
-            theme.text_1
+        let accent: Rgba = p.accent.into();
+        let icon_color: Rgba = if p.dark {
+            p.ink.into()
         } else {
-            Rgba {
-                r: (theme.text_1.r + theme.text_2.r) * 0.5,
-                g: (theme.text_1.g + theme.text_2.g) * 0.5,
-                b: (theme.text_1.b + theme.text_2.b) * 0.5,
-                a: 1.0,
-            }
+            motion::mix(p.ink, p.ink_2, 0.5).into()
         };
-        let danger = theme.danger;
-        let fav_color = theme.fav_color;
-        let is_dark = theme.dark;
-        let pill_bg = if is_dark {
-            rgb(0x232425)
-        } else {
-            rgb(0xffffff)
-        };
-        let pill_border = if is_dark {
-            rgba(0xffffff40)
-        } else {
-            rgba(0x00000030)
-        };
-        let hover_bg = if is_dark {
-            rgb(0x484d51)
-        } else {
-            rgb(0xe5e8ef)
-        };
+        let danger: Rgba = p.danger.into();
+        let fav_color: Rgba = p.fav.into();
+        let is_dark = p.dark;
+        let pill_bg: Rgba = p.on_card("layer-strong").into();
+        let pill_border: Rgba = p.stroke_strong.into();
+        let hover_bg: Rgba = p.on_card("hover-strong").into();
         // Keep each shadow tight enough to define the 2px gaps between tabs.
         // Cast toward the exposed edge for both above-card and below-card tabs.
+        // 手写阴影：gpui 预设的投影比这种"贴边"太散，颜色固定成黑色系。
         let pill_shadow = if is_dark {
             rgba(0x00000040)
         } else {
@@ -231,7 +210,7 @@ impl RenderOnce for HoverToolbar {
         }
         if is_single && props.is_transfer {
             let transfer_pinned = props.transfer_pinned;
-            let pin_color = theme.transfer_pin_color;
+            let pin_color: Rgba = p.pin.into();
             if props.transfer_is_local {
                 buttons.push((
                     "\u{e603}",
@@ -403,9 +382,9 @@ impl RenderOnce for HoverToolbar {
         div()
             .w(sc(toolbar_width))
             .h(sc(20.))
-            .bg(theme.bg)
-            .when(!below_card, |el| el.rounded_t(sc(4.)))
-            .when(below_card, |el| el.rounded_b(sc(4.)))
+            .bg(p.background)
+            .when(!below_card, |el| el.rounded_t(Radius::Sm.scaled()))
+            .when(below_card, |el| el.rounded_b(Radius::Sm.scaled()))
             .relative()
             .children(bounds_tracker.map(|(item_id, tracker)| {
                 canvas(

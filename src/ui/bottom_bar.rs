@@ -53,7 +53,7 @@ impl RenderOnce for BottomBar {
         div()
             .h(tokens::dimension("bottomBarHeight"))
             .w_full()
-            .px(Space::Lg.px())
+            .px(Space::Lg.scaled())
             .flex()
             .items_center()
             .justify_between()
@@ -63,15 +63,15 @@ impl RenderOnce for BottomBar {
                 div()
                     .flex()
                     .items_center()
-                    .gap(Space::Md.px())
+                    .gap(Space::Md.scaled())
                     .min_w(px(0.))
                     .overflow_hidden()
                     .flex_1()
                     .when_some(foreground_icon, |row, image| {
                         row.child(
                             gpui::img(image)
-                                .size(IconSize::Md.px())
-                                .rounded(Radius::Sm.px())
+                                .size(IconSize::Md.scaled())
+                                .rounded(Radius::Sm.scaled())
                                 .flex_shrink_0(),
                         )
                     })
@@ -119,7 +119,7 @@ impl RenderOnce for BottomBar {
                     div()
                         .flex()
                         .items_center()
-                        .gap(Space::Xxs.px())
+                        .gap(Space::Xxs.scaled())
                         .child({
                             let fg = fg_name.clone();
                             let app_state = app_state.clone();
@@ -137,8 +137,8 @@ impl RenderOnce for BottomBar {
                             };
                             div()
                                 .id("bottom-clipboard-blacklist")
-                                .size(Ctrl::Chip.px())
-                                .rounded(Radius::Sm.px())
+                                .size(Ctrl::Chip.scaled())
+                                .rounded(Radius::Sm.scaled())
                                 .flex()
                                 .items_center()
                                 .justify_center()
@@ -157,7 +157,7 @@ impl RenderOnce for BottomBar {
                                 })
                                 .child(widgets::icon(
                                     "\u{e638}",
-                                    IconSize::Sm.px(),
+                                    IconSize::Sm.scaled(),
                                     base_color,
                                 ))
                         })
@@ -167,8 +167,8 @@ impl RenderOnce for BottomBar {
                             let settings = settings.clone();
                             div()
                                 .id("bottom-hotkey-blacklist")
-                                .size(Ctrl::Chip.px())
-                                .rounded(Radius::Sm.px())
+                                .size(Ctrl::Chip.scaled())
+                                .rounded(Radius::Sm.scaled())
                                 .flex()
                                 .items_center()
                                 .justify_center()
@@ -189,7 +189,7 @@ impl RenderOnce for BottomBar {
                                         settings.update(cx, |_panel, cx| cx.emit(SettingsEvent::ShowHotkeyConfirm(hotkey::HotkeyConfirmAction::AddBlacklist { app_name: fg.clone() })));
                                     }
                                 })
-                                .child(widgets::icon("\u{e600}", IconSize::Sm.px(), p.ink_3))
+                                .child(widgets::icon("\u{e600}", IconSize::Sm.scaled(), p.ink_3))
                         })
                 )
             })

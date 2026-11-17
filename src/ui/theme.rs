@@ -34,10 +34,6 @@ pub struct ClippiTheme {
     /// toolbar button and the pinned card bar.
     pub transfer_pin_color: Rgba,
 
-    // --- Tags ---
-    pub tag_bg: Rgba,
-    pub tag_text: Rgba,
-
     // --- Panels (floating) ---
     pub panel_surface: Rgba,
     pub panel_input_bg: Rgba,
@@ -85,9 +81,6 @@ impl ClippiTheme {
             divider: color("stroke"),
             btn_hover: tokens::on_card("hover", dark),
             transfer_pin_color: color("pin"),
-
-            tag_bg: color("tag-bg"),
-            tag_text: color("tag-ink"),
 
             panel_surface: Rgba {
                 a: 1.,

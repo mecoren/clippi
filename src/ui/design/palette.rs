@@ -38,7 +38,14 @@ pub struct Palette {
     pub fav: Hsla,
     pub danger: Hsla,
     pub on_danger: Hsla,
+    /// 注意/警告（路径失效、同步异常），与收藏金、危险红区分。
+    pub warn: Hsla,
+    /// 成功/完成（传输完成、同步正常）。
+    pub ok: Hsla,
     pub pin: Hsla,
+    /// 叠在缩略图/封面上的遮罩与悬停遮罩：固定在媒体上，不随主题明暗翻转。
+    pub media_scrim: Hsla,
+    pub media_scrim_hover: Hsla,
     // 附件
     pub tag_bg: Hsla,
     pub tag_ink: Hsla,
@@ -99,7 +106,11 @@ impl Palette {
             fav: color("fav"),
             danger: color("danger"),
             on_danger: color("on-danger"),
+            warn: color("warn"),
+            ok: color("ok"),
             pin: color("pin"),
+            media_scrim: color("media-scrim"),
+            media_scrim_hover: color("media-scrim-hover"),
             tag_bg: color("tag-bg"),
             tag_ink: color("tag-ink"),
             tip: color("tip"),

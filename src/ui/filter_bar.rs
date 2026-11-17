@@ -130,10 +130,10 @@ pub(crate) fn filter_toolbar() -> Div {
         .items_center()
         .justify_start()
         .gap(px(TOOLBAR_GROUP_GAP))
-        .h(Ctrl::Chip.px())
+        .h(Ctrl::Chip.scaled())
         .w_full()
-        .px(Space::Md.px())
-        .pb(Space::Xxs.px())
+        .px(Space::Md.scaled())
+        .pb(Space::Xxs.scaled())
         .flex_shrink_0()
 }
 
@@ -157,11 +157,11 @@ pub(crate) fn filter_chip(
 ) -> Stateful<Div> {
     div()
         .id(id)
-        .h(Ctrl::Chip.px())
+        .h(Ctrl::Chip.scaled())
         .flex_1()
         .min_w(px(0.))
         .flex_shrink_0()
-        .rounded(Radius::Md.px())
+        .rounded(Radius::Md.scaled())
         .bg(if active {
             theme.accent_overlay()
         } else {
@@ -214,18 +214,20 @@ pub(crate) fn source_app_filter_bar(
             .as_ref()
             .and_then(|name| snapshot.source_app_icons.get(name))
         {
-            img(path.clone()).size(IconSize::Md.px()).into_any_element()
+            img(path.clone())
+                .size(IconSize::Md.scaled())
+                .into_any_element()
         } else if name.is_none() {
             svg()
                 .path("picker-icons/layout-grid.svg")
-                .size(IconSize::Sm.px())
+                .size(IconSize::Sm.scaled())
                 .text_color(if active { theme.accent } else { theme.text_2 })
                 .into_any_element()
         } else {
             // Apps without an icon keep the same fixed target size.
             widgets::icon(
                 "\u{e616}",
-                IconSize::Sm.px(),
+                IconSize::Sm.scaled(),
                 if active {
                     theme.accent.into()
                 } else {
@@ -480,8 +482,12 @@ impl Render for FilterBar {
                                         .flex()
                                         .flex_shrink_0()
                                         .items_center()
-                                        .gap(Space::Xxs.px())
-                                        .child(widgets::icon(icon, IconSize::Sm.px(), filter_text))
+                                        .gap(Space::Xxs.scaled())
+                                        .child(widgets::icon(
+                                            icon,
+                                            IconSize::Sm.scaled(),
+                                            filter_text,
+                                        ))
                                         .when(!icon_only, |group| {
                                             group.child(
                                                 div()
@@ -538,7 +544,7 @@ impl Render for FilterBar {
                     toolbar.child(
                         div()
                             .w(px(TOOLBAR_DIVIDER_WIDTH))
-                            .h(Space::Lg.px())
+                            .h(Space::Lg.scaled())
                             .flex_shrink_0()
                             .bg(toolbar_divider),
                     )
@@ -548,9 +554,9 @@ impl Render for FilterBar {
                         div()
                             .id("filter-tags")
                             .w(px(24.))
-                            .h(Ctrl::Chip.px())
+                            .h(Ctrl::Chip.scaled())
                             .flex_shrink_0()
-                            .rounded(Radius::Sm.px())
+                            .rounded(Radius::Sm.scaled())
                             .flex()
                             .items_center()
                             .justify_center()
@@ -574,7 +580,7 @@ impl Render for FilterBar {
                             })
                             .child(widgets::icon(
                                 "\u{e886}",
-                                IconSize::Sm.px(),
+                                IconSize::Sm.scaled(),
                                 if has_tag_filter { accent } else { text_2 },
                             )),
                     ),
