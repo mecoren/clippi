@@ -13,7 +13,8 @@ use crate::ui::transition::keyed_transition;
 use crate::core::i18n_keys::I18nKey;
 use crate::services::gpui_sync::format_last_sync;
 use crate::state::sync::BackendStatus;
-use crate::ui::components::toggle::{render_toggle, ToggleColors};
+use crate::ui::design::palette::Palette;
+use crate::ui::widgets;
 
 use super::{BackendCollapseState, SettingsPanel};
 
@@ -28,6 +29,7 @@ impl SettingsPanel {
         let sync = self.state.read(cx).sync.clone();
         let wm = self.window_manager.clone();
         let backend_panel = self.backend_panel();
+        let p = self.palette;
         let surface = self.theme.surface;
         let divider = self.theme.divider;
         let accent = self.theme.accent;
@@ -76,16 +78,12 @@ impl SettingsPanel {
                             .text_color(text_1)
                             .child(I18nKey::SyncTabTitle.text()),
                     )
-                    .child(div().flex_shrink_0().child(render_toggle(
-                        sync.auto_enabled,
+                    .child(div().flex_shrink_0().child(widgets::toggle(
+                        &p,
                         "sync-auto-enabled",
-                        ToggleColors {
-                            accent,
-                            track_off: divider,
-                        },
-                        &mut self.toggle_states,
-                        window,
-                        cx,
+                        I18nKey::SyncTabTitle.text(),
+                        sync.auto_enabled,
+                        false,
                         {
                             let wm = wm.clone();
                             move |_window, cx| {
@@ -94,6 +92,8 @@ impl SettingsPanel {
                                 });
                             }
                         },
+                        window,
+                        cx,
                     ))),
             )
             .when(sync.auto_enabled, |card| {
@@ -116,16 +116,12 @@ impl SettingsPanel {
                                 .text_color(text_1)
                                 .child(I18nKey::SyncFavoritesOnly.text()),
                         )
-                        .child(div().flex_shrink_0().child(render_toggle(
-                            sync.favorites_only,
+                        .child(div().flex_shrink_0().child(widgets::toggle(
+                            &p,
                             "sync-favorites-only",
-                            ToggleColors {
-                                accent,
-                                track_off: divider,
-                            },
-                            &mut self.toggle_states,
-                            window,
-                            cx,
+                            I18nKey::SyncFavoritesOnly.text(),
+                            sync.favorites_only,
+                            false,
                             {
                                 let wm = wm.clone();
                                 move |_window, cx| {
@@ -134,6 +130,8 @@ impl SettingsPanel {
                                     });
                                 }
                             },
+                            window,
+                            cx,
                         ))),
                 )
             })
@@ -166,16 +164,12 @@ impl SettingsPanel {
                                         .text_color(text_1)
                                         .child(I18nKey::SyncIncludeImages.text()),
                                 )
-                                .child(div().flex_shrink_0().child(render_toggle(
-                                    sync.include_images,
+                                .child(div().flex_shrink_0().child(widgets::toggle(
+                                    &p,
                                     "sync-include-images",
-                                    ToggleColors {
-                                        accent,
-                                        track_off: divider,
-                                    },
-                                    &mut self.toggle_states,
-                                    window,
-                                    cx,
+                                    I18nKey::SyncIncludeImages.text(),
+                                    sync.include_images,
+                                    false,
                                     {
                                         let wm = wm.clone();
                                         move |_window, cx| {
@@ -184,6 +178,8 @@ impl SettingsPanel {
                                             });
                                         }
                                     },
+                                    window,
+                                    cx,
                                 ))),
                         )
                         .when(sync.include_images, |card| {
@@ -207,16 +203,12 @@ impl SettingsPanel {
                                             .text_color(text_1)
                                             .child(I18nKey::SyncCompressImages.text()),
                                     )
-                                    .child(div().flex_shrink_0().child(render_toggle(
-                                        sync.compress_images,
+                                    .child(div().flex_shrink_0().child(widgets::toggle(
+                                        &p,
                                         "sync-compress-images",
-                                        ToggleColors {
-                                            accent,
-                                            track_off: divider,
-                                        },
-                                        &mut self.toggle_states,
-                                        window,
-                                        cx,
+                                        I18nKey::SyncCompressImages.text(),
+                                        sync.compress_images,
+                                        false,
                                         {
                                             let wm = wm.clone();
                                             move |_window, cx| {
@@ -225,6 +217,8 @@ impl SettingsPanel {
                                                 });
                                             }
                                         },
+                                        window,
+                                        cx,
                                     ))),
                             )
                         }),
@@ -266,16 +260,12 @@ impl SettingsPanel {
                                 )
                             }),
                     )
-                    .child(render_toggle(
-                        transfer_enabled,
+                    .child(widgets::toggle(
+                        &p,
                         "transfer-station-enabled",
-                        ToggleColors {
-                            accent,
-                            track_off: divider,
-                        },
-                        &mut self.toggle_states,
-                        window,
-                        cx,
+                        I18nKey::TransferStation.text(),
+                        transfer_enabled,
+                        false,
                         {
                             let wm = wm.clone();
                             move |_window, cx| {
@@ -284,6 +274,8 @@ impl SettingsPanel {
                                 });
                             }
                         },
+                        window,
+                        cx,
                     )),
             )
             .when(transfer_enabled, |card| {
@@ -315,7 +307,11 @@ impl SettingsPanel {
                                 .rounded(px(6.))
                                 .bg(if selected { accent } else { rgba(0x00000000) })
                                 .text_size(fs(10.))
-                                .text_color(if selected { rgb(0xffffff) } else { text_2 })
+                                .text_color(if selected {
+                                    Rgba::from(p.on_accent)
+                                } else {
+                                    text_2
+                                })
                                 .flex()
                                 .items_center()
                                 .justify_center()
@@ -500,7 +496,7 @@ impl SettingsPanel {
                                     .rounded(px(6.))
                                     .bg(accent)
                                     .text_size(fs(10.))
-                                    .text_color(rgb(0xffffff))
+                                    .text_color(Rgba::from(p.on_accent))
                                     .flex()
                                     .items_center()
                                     .justify_center()
@@ -710,6 +706,7 @@ impl SettingsPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let p = self.palette;
         let id = backend.config.id.clone();
         let enabled = backend.config.enabled;
         let (transfer_station_enabled, transfer_selected) = {
@@ -794,10 +791,11 @@ impl SettingsPanel {
         let wm = self.window_manager.clone();
         let backend_panel = self.backend_panel();
         let status_color = match backend.status.as_str() {
-            "online" => rgb(0x4caf50),
-            "syncing" => rgb(0x3b82f6),
+            "online" => Rgba::from(p.ok),
+            // 同步中沿用蓝色，与「已完成」的绿色分开；`pin` 是调色板里唯一的蓝。
+            "syncing" => Rgba::from(p.pin),
             "error" => danger,
-            _ => rgb(0x9e9e9e),
+            _ => Rgba::from(p.ink_3),
         };
         let interval = backend.config.sync_interval_secs.unwrap_or_else(|| {
             if backend.config.backend_type == "webdav" {
@@ -917,6 +915,7 @@ impl SettingsPanel {
                                                             text_3
                                                         },
                                                         accent,
+                                                        Rgba::from(p.hover),
                                                         if transfer_selected {
                                                             I18nKey::BackendTooltipTransferActive
                                                                 .text()
@@ -959,6 +958,7 @@ impl SettingsPanel {
                                                     "\u{e679}",
                                                     text_3,
                                                     accent,
+                                                    Rgba::from(p.hover),
                                                     I18nKey::BackendTooltipEdit.text(),
                                                     {
                                                         let config = backend.config.clone();
@@ -991,6 +991,7 @@ impl SettingsPanel {
                                                     "\u{e696}",
                                                     text_3,
                                                     danger,
+                                                    Rgba::from(p.hover),
                                                     I18nKey::BackendTooltipDelete.text(),
                                                     {
                                                         let id = id.clone();
@@ -1022,16 +1023,12 @@ impl SettingsPanel {
                                             }),
                                     )
                                     .child(if auto_enabled {
-                                        render_toggle(
+                                        widgets::toggle(
+                                            &p,
+                                            format!("sync-backend-{id}"),
+                                            id.clone(),
                                             enabled,
-                                            &format!("sync-backend-{id}"),
-                                            ToggleColors {
-                                                accent,
-                                                track_off: divider,
-                                            },
-                                            &mut self.toggle_states,
-                                            window,
-                                            cx,
+                                            false,
                                             {
                                                 let id = id.clone();
                                                 let wm = wm.clone();
@@ -1041,10 +1038,12 @@ impl SettingsPanel {
                                                     });
                                                 }
                                             },
+                                            window,
+                                            cx,
                                         )
                                         .into_any_element()
                                     } else {
-                                        disabled_toggle(enabled, divider).into_any_element()
+                                        disabled_toggle(&p, enabled).into_any_element()
                                     }),
                             )
                             .child(
@@ -1089,7 +1088,11 @@ impl SettingsPanel {
                                 .bg(if selected { accent } else { rgba(0x00000000) })
                                 .text_size(fs(10.))
                                 .font_weight(FontWeight::BOLD)
-                                .text_color(if selected { rgb(0xffffff) } else { text_2 })
+                                .text_color(if selected {
+                                    Rgba::from(p.on_accent)
+                                } else {
+                                    text_2
+                                })
                                 .flex()
                                 .items_center()
                                 .justify_center()
@@ -1117,7 +1120,7 @@ impl SettingsPanel {
                             .bg(accent)
                             .text_size(fs(10.))
                             .font_weight(FontWeight::BOLD)
-                            .text_color(rgb(0xffffff))
+                            .text_color(Rgba::from(p.on_accent))
                             .flex()
                             .items_center()
                             .justify_center()
@@ -1147,6 +1150,7 @@ fn icon_button(
     icon: &'static str,
     color: Rgba,
     hover_color: Rgba,
+    hover_bg: Rgba,
     tooltip: &'static str,
     on_click: impl Fn(&mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
@@ -1162,7 +1166,7 @@ fn icon_button(
         .items_center()
         .justify_center()
         .cursor(CursorStyle::PointingHand)
-        .hover(move |style| style.text_color(hover_color).bg(rgba(0xffffff0d)))
+        .hover(move |style| style.text_color(hover_color).bg(hover_bg))
         .tooltip(move |window, cx| {
             Tooltip::element(move |_window, _cx| div().text_size(fs(10.)).child(tooltip))
                 .build(window, cx)
@@ -1199,13 +1203,15 @@ fn disabled_icon_button(
         .child(icon)
 }
 
-fn disabled_toggle(value: bool, track_off: Rgba) -> impl IntoElement {
+/// 禁用态开关：形状与 [`widgets::toggle`] 一致，但整体压暗且不响应指针。
+/// `widgets::toggle` 的 `disabled` 只拦截点击，视觉不变，所以这里单独画一份。
+fn disabled_toggle(p: &Palette, value: bool) -> impl IntoElement {
     let knob_x = if value { 20.0 } else { 2.0 };
     div()
         .w(px(40.))
         .h(px(22.))
         .rounded(px(11.))
-        .bg(track_off)
+        .bg(p.stroke)
         .opacity(0.45)
         .flex()
         .items_center()
@@ -1215,7 +1221,7 @@ fn disabled_toggle(value: bool, track_off: Rgba) -> impl IntoElement {
                 .w(px(18.))
                 .h(px(18.))
                 .rounded(px(9.))
-                .bg(rgb(0xffffff))
+                .bg(p.on_accent)
                 .ml(px(knob_x)),
         )
 }

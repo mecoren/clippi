@@ -14,6 +14,7 @@ use gpui::*;
 
 use crate::core::i18n_keys::I18nKey;
 use crate::state::app::AppState;
+use crate::ui::design::palette::Palette;
 use crate::ui::transition::keyed_transition;
 use crate::ui::window_manager::{WindowManager, WindowManagerEvent};
 
@@ -2266,6 +2267,7 @@ impl Render for RootView {
                     latest_hotkeys,
                     latest_hotkeys_recording_slot,
                     self.theme.clone(),
+                    &Palette::current(cx),
                     (
                         latest_hotkeys_popup_opacity,
                         latest_hotkeys_popup_scale,

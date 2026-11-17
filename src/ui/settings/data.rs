@@ -5,13 +5,14 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_kit::component::input::Input;
 use gpui_kit::component::tooltip::Tooltip;
 
 use crate::core::i18n_keys::I18nKey;
 use crate::core::settings::migrate_database;
+use crate::ui::design::size::{Ctrl, Radius};
 use crate::ui::font::fs;
 use crate::ui::settings::SettingsEvent;
+use crate::ui::widgets;
 
 use super::SettingsPanel;
 use crate::core::backup::{BackupContents, PreparedRestore};
@@ -400,9 +401,10 @@ impl SettingsPanel {
     /// Render the Data settings tab content.
     pub fn render_data_tab(
         &mut self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let p = self.palette;
         let state = self.state.clone();
         let this = cx.entity().clone();
 
@@ -456,11 +458,7 @@ impl SettingsPanel {
                                 .flex_1()
                                 .h(px(28.))
                                 .rounded(px(7.))
-                                .bg(if self.theme.dark {
-                                    rgb(0x191a1b)
-                                } else {
-                                    rgb(0xf2f3f8)
-                                })
+                                .bg(p.control_face)
                                 .px(px(10.))
                                 .flex()
                                 .items_center()
@@ -574,7 +572,7 @@ impl SettingsPanel {
                                     div()
                                         .text_size(fs(11.))
                                         .font_weight(FontWeight::BOLD)
-                                        .text_color(rgb(0xffffff))
+                                        .text_color(Rgba::from(p.on_accent))
                                         .child(I18nKey::BtnChange.text()),
                                 )
                         })
@@ -597,7 +595,7 @@ impl SettingsPanel {
                                 } else {
                                     CursorStyle::PointingHand
                                 })
-                                .hover(move |s| s.bg(rgba(0xffffff10)))
+                                .hover(move |s| s.bg(Rgba::from(p.hover)))
                                 .on_mouse_down(MouseButton::Left, move |_ev, _window, _cx| {
                                     this.update(_cx, |panel, cx| {
                                         panel.show_reset_data_dialog(cx);
@@ -650,11 +648,6 @@ impl SettingsPanel {
             let divider = self.theme.divider;
             let text_1 = self.theme.text_1;
             let text_3 = self.theme.text_3;
-            let input_bg = if self.theme.dark {
-                rgb(0x191a1b)
-            } else {
-                rgb(0xf2f3f8)
-            };
 
             div()
                 .overflow_hidden()
@@ -693,25 +686,15 @@ impl SettingsPanel {
                             let this = this.clone();
                             if self.editing_max_items {
                                 div()
-                                    .w(px(80.))
-                                    .h(px(28.))
-                                    .rounded(px(7.))
-                                    .bg(input_bg)
-                                    .border(px(1.))
-                                    .border_color(self.theme.accent)
-                                    .px(px(6.))
-                                    .flex()
-                                    .items_center()
-                                    .child(
-                                        Input::new(&self.max_items_input)
-                                            .appearance(false)
-                                            .bordered(false)
-                                            .focus_bordered(false)
-                                            .w_full()
-                                            .h(px(20.))
-                                            .text_size(fs(12.))
-                                            .text_color(text_1),
-                                    )
+                                    .w(px(96.))
+                                    .child(widgets::text_field(
+                                        &p,
+                                        &self.max_items_input,
+                                        "",
+                                        true,
+                                        window,
+                                        cx,
+                                    ))
                                     .on_key_down({
                                         move |ev: &KeyDownEvent, _window, cx| {
                                             if ev.keystroke.key.as_str() == "enter" {
@@ -726,11 +709,11 @@ impl SettingsPanel {
                                 let val = self.state.read(cx).settings.max_items;
                                 div()
                                     .w(px(90.))
-                                    .h(px(28.))
-                                    .rounded(px(7.))
-                                    .bg(input_bg)
+                                    .h(Ctrl::Small.scaled())
+                                    .rounded(Radius::Md.scaled())
+                                    .bg(p.control_face)
                                     .border(px(1.))
-                                    .border_color(divider)
+                                    .border_color(p.stroke)
                                     .flex()
                                     .items_center()
                                     .justify_center()
@@ -808,25 +791,15 @@ impl SettingsPanel {
                             let this = this.clone();
                             if self.editing_retention_days {
                                 div()
-                                    .w(px(80.))
-                                    .h(px(28.))
-                                    .rounded(px(7.))
-                                    .bg(input_bg)
-                                    .border(px(1.))
-                                    .border_color(self.theme.accent)
-                                    .px(px(6.))
-                                    .flex()
-                                    .items_center()
-                                    .child(
-                                        Input::new(&self.retention_days_input)
-                                            .appearance(false)
-                                            .bordered(false)
-                                            .focus_bordered(false)
-                                            .w_full()
-                                            .h(px(20.))
-                                            .text_size(fs(12.))
-                                            .text_color(text_1),
-                                    )
+                                    .w(px(96.))
+                                    .child(widgets::text_field(
+                                        &p,
+                                        &self.retention_days_input,
+                                        "",
+                                        true,
+                                        window,
+                                        cx,
+                                    ))
                                     .on_key_down({
                                         move |ev: &KeyDownEvent, _window, cx| {
                                             if ev.keystroke.key.as_str() == "enter" {
@@ -841,11 +814,11 @@ impl SettingsPanel {
                                 let val = self.state.read(cx).settings.retention_days;
                                 div()
                                     .w(px(90.))
-                                    .h(px(28.))
-                                    .rounded(px(7.))
-                                    .bg(input_bg)
+                                    .h(Ctrl::Small.scaled())
+                                    .rounded(Radius::Md.scaled())
+                                    .bg(p.control_face)
                                     .border(px(1.))
-                                    .border_color(divider)
+                                    .border_color(p.stroke)
                                     .flex()
                                     .items_center()
                                     .justify_center()
@@ -1062,8 +1035,11 @@ impl SettingsPanel {
                                         let selected = *key == cleanup_interval;
                                         let btn_bg =
                                             if selected { accent } else { rgba(0x00000000) };
-                                        let btn_text =
-                                            if selected { rgb(0xffffff) } else { text_2 };
+                                        let btn_text = if selected {
+                                            Rgba::from(p.on_accent)
+                                        } else {
+                                            text_2
+                                        };
                                         let btn_weight = if selected {
                                             FontWeight::BOLD
                                         } else {
@@ -1151,7 +1127,7 @@ impl SettingsPanel {
                                     div()
                                         .text_size(fs(11.))
                                         .font_weight(FontWeight::BOLD)
-                                        .text_color(rgb(0xffffff))
+                                        .text_color(Rgba::from(p.on_accent))
                                         .child(if storage_operation_running {
                                             I18nKey::LocalBackupBusy.text()
                                         } else if maintenance_running {
@@ -1247,7 +1223,7 @@ impl SettingsPanel {
                             div()
                                 .text_size(fs(11.))
                                 .font_weight(FontWeight::BOLD)
-                                .text_color(rgb(0xffffff))
+                                .text_color(Rgba::from(p.on_accent))
                                 .child(if storage_operation_running {
                                     I18nKey::LocalBackupBusy.text()
                                 } else if maintenance_running {
@@ -1526,11 +1502,11 @@ impl SettingsPanel {
             None => return div().into_any_element(),
         };
 
+        let p = self.palette;
         let surface = self.theme.surface;
         let accent = self.theme.accent;
         let accent_soft = self.theme.accent_soft;
         let text_1 = self.theme.text_1;
-        let text_2 = self.theme.text_2;
         let text_3 = self.theme.text_3;
         let divider = self.theme.divider;
 
@@ -1669,47 +1645,36 @@ impl SettingsPanel {
                             // --- Cancel ---
                             .child({
                                 let this = this.clone();
-                                div()
-                                    .h(px(24.))
-                                    .px(px(12.))
-                                    .rounded(px(4.))
-                                    .text_size(fs(12.))
-                                    .text_color(text_2)
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .cursor(CursorStyle::PointingHand)
-                                    .hover(|s| s.bg(rgba(0xffffff10)))
-                                    .on_mouse_down(MouseButton::Left, move |_ev, _window, cx| {
-                                        cx.stop_propagation();
-                                        this.update(cx, |panel, cx| {
-                                            panel.dismiss_reset_dialog(cx);
-                                        });
-                                    })
-                                    .child(I18nKey::BtnCancel.text())
+                                widgets::btn_small(
+                                    &p,
+                                    "reset-data-cancel",
+                                    I18nKey::BtnCancel.text(),
+                                    None,
+                                    widgets::Tone::Plain,
+                                )
+                                .on_click(move |_, _window, cx| {
+                                    cx.stop_propagation();
+                                    this.update(cx, |panel, cx| {
+                                        panel.dismiss_reset_dialog(cx);
+                                    });
+                                })
                             })
                             // --- Apply ---
                             .child({
                                 let this = this.clone();
-                                div()
-                                    .h(px(24.))
-                                    .px(px(12.))
-                                    .rounded(px(4.))
-                                    .text_size(fs(12.))
-                                    .text_color(rgb(0xffffff))
-                                    .bg(accent)
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .cursor(CursorStyle::PointingHand)
-                                    .hover(|s| s.opacity(0.85))
-                                    .on_mouse_down(MouseButton::Left, move |_ev, _window, cx| {
-                                        cx.stop_propagation();
-                                        this.update(cx, |panel, cx| {
-                                            panel.apply_reset_data_dir(cx);
-                                        });
-                                    })
-                                    .child(I18nKey::BtnApply.text())
+                                widgets::btn_small(
+                                    &p,
+                                    "reset-data-apply",
+                                    I18nKey::BtnApply.text(),
+                                    None,
+                                    widgets::Tone::Accent,
+                                )
+                                .on_click(move |_, _window, cx| {
+                                    cx.stop_propagation();
+                                    this.update(cx, |panel, cx| {
+                                        panel.apply_reset_data_dir(cx);
+                                    });
+                                })
                             }),
                     ),
             )

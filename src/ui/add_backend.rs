@@ -12,8 +12,10 @@ use crate::core::i18n_keys::I18nKey;
 use crate::core::settings::{compose_webdav_url, BackendConfig};
 use crate::services::backends::local_folder::detect_presets;
 use crate::services::gpui_sync::test_webdav_connection;
+use crate::ui::design::palette::Palette;
 use crate::ui::theme::ClippiTheme;
 use crate::ui::transition::keyed_transition;
+use crate::ui::widgets;
 use crate::ui::window_manager::{WebDavBackendForm, WindowManager};
 
 const BACKEND_PANEL_ANIM_DURATION: Duration = Duration::from_millis(150);
@@ -270,11 +272,7 @@ impl AddBackendPanel {
         let accent = self.theme.accent;
         let text_1 = self.theme.text_1;
         let text_3 = self.theme.text_3;
-        let card_bg = if self.theme.dark {
-            rgb(0x2a2b2c)
-        } else {
-            rgb(0xf0f1f5)
-        };
+        let card_bg = Rgba::from(Palette::current(cx).on_card("layer"));
 
         div()
             .flex()
@@ -331,18 +329,14 @@ impl AddBackendPanel {
             .into_any_element()
     }
 
-    fn render_local_form(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_local_form(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let editing = self.edit_id.is_some();
         let accent = self.theme.accent;
         let accent_soft = self.theme.accent_soft;
         let divider = self.theme.divider;
         let text_2 = self.theme.text_2;
         let text_1 = self.theme.text_1;
-        let card_bg = if self.theme.dark {
-            rgb(0x2a2b2c)
-        } else {
-            rgb(0xf0f1f5)
-        };
+        let card_bg = Rgba::from(Palette::current(cx).on_card("layer"));
         let this = cx.entity().clone();
 
         div()
@@ -412,7 +406,7 @@ impl AddBackendPanel {
                     .child(
                         div()
                             .flex_1()
-                            .child(input_box(&self.folder_input, &self.theme)),
+                            .child(input_box(&self.folder_input, window, cx)),
                     )
                     .child(
                         div()
@@ -470,6 +464,7 @@ impl AddBackendPanel {
                 },
                 accent,
                 accent_soft,
+                Rgba::from(Palette::current(cx).on_accent),
                 {
                     let name_input = self.name_input.clone();
                     let folder_input = self.folder_input.clone();
@@ -504,18 +499,14 @@ impl AddBackendPanel {
             .into_any_element()
     }
 
-    fn render_webdav_form(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_webdav_form(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let editing = self.edit_id.is_some();
         let accent = self.theme.accent;
         let accent_soft = self.theme.accent_soft;
         let divider = self.theme.divider;
         let text_2 = self.theme.text_2;
         let _text_1 = self.theme.text_1;
-        let _card_bg = if self.theme.dark {
-            rgb(0x2a2b2c)
-        } else {
-            rgb(0xf0f1f5)
-        };
+
         let this = cx.entity().clone();
 
         div()
@@ -528,7 +519,7 @@ impl AddBackendPanel {
                     .flex_col()
                     .gap(px(5.))
                     .child(field_label(I18nKey::BackendServerUrl.text(), text_2))
-                    .child(input_box(&self.url_input, &self.theme)),
+                    .child(input_box(&self.url_input, window, cx)),
             )
             .child(
                 div()
@@ -536,7 +527,7 @@ impl AddBackendPanel {
                     .flex_col()
                     .gap(px(5.))
                     .child(field_label(I18nKey::BackendWebdavPath.text(), text_2))
-                    .child(input_box(&self.webdav_path_input, &self.theme)),
+                    .child(input_box(&self.webdav_path_input, window, cx)),
             )
             .child(
                 div()
@@ -549,7 +540,7 @@ impl AddBackendPanel {
                             .flex_col()
                             .gap(px(5.))
                             .child(field_label(I18nKey::BackendUsername.text(), text_2))
-                            .child(input_box(&self.username_input, &self.theme)),
+                            .child(input_box(&self.username_input, window, cx)),
                     )
                     .child(
                         div()
@@ -558,7 +549,7 @@ impl AddBackendPanel {
                             .flex_col()
                             .gap(px(5.))
                             .child(field_label(I18nKey::BackendPassword.text(), text_2))
-                            .child(input_box(&self.password_input, &self.theme)),
+                            .child(input_box(&self.password_input, window, cx)),
                     ),
             )
             .child(div().h(px(1.)).bg(divider))
@@ -574,6 +565,7 @@ impl AddBackendPanel {
                         },
                         accent,
                         accent_soft,
+                        Rgba::from(Palette::current(cx).on_accent),
                         {
                             let this = this.clone();
                             let name_input = self.name_input.clone();
@@ -658,7 +650,7 @@ impl AddBackendPanel {
                                     .text_color(if self.test_pending {
                                         self.theme.text_1
                                     } else if self.test_ok {
-                                        rgb(0x4caf50)
+                                        Rgba::from(Palette::current(cx).ok)
                                     } else if !self.test_error.is_empty() {
                                         self.theme.danger
                                     } else {
@@ -711,11 +703,12 @@ impl Render for AddBackendPanel {
         }
 
         let this = cx.entity().clone();
+        let hover_bg = Rgba::from(Palette::current(cx).hover);
         let show_back = self.edit_id.is_none() && self.step != EditorStep::SelectType;
         let content = match self.step {
             EditorStep::SelectType => self.render_type_picker(cx),
-            EditorStep::LocalFolder => self.render_local_form(cx),
-            EditorStep::WebDav => self.render_webdav_form(cx),
+            EditorStep::LocalFolder => self.render_local_form(window, cx),
+            EditorStep::WebDav => self.render_webdav_form(window, cx),
         };
         let scale = if self.animation_started.is_some_and(|started| {
             started.elapsed() <= BACKEND_PANEL_ANIM_DURATION + Duration::from_millis(24)
@@ -786,7 +779,7 @@ impl Render for AddBackendPanel {
                                                 .items_center()
                                                 .justify_center()
                                                 .cursor(CursorStyle::PointingHand)
-                                                .hover(|style| style.bg(rgba(0xffffff0d)))
+                                                .hover(move |style| style.bg(hover_bg))
                                                 .on_mouse_down(MouseButton::Left, {
                                                     let this = this.clone();
                                                     move |_ev, _window, cx| {
@@ -809,7 +802,7 @@ impl Render for AddBackendPanel {
                                             .child(self.title())
                                             .into_any_element()
                                     } else {
-                                        header_name_input(&self.name_input, &self.theme)
+                                        header_name_input(&self.name_input, cx)
                                     }),
                             )
                             .child(
@@ -824,7 +817,7 @@ impl Render for AddBackendPanel {
                                     .items_center()
                                     .justify_center()
                                     .cursor(CursorStyle::PointingHand)
-                                    .hover(|style| style.bg(rgba(0xffffff0d)))
+                                    .hover(move |style| style.bg(hover_bg))
                                     .on_mouse_down(MouseButton::Left, {
                                         let this = this.clone();
                                         move |_ev, _window, cx| {
@@ -842,7 +835,7 @@ impl Render for AddBackendPanel {
     }
 }
 
-fn header_name_input(input: &Entity<InputState>, theme: &ClippiTheme) -> AnyElement {
+fn header_name_input(input: &Entity<InputState>, cx: &App) -> AnyElement {
     div()
         .flex_1()
         .h(px(26.))
@@ -857,7 +850,7 @@ fn header_name_input(input: &Entity<InputState>, theme: &ClippiTheme) -> AnyElem
                 .h(px(20.))
                 .text_size(fs(13.))
                 .font_weight(FontWeight::BOLD)
-                .text_color(theme.text_1),
+                .text_color(Palette::current(cx).ink),
         )
         .into_any_element()
 }
@@ -870,29 +863,8 @@ fn field_label(label: &'static str, color: Rgba) -> impl IntoElement {
         .child(label)
 }
 
-fn input_box(input: &Entity<InputState>, theme: &ClippiTheme) -> AnyElement {
-    div()
-        .h(px(30.))
-        .rounded(px(6.))
-        .bg(if theme.dark {
-            rgb(0x191a1b)
-        } else {
-            rgb(0xf2f3f8)
-        })
-        .px(px(7.))
-        .flex()
-        .items_center()
-        .child(
-            Input::new(input)
-                .appearance(false)
-                .bordered(false)
-                .focus_bordered(false)
-                .w_full()
-                .h(px(22.))
-                .text_size(fs(11.))
-                .text_color(theme.text_1),
-        )
-        .into_any_element()
+fn input_box(input: &Entity<InputState>, window: &Window, cx: &App) -> AnyElement {
+    widgets::text_field(&Palette::current(cx), input, "", true, window, cx).into_any_element()
 }
 
 fn type_card(
@@ -940,6 +912,7 @@ fn primary_button(
     label: &'static str,
     color: Rgba,
     hover: Rgba,
+    on_color: Rgba,
     on_click: impl Fn(&mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     div()
@@ -948,7 +921,7 @@ fn primary_button(
         .bg(color)
         .text_size(fs(12.))
         .font_weight(FontWeight::BOLD)
-        .text_color(rgb(0xffffff))
+        .text_color(on_color)
         .flex()
         .items_center()
         .justify_center()

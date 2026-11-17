@@ -42,8 +42,11 @@ use crate::ui::components::confirm_dialog::ConfirmDialog;
 use crate::ui::components::slider::{
     SliderDetent, SliderDragState, SteppedSlider, SteppedSliderColors,
 };
-use crate::ui::components::toggle::{render_toggle, ToggleColors, ToggleTransitionState};
+use crate::ui::design::palette::Palette;
+use crate::ui::design::size::{Ctrl, IconSize, Radius, Space};
+use crate::ui::design::typography::{self, type_role};
 use crate::ui::theme::ClippiTheme;
+use crate::ui::widgets;
 use crate::ui::window_manager::WindowManager;
 
 /// Events emitted by the settings panel.
@@ -82,9 +85,11 @@ pub struct SettingsPanel {
     state: Entity<AppState>,
     window_manager: Entity<WindowManager>,
     theme: ClippiTheme,
+    /// 语义色板：设置页共享层（分组、行、开关、选项）唯一取色入口。
+    /// 与 `theme` 并存是因为子页仍有大量 `ClippiTheme` 字段在用，逐页迁移；
+    /// 每帧 `render` 开头刷新，保证主题切换后当帧即生效。
+    palette: Palette,
     scroll_handle: ScrollHandle,
-    /// Track toggle values + generation counter for transition animation.
-    toggle_states: HashMap<String, ToggleTransitionState>,
     backend_collapse_states: HashMap<String, BackendCollapseState>,
     tab_transition_generation: u64,
     tab_transition_started: Option<Instant>,
@@ -236,8 +241,8 @@ impl SettingsPanel {
             state,
             window_manager,
             theme,
+            palette: Palette::current(cx),
             scroll_handle: ScrollHandle::default(),
-            toggle_states: HashMap::new(),
             backend_collapse_states: HashMap::new(),
             tab_transition_generation: 0,
             tab_transition_started: None,
@@ -542,6 +547,9 @@ fn format_uploaded_at(rfc3339: &str) -> String {
 
 impl Render for SettingsPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 主题可能在两次渲染之间被外部换掉（设置里切主题/强调色），
+        // 共享层构造器只认这份色板，所以每帧先刷新一次。
+        self.palette = Palette::current(cx);
         let active = self.active_tab;
         let changelog_open = self.changelog_open;
         let theme = &self.theme;
@@ -805,7 +813,7 @@ impl SettingsPanel {
     /// A group holding a single row is self-evident, so it is rendered without a
     /// title (the row's own label already names it).
     pub(crate) fn settings_group(&self, title: &str, rows: Vec<AnyElement>) -> impl IntoElement {
-        self.settings_group_with(title, rows, false)
+        widgets::settings_group(&self.palette, title, rows)
     }
 
     /// Like [`Self::settings_group`], but the group stretches to fill the height
@@ -817,53 +825,7 @@ impl SettingsPanel {
         title: &str,
         rows: Vec<AnyElement>,
     ) -> impl IntoElement {
-        self.settings_group_with(title, rows, true)
-    }
-
-    fn settings_group_with(
-        &self,
-        title: &str,
-        rows: Vec<AnyElement>,
-        stretch: bool,
-    ) -> impl IntoElement {
-        let theme = &self.theme;
-        let divider = theme.divider;
-        let text_3 = theme.text_3;
-        let show_title = rows.len() > 1;
-
-        let mut card = div()
-            .rounded(px(10.))
-            .bg(theme.surface)
-            .border(px(1.))
-            .border_color(divider)
-            .flex()
-            .flex_col()
-            .overflow_hidden()
-            .when(stretch, |card| card.flex_1().min_h(px(0.)));
-        for (i, row) in rows.into_iter().enumerate() {
-            if i > 0 {
-                // Inset hairline: separates rows without boxing each of them.
-                card = card.child(div().h(px(1.)).mx(px(14.)).bg(divider));
-            }
-            card = card.child(row);
-        }
-
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(6.))
-            .when(stretch, |group| group.flex_1().min_h(px(0.)))
-            .when(show_title, |group| {
-                group.child(
-                    div()
-                        .px(px(4.))
-                        .text_size(fs(10.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(text_3)
-                        .child(title.to_string()),
-                )
-            })
-            .child(card)
+        widgets::settings_group_fill(&self.palette, title, rows)
     }
 
     /// The bare shell every settings row shares: standard row padding and
@@ -871,15 +833,7 @@ impl SettingsPanel {
     /// directly when a row's control is bespoke, so it still lines up with the
     /// rows built from the `setting_row_*` helpers.
     pub(crate) fn row_shell(&self) -> Div {
-        div()
-            .min_h(px(66.))
-            .px(px(14.))
-            .py(px(12.))
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .gap(px(10.))
+        widgets::row_shell()
     }
 
     /// The label + description column of a settings row.
@@ -887,34 +841,7 @@ impl SettingsPanel {
     /// The label stays on one line (ellipsised); the description wraps and the
     /// row grows, so text never slides under the control on the right.
     pub(crate) fn row_text(&self, label: &str, desc: &str) -> Div {
-        let theme = &self.theme;
-        let text_1 = theme.text_1;
-        let text_3 = theme.text_3;
-        div()
-            .flex()
-            .flex_1()
-            .min_w(px(0.))
-            .flex_col()
-            .gap(px(3.))
-            .child(
-                div()
-                    .max_w_full()
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .whitespace_nowrap()
-                    .text_size(fs(12.))
-                    .font_weight(FontWeight::BOLD)
-                    .text_color(text_1)
-                    .child(label.to_string()),
-            )
-            .child(
-                div()
-                    .w_full()
-                    .text_size(fs(10.))
-                    .line_height(fs(14.))
-                    .text_color(text_3)
-                    .child(desc.to_string()),
-            )
+        widgets::row_text(&self.palette, label, desc)
     }
 
     /// A tappable row that opens something else (a list, a picker, a dialog):
@@ -926,26 +853,17 @@ impl SettingsPanel {
         desc: &str,
         on_click: impl Fn(&mut Window, &mut App) + 'static,
     ) -> impl IntoElement {
-        let theme = &self.theme;
-        let text_2 = theme.text_2;
-        let hover_bg = theme.titlebar_bg;
+        let p = self.palette;
         let on_click = Rc::new(on_click);
         self.row_shell()
             .cursor(CursorStyle::PointingHand)
-            .hover(move |style| style.bg(hover_bg))
+            .hover(move |style| style.bg(p.hover))
             .on_mouse_down(MouseButton::Left, move |_ev, window, cx| {
                 cx.stop_propagation();
                 on_click(window, cx);
             })
             .child(self.row_text(label, desc))
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .font_family("iconfont")
-                    .text_size(fs(14.))
-                    .text_color(text_2)
-                    .child("\u{e602}"),
-            )
+            .child(widgets::icon("\u{e602}", IconSize::Sm.scaled(), p.ink_2))
     }
 
     /// Render a settings row with an animated toggle switch on the right.
@@ -953,7 +871,7 @@ impl SettingsPanel {
     /// Single-control row: kept on one line, but the description wraps and the
     /// card grows instead of the text ever sliding under the toggle.
     fn setting_row_with_toggle(
-        &mut self,
+        &self,
         label: &str,
         desc: &str,
         value: bool,
@@ -961,24 +879,10 @@ impl SettingsPanel {
         cx: &mut Context<Self>,
         on_toggle: impl Fn(&mut Window, &mut App) + 'static,
     ) -> impl IntoElement {
-        let theme = &self.theme;
-        let divider = theme.divider;
-        let accent = theme.accent;
-
-        self.row_shell()
-            .child(self.row_text(label, desc))
-            .child(div().flex_shrink_0().child(render_toggle(
-                value,
-                label,
-                ToggleColors {
-                    accent,
-                    track_off: divider,
-                },
-                &mut self.toggle_states,
-                window,
-                cx,
-                on_toggle,
-            )))
+        let p = self.palette;
+        // 开关的滑动动画由 gpui-kit 的 motion 持有，id 用行标题保证唯一。
+        let control = widgets::toggle(&p, label, label, value, false, on_toggle, window, cx);
+        widgets::settings_row(&p, label, desc, control)
     }
 
     /// Render a toggle row with common boilerplate handled automatically.
@@ -1017,6 +921,18 @@ impl SettingsPanel {
     /// lines, a divider separates it from the footer, and the option buttons
     /// fill the footer row with equal widths. Because the buttons never share a
     /// line with the text, larger font sizes can't overlap the description.
+    /// Two-line settings card (option groups, sliders): the header holds the
+    /// label and a description that may wrap to any number of lines, a divider
+    /// separates it from the footer, and the footer never shares a line with the
+    /// text — so larger font sizes can't overlap the control.
+    fn row_header(&self, label: &str, desc: &str) -> Div {
+        div()
+            .px(Space::Lg.scaled())
+            .pt(Space::Lg.scaled())
+            .pb(Space::Md.scaled())
+            .child(widgets::row_text(&self.palette, label, desc))
+    }
+
     fn setting_row_with_options(
         &self,
         label: &str,
@@ -1025,94 +941,42 @@ impl SettingsPanel {
         active_key: &str,
         on_select: impl Fn(&'static str, &mut Window, &mut App) + 'static,
     ) -> impl IntoElement {
-        let theme = &self.theme;
-        let divider = theme.divider;
-        let accent = theme.accent;
-        let text_1 = theme.text_1;
-        let text_2 = theme.text_2;
-        let text_3 = theme.text_3;
-        let on_select = std::rc::Rc::new(on_select);
+        let p = self.palette;
+        let on_select = Rc::new(on_select);
 
         div()
             .flex()
             .flex_col()
-            // --- Header: label + wrapping description ---
-            .child(
-                div()
-                    .px(px(14.))
-                    .pt(px(12.))
-                    .pb(px(10.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(3.))
-                    .child(
-                        div()
-                            .max_w_full()
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .whitespace_nowrap()
-                            .text_size(fs(12.))
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(text_1)
-                            .child(label.to_string()),
-                    )
-                    .child(
-                        div()
-                            .w_full()
-                            .text_size(fs(10.))
-                            .line_height(fs(14.))
-                            .text_color(text_3)
-                            .child(desc.to_string()),
-                    ),
-            )
-            // --- Divider ---
-            .child(div().h(px(1.)).bg(divider))
+            .child(self.row_header(label, desc))
+            .child(div().h(px(1.)).bg(p.stroke))
             // --- Footer: equal-width option buttons on their own row ---
             .child(
                 div()
-                    .px(px(10.))
-                    .py(px(9.))
+                    .px(Space::Sm.scaled())
+                    .py(Space::Sm.scaled())
                     .flex()
                     .flex_row()
-                    .gap(px(6.))
+                    .gap(Space::Sm.scaled())
                     .children(options.iter().map(|(key, display_label)| {
                         let selected = *key == active_key;
-                        let btn_bg = if selected { accent } else { rgba(0x00000000) };
-                        let btn_text = if selected { rgb(0xffffff) } else { text_2 };
-                        let btn_weight = if selected {
-                            FontWeight::BOLD
+                        let tone = if selected {
+                            widgets::Tone::Accent
                         } else {
-                            FontWeight::default()
+                            widgets::Tone::Plain
                         };
                         let key = *key;
                         let on_select = on_select.clone();
 
-                        div()
-                            .flex_1()
-                            .min_w(px(0.))
-                            .h(px(28.))
-                            .rounded(px(7.))
-                            .bg(btn_bg)
-                            .when(!selected, |d| d.border(px(1.)).border_color(divider))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .overflow_hidden()
-                            .cursor(CursorStyle::PointingHand)
-                            .on_mouse_down(MouseButton::Left, move |_ev, _window, cx| {
-                                on_select(key, _window, cx);
-                            })
-                            .child(
-                                div()
-                                    .max_w_full()
-                                    .overflow_hidden()
-                                    .text_ellipsis()
-                                    .whitespace_nowrap()
-                                    .text_size(fs(11.))
-                                    .font_weight(btn_weight)
-                                    .text_color(btn_text)
-                                    .child(*display_label),
-                            )
+                        widgets::btn(
+                            &p,
+                            ElementId::Name(format!("{label}:opt:{key}").into()),
+                            *display_label,
+                            None,
+                            tone,
+                        )
+                        .flex_1()
+                        .justify_center()
+                        .on_click(move |_, window, cx| on_select(key, window, cx))
                     })),
             )
     }
@@ -1120,22 +984,22 @@ impl SettingsPanel {
     /// The layered palette every slider in the settings shares: track < fill <
     /// ticks < knob, derived from the theme accent so it adapts to light/dark.
     pub(crate) fn slider_colors(&self) -> SteppedSliderColors {
-        let theme = &self.theme;
-        let track_off = if theme.dark {
-            rgb(0x3a3b3c)
-        } else {
-            rgb(0xd0d2de)
-        };
+        let p = self.palette;
+        let accent = Rgba::from(p.accent);
+        let text = Rgba::from(p.ink_2);
+        // 滑块压在卡片面上，需要实色：半透明描边叠在「窗口底 + 卡片」上的等效值。
+        let track_off = Rgba::from(p.on_card("stroke-strong"));
         SteppedSliderColors {
-            accent: theme.accent,
-            fill: mix(track_off, theme.accent, 0.55),
+            accent,
+            fill: mix(track_off, accent, 0.55),
             track_off,
-            tick_passed: theme.accent,
-            tick_off: mix(track_off, theme.text_2, 0.35),
-            knob_ring: mix(theme.accent, rgb(0xffffff), 0.45),
-            knob_core: mix(theme.accent, rgb(0x000000), 0.22),
-            badge_bg: theme.titlebar_bg,
-            text: theme.text_2,
+            tick_passed: accent,
+            tick_off: mix(track_off, text, 0.35),
+            // 纯白/纯黑只做明度调整（提亮外环、压暗内芯），不随主题翻转。
+            knob_ring: mix(accent, rgb(0xffffff), 0.45),
+            knob_core: mix(accent, rgb(0x000000), 0.22),
+            badge_bg: Rgba::from(p.background),
+            text,
         }
     }
 
@@ -1162,54 +1026,28 @@ impl SettingsPanel {
         on_preview: impl Fn(&mut Window, &mut App) + 'static,
     ) -> impl IntoElement {
         let drag = self.slider_drag(slider_id, active);
-        let theme = &self.theme;
-        let divider = theme.divider;
-        let text_1 = theme.text_1;
-        let text_3 = theme.text_3;
+        let p = self.palette;
         let colors = self.slider_colors();
 
         div()
             .flex()
             .flex_col()
+            .child(self.row_header(label, desc))
+            .child(div().h(px(1.)).bg(p.stroke))
             .child(
                 div()
-                    .px(px(14.))
-                    .pt(px(12.))
-                    .pb(px(10.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(3.))
+                    .px(Space::Xl.scaled())
+                    .pt(Space::Md.scaled())
+                    .pb(Space::Sm.scaled())
                     .child(
-                        div()
-                            .max_w_full()
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .whitespace_nowrap()
-                            .text_size(fs(12.))
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(text_1)
-                            .child(label.to_string()),
-                    )
-                    .child(
-                        div()
-                            .w_full()
-                            .text_size(fs(10.))
-                            .line_height(fs(14.))
-                            .text_color(text_3)
-                            .child(desc.to_string()),
+                        SteppedSlider::new(slider_id, detents)
+                            .value(active)
+                            .label_inset(18.)
+                            .drag_state(drag)
+                            .colors(colors)
+                            .on_change(on_change)
+                            .on_preview(on_preview),
                     ),
-            )
-            .child(div().h(px(1.)).bg(divider))
-            .child(
-                div().px(px(16.)).pt(px(10.)).pb(px(8.)).child(
-                    SteppedSlider::new(slider_id, detents)
-                        .value(active)
-                        .label_inset(18.)
-                        .drag_state(drag)
-                        .colors(colors)
-                        .on_change(on_change)
-                        .on_preview(on_preview),
-                ),
             )
     }
 
@@ -1222,50 +1060,11 @@ impl SettingsPanel {
         value: String,
         on_click: impl Fn(&mut Window, &mut App) + 'static,
     ) -> impl IntoElement {
-        let theme = &self.theme;
-        let divider = theme.divider;
-        let text_1 = theme.text_1;
-        let text_2 = theme.text_2;
-        let text_3 = theme.text_3;
+        let p = self.palette;
         let on_click = Rc::new(on_click);
 
-        div()
-            .min_h(px(66.))
-            .px(px(14.))
-            .py(px(12.))
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .gap(px(10.))
-            // --- Left: label + wrapping description ---
-            .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .min_w(px(0.))
-                    .flex_col()
-                    .gap(px(3.))
-                    .child(
-                        div()
-                            .max_w_full()
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .whitespace_nowrap()
-                            .text_size(fs(12.))
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(text_1)
-                            .child(label.to_string()),
-                    )
-                    .child(
-                        div()
-                            .w_full()
-                            .text_size(fs(10.))
-                            .line_height(fs(14.))
-                            .text_color(text_3)
-                            .child(desc.to_string()),
-                    ),
-            )
+        widgets::row_shell()
+            .child(widgets::row_text(&p, label, desc))
             // --- Right: current value + caret (never compresses, never overlaps) ---
             .child(
                 div()
@@ -1273,12 +1072,12 @@ impl SettingsPanel {
                     .flex_shrink_0()
                     .flex_row()
                     .items_center()
-                    .gap(px(6.))
-                    .h(px(26.))
-                    .px(px(10.))
-                    .rounded(px(7.))
+                    .gap(Space::Sm.scaled())
+                    .h(Ctrl::Small.scaled())
+                    .px(Space::Md.scaled())
+                    .rounded(Radius::Md.scaled())
                     .border(px(1.))
-                    .border_color(divider)
+                    .border_color(p.stroke)
                     .cursor(CursorStyle::PointingHand)
                     .on_mouse_down(MouseButton::Left, move |_ev, window, cx| {
                         cx.stop_propagation();
@@ -1290,11 +1089,11 @@ impl SettingsPanel {
                             .overflow_hidden()
                             .text_ellipsis()
                             .whitespace_nowrap()
-                            .text_size(fs(11.))
-                            .text_color(text_2)
+                            .text_size(typography::font(type_role::BODY))
+                            .text_color(p.ink_2)
                             .child(value),
                     )
-                    .child(div().text_size(fs(12.)).text_color(text_3).child("›")),
+                    .child(widgets::icon("\u{e602}", IconSize::Sm.scaled(), p.ink_3)),
             )
     }
 
@@ -1343,6 +1142,7 @@ impl SettingsPanel {
         if !self.font_picker_open {
             return div().into_any_element();
         }
+        let p = self.palette;
         let theme = &self.theme;
         let surface = theme.surface;
         let divider = theme.divider;
@@ -1350,11 +1150,7 @@ impl SettingsPanel {
         let text_1 = theme.text_1;
         let text_2 = theme.text_2;
         let text_3 = theme.text_3;
-        let hover_bg = if theme.dark {
-            rgba(0xffffff10)
-        } else {
-            rgba(0x0000000a)
-        };
+        let hover_bg = Rgba::from(p.hover);
         let fonts = self.available_fonts.clone().unwrap_or_default();
         let current = crate::ui::font::family();
         let system_label = I18nKey::FontFamilySystem.text();
@@ -1403,7 +1199,7 @@ impl SettingsPanel {
         }
 
         let row_bg_transparent = rgba(0x00000000);
-        let row_text_selected = rgb(0xffffff);
+        let row_text_selected = Rgba::from(p.on_accent);
         let mk_entry =
             |family: String, display: String, preview_family: SharedString| -> AnyElement {
                 let selected = family == current;

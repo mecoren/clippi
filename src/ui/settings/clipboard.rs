@@ -7,6 +7,7 @@ use super::SettingsPanel;
 use crate::core::i18n_keys::I18nKey;
 use crate::services::copy_sound::{preview_sound, SOUND_LIST};
 use crate::ui::components::slider::{SliderDetent, SteppedSlider};
+use crate::ui::widgets;
 
 /// Height of the collapsed copy-sound card (header only).
 const SOUND_CARD_COLLAPSED: f32 = 52.0;
@@ -21,6 +22,7 @@ impl SettingsPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let p = self.palette;
         let state = self.state.clone();
         let this = cx.entity().clone();
         let window_manager = self.window_manager.clone();
@@ -53,7 +55,6 @@ impl SettingsPanel {
 
         let theme = self.theme.clone();
         let divider = theme.divider;
-        let accent = theme.accent;
         let text_1 = theme.text_1;
         let text_3 = theme.text_3;
 
@@ -600,40 +601,34 @@ impl SettingsPanel {
                                         }),
                                 ),
                         )
-                        .child(div().flex_shrink_0().child(
-                            crate::ui::components::toggle::render_toggle(
-                                enabled,
-                                "copy-sound",
-                                crate::ui::components::toggle::ToggleColors {
-                                    accent,
-                                    track_off: divider,
-                                },
-                                &mut self.toggle_states,
-                                window,
-                                cx,
-                                {
-                                    let state = state.clone();
-                                    let this = this.clone();
-                                    move |_window, cx| {
-                                        state.update(cx, |s, _cx| {
-                                            s.settings.copy_sound_enabled =
-                                                !s.settings.copy_sound_enabled;
-                                            s.settings.save();
+                        .child(div().flex_shrink_0().child(widgets::toggle(
+                            &p,
+                            "copy-sound",
+                            I18nKey::SettingCopySound.text(),
+                            enabled,
+                            false,
+                            {
+                                let state = state.clone();
+                                let this = this.clone();
+                                move |_window, cx| {
+                                    state.update(cx, |s, _cx| {
+                                        s.settings.copy_sound_enabled =
+                                            !s.settings.copy_sound_enabled;
+                                        s.settings.save();
+                                    });
+                                    this.update(cx, |panel, cx| {
+                                        panel.copy_sound_anim_gen =
+                                            panel.copy_sound_anim_gen.wrapping_add(1);
+                                        cx.emit(super::SettingsEvent::ClipboardSettingsChanged {
+                                            reload_items: false,
+                                            scroll_to_top: false,
                                         });
-                                        this.update(cx, |panel, cx| {
-                                            panel.copy_sound_anim_gen =
-                                                panel.copy_sound_anim_gen.wrapping_add(1);
-                                            cx.emit(
-                                                super::SettingsEvent::ClipboardSettingsChanged {
-                                                    reload_items: false,
-                                                    scroll_to_top: false,
-                                                },
-                                            );
-                                        });
-                                    }
-                                },
-                            ),
-                        )),
+                                    });
+                                }
+                            },
+                            window,
+                            cx,
+                        ))),
                 )
                 // Footer: bare detent slider — no fill, the knob rides the
                 // six numbered stops and each stop previews its sound.

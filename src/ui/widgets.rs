@@ -625,6 +625,16 @@ pub fn card(p: &Palette) -> Div {
 /// 设置分组：一枚卡片装下整组行，行间用内缩发丝线分隔；标题只在多行时
 /// 出现（单行的行标题已经说明一切）。
 pub fn settings_group(p: &Palette, title: &str, rows: Vec<AnyElement>) -> Div {
+    settings_group_inner(p, title, rows, false)
+}
+
+/// 同 [`settings_group`]，但整组撑满父容器剩余的高度。版本页的发布说明
+/// 是唯一可滚动区域，页面本身不滚动，所以只有这一个滚动条。
+pub fn settings_group_fill(p: &Palette, title: &str, rows: Vec<AnyElement>) -> Div {
+    settings_group_inner(p, title, rows, true)
+}
+
+fn settings_group_inner(p: &Palette, title: &str, rows: Vec<AnyElement>, stretch: bool) -> Div {
     let p = *p;
     let show_title = rows.len() > 1;
 
@@ -635,7 +645,8 @@ pub fn settings_group(p: &Palette, title: &str, rows: Vec<AnyElement>) -> Div {
         .border_color(p.stroke)
         .flex()
         .flex_col()
-        .overflow_hidden();
+        .overflow_hidden()
+        .when(stretch, |card| card.flex_1().min_h(px(0.)));
     for (index, row) in rows.into_iter().enumerate() {
         if index > 0 {
             card = card.child(div().h(px(1.)).mx(Space::Lg.scaled()).bg(p.stroke));
@@ -647,6 +658,7 @@ pub fn settings_group(p: &Palette, title: &str, rows: Vec<AnyElement>) -> Div {
         .flex()
         .flex_col()
         .gap(Space::Sm.scaled())
+        .when(stretch, |group| group.flex_1().min_h(px(0.)))
         .when(show_title, |group| {
             group.child(
                 div()

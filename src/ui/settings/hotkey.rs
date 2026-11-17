@@ -16,6 +16,7 @@ use crate::core::i18n_keys::I18nKey;
 use crate::core::settings::LatestHotkeyEntry;
 use crate::platform::hotkey::hotkey_display;
 use crate::state::app::AppState;
+use crate::ui::design::palette::Palette;
 use crate::ui::font::fs;
 use crate::ui::theme::ClippiTheme;
 use crate::ui::window_manager::{WinVTakeoverStatus, WindowManager};
@@ -93,21 +94,22 @@ impl SettingsPanel {
         recording: bool,
         pending_single: Option<String>,
         theme: &ClippiTheme,
+        p: &Palette,
         on_click: impl Fn(&mut Window, &mut App) + 'static,
         on_clear: Option<AppCallback>,
         options: RecordingCardOptions,
     ) -> impl IntoElement {
         let waiting = pending_single.is_some();
-        let waiting_color = rgb(0xeab308);
+        let waiting_color = Rgba::from(p.warn);
         // The row sits inside a settings group, so its recording state shows as
         // a background tint rather than its own card chrome.
         let row_tint = if waiting {
-            rgba(0xeab30822)
+            Rgba::from(p.warn.opacity(0.13))
         } else {
             theme.accent_soft
         };
         let recording_btn_bg = if waiting {
-            rgba(0xeab30822)
+            Rgba::from(p.warn.opacity(0.13))
         } else if recording {
             theme.accent_soft
         } else {
@@ -118,7 +120,7 @@ impl SettingsPanel {
         } else if recording {
             theme.accent
         } else {
-            rgb(0xffffff)
+            Rgba::from(p.on_accent)
         };
         let desc_color = if waiting {
             waiting_color
@@ -290,10 +292,12 @@ impl SettingsPanel {
     }
 
     /// Render a single latest-hotkey slot cell in the popup grid.
+    #[allow(clippy::too_many_arguments)]
     fn render_latest_slot_cell(
         index: usize,
         latest: &[LatestHotkeyEntry],
         theme: ClippiTheme,
+        p: &Palette,
         recording: bool,
         on_record: AppCallback,
         on_clear: Option<AppCallback>,
@@ -330,7 +334,7 @@ impl SettingsPanel {
             theme.titlebar_bg
         };
         let badge_text = if has_hotkey || recording {
-            rgb(0xffffff)
+            Rgba::from(p.on_accent)
         } else {
             theme.text_3
         };
@@ -424,6 +428,7 @@ impl SettingsPanel {
             })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn render_latest_hotkeys_popup_overlay(
         panel_entity: Entity<SettingsPanel>,
         state: Entity<AppState>,
@@ -431,6 +436,7 @@ impl SettingsPanel {
         latest: Vec<LatestHotkeyEntry>,
         recording_slot: Option<usize>,
         theme: ClippiTheme,
+        p: &Palette,
         layout: (f32, f32, f32, f32, f32),
     ) -> impl IntoElement {
         let (opacity, scale, offset, viewport_width, viewport_height) = layout;
@@ -526,7 +532,7 @@ impl SettingsPanel {
                                     .items_center()
                                     .justify_center()
                                     .cursor(CursorStyle::PointingHand)
-                                    .hover(|style| style.bg(rgba(0xffffff0d)))
+                                    .hover(|style| style.bg(Rgba::from(p.hover)))
                                     .on_mouse_down(MouseButton::Left, move |_ev, _window, cx| {
                                         cx.stop_propagation();
                                         close.update(cx, |panel, cx| {
@@ -593,6 +599,7 @@ impl SettingsPanel {
                                                 left,
                                                 &latest_l,
                                                 theme.clone(),
+                                                p,
                                                 recording_slot == Some(left),
                                                 rec,
                                                 Some(clr),
@@ -631,6 +638,7 @@ impl SettingsPanel {
                                                 right,
                                                 &latest_r,
                                                 theme.clone(),
+                                                p,
                                                 recording_slot == Some(right),
                                                 rec,
                                                 Some(clr),
@@ -697,6 +705,7 @@ impl SettingsPanel {
             WinVTakeoverStatus::Disabled => I18nKey::WinVTakeoverDesc.text(),
         };
         let show_recheck = takeover_status == WinVTakeoverStatus::HotkeyUnavailable;
+        let on_accent = Rgba::from(self.palette.on_accent);
         let show_manual = matches!(
             takeover_status,
             WinVTakeoverStatus::RegistryError | WinVTakeoverStatus::RegistryUpdateRequired
@@ -752,7 +761,7 @@ impl SettingsPanel {
                                     .rounded(px(5.))
                                     .bg(accent)
                                     .text_size(fs(10.))
-                                    .text_color(rgb(0xffffff))
+                                    .text_color(on_accent)
                                     .cursor(CursorStyle::PointingHand)
                                     .hover(|style| style.opacity(0.85))
                                     .on_mouse_down(MouseButton::Left, move |_ev, _window, cx| {
@@ -823,6 +832,7 @@ impl SettingsPanel {
 
         // 借用本地克隆而不是 `self.theme`：下面的行构造闭包会捕获这个引用并活到函数尾部，
         // 若直接借用 `self`，后面需要 `&mut self`（`toggle_states`）的开关行就无法构造。
+        let p = self.palette;
         let theme_owned = self.theme.clone();
         let theme = &theme_owned;
 
@@ -890,6 +900,7 @@ impl SettingsPanel {
                     recording,
                     pending_single.clone().filter(|_| recording),
                     theme,
+                    &p,
                     move |_window, cx| {
                         if state.read(cx).hotkey_recording
                             && state.read(cx).pending_single_hotkey.is_some()
@@ -917,6 +928,7 @@ impl SettingsPanel {
                     recording,
                     pending_single.clone().filter(|_| recording),
                     theme,
+                    &p,
                     move |_window, cx| {
                         if state.read(cx).hotkey_recording
                             && state.read(cx).pending_single_hotkey.is_some()
@@ -955,6 +967,7 @@ impl SettingsPanel {
                         quick_recording,
                         pending_single.filter(|_| quick_recording),
                         &theme,
+                        &p,
                         move |_window, cx| {
                             if state.read(cx).recording_quick_hotkey
                                 && state.read(cx).pending_single_hotkey.is_some()
@@ -1003,6 +1016,7 @@ impl SettingsPanel {
                     recording_paste_plain,
                     pending_single.clone().filter(|_| recording_paste_plain),
                     &theme,
+                    &p,
                     move |_window, cx| {
                         if state.read(cx).recording_paste_plain_hotkey
                             && state.read(cx).pending_single_hotkey.is_some()

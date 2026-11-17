@@ -10,6 +10,5 @@ pub mod shortcut_hint;
 pub mod slider;
 pub mod spinner;
 pub mod toast;
-pub mod toggle;
 
 pub mod scroll_filter_bar;

@@ -17,6 +17,7 @@ impl SettingsPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let p = self.palette;
         let theme = &self.theme;
         let wm = self.window_manager.clone();
         let this = cx.entity().clone();
@@ -135,7 +136,11 @@ impl SettingsPanel {
                                 div()
                                     .text_size(fs(11.))
                                     .font_weight(FontWeight::BOLD)
-                                    .text_color(if btn_disabled { text_3 } else { rgb(0xffffff) })
+                                    .text_color(if btn_disabled {
+                                        text_3
+                                    } else {
+                                        Rgba::from(p.on_accent)
+                                    })
                                     .child(btn_label),
                             );
                         if let (false, Some(handler)) = (btn_disabled, on_click.take()) {
