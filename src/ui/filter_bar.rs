@@ -8,7 +8,6 @@ use crate::ui::font::fs;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui::{InteractiveElement, StatefulInteractiveElement};
-use gpui_kit::component::tooltip::Tooltip;
 
 use crate::core::frontend::PANEL_OFFSET_X;
 use crate::core::i18n_keys::I18nKey;
@@ -16,7 +15,11 @@ use crate::state::app::AppState;
 
 use super::clipboard_list::ClipboardListView;
 use super::components::shortcut_hint::external_shortcut;
+use super::design::palette::Palette;
+use super::design::size::{Ctrl, IconSize, Radius, Space};
+use super::design::typography::{self, type_role};
 use super::theme::ClippiTheme;
+use super::widgets;
 
 pub(crate) struct FilterDef {
     pub key: &'static str,
@@ -127,10 +130,10 @@ pub(crate) fn filter_toolbar() -> Div {
         .items_center()
         .justify_start()
         .gap(px(TOOLBAR_GROUP_GAP))
-        .h(px(22.))
+        .h(Ctrl::Chip.px())
         .w_full()
-        .px(px(8.))
-        .pb(px(2.))
+        .px(Space::Md.px())
+        .pb(Space::Xxs.px())
         .flex_shrink_0()
 }
 
@@ -152,22 +155,17 @@ pub(crate) fn filter_chip(
     active: bool,
     theme: &ClippiTheme,
 ) -> Stateful<Div> {
-    let inactive = if theme.dark {
-        rgba(0xffffff0a)
-    } else {
-        rgba(0x00000008)
-    };
     div()
         .id(id)
-        .h(px(22.))
+        .h(Ctrl::Chip.px())
         .flex_1()
         .min_w(px(0.))
         .flex_shrink_0()
-        .rounded(px(5.))
+        .rounded(Radius::Md.px())
         .bg(if active {
             theme.accent_overlay()
         } else {
-            inactive
+            theme.btn_hover
         })
         .flex()
         .flex_row()
@@ -216,22 +214,27 @@ pub(crate) fn source_app_filter_bar(
             .as_ref()
             .and_then(|name| snapshot.source_app_icons.get(name))
         {
-            img(path.clone()).size(px(16.)).into_any_element()
+            img(path.clone()).size(IconSize::Md.px()).into_any_element()
         } else if name.is_none() {
             svg()
                 .path("picker-icons/layout-grid.svg")
-                .size(fs(12.))
+                .size(IconSize::Sm.px())
                 .text_color(if active { theme.accent } else { theme.text_2 })
                 .into_any_element()
         } else {
             // Apps without an icon keep the same fixed target size.
-            div()
-                .font_family("iconfont")
-                .text_size(fs(14.))
-                .child("\u{e616}")
-                .into_any_element()
+            widgets::icon(
+                "\u{e616}",
+                IconSize::Sm.px(),
+                if active {
+                    theme.accent.into()
+                } else {
+                    theme.text_2.into()
+                },
+            )
+            .into_any_element()
         };
-        let tooltip = label.clone();
+        let tooltip = SharedString::from(label.clone());
         let on_select = on_select.clone();
         let scroll = scroll.clone();
         choices_ui.push(
@@ -242,13 +245,9 @@ pub(crate) fn source_app_filter_bar(
                 chip_width,
             )
             .overflow_hidden()
-            .text_size(fs(11.))
+            .text_size(typography::font(type_role::BODY))
             .text_color(if active { theme.accent } else { theme.text_2 })
-            .tooltip(move |window, cx| {
-                let label = tooltip.clone();
-                Tooltip::element(move |_, _| div().text_size(fs(10.)).child(label.clone()))
-                    .build(window, cx)
-            })
+            .tooltip(move |window, cx| widgets::tooltip(tooltip.clone(), window, cx))
             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                 cx.stop_propagation();
                 if name.is_none() {
@@ -378,8 +377,9 @@ impl FilterBar {
 impl Render for FilterBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = &self.theme;
-        let accent = theme.accent;
-        let text_2 = theme.text_2;
+        let p = Palette::current(cx);
+        let accent = p.accent;
+        let text_2 = p.ink_2;
         let this = cx.entity().clone();
         let state_snapshot = self.state.read(cx);
         let alt_pressed = self.alt_shortcuts_available
@@ -432,16 +432,8 @@ impl Render for FilterBar {
             chip_gap,
         );
 
-        let inactive_button_bg = if theme.dark {
-            rgba(0xffffff0a)
-        } else {
-            rgba(0x00000008)
-        };
-        let toolbar_divider = if theme.dark {
-            rgba(0xffffff18)
-        } else {
-            rgba(0x00000014)
-        };
+        let inactive_button_bg = p.hover;
+        let toolbar_divider = p.stroke;
 
         let type_bar =
             filter_toolbar()
@@ -488,19 +480,12 @@ impl Render for FilterBar {
                                         .flex()
                                         .flex_shrink_0()
                                         .items_center()
-                                        .gap(px(2.))
-                                        .child(
-                                            div()
-                                                .flex_shrink_0()
-                                                .text_size(fs(12.))
-                                                .font_family("iconfont")
-                                                .text_color(filter_text)
-                                                .child(icon.to_string()),
-                                        )
+                                        .gap(Space::Xxs.px())
+                                        .child(widgets::icon(icon, IconSize::Sm.px(), filter_text))
                                         .when(!icon_only, |group| {
                                             group.child(
                                                 div()
-                                                    .text_size(fs(11.))
+                                                    .text_size(typography::font(type_role::BODY))
                                                     .font_weight(filter_weight)
                                                     .text_color(filter_text)
                                                     .child(label),
@@ -511,20 +496,14 @@ impl Render for FilterBar {
                                         filter_chip(("filter-type", index), is_active, theme)
                                             .border_1()
                                             .border_color(if is_active {
-                                                Rgba {
-                                                    a: 0.45,
-                                                    ..theme.accent
-                                                }
+                                                p.accent.opacity(0.45)
                                             } else {
-                                                rgba(0x00000000)
+                                                p.accent.opacity(0.)
                                             })
                                             .overflow_hidden()
                                             .when(icon_only, move |button| {
                                                 button.tooltip(move |window, cx| {
-                                                    Tooltip::element(move |_window, _cx| {
-                                                        div().text_size(fs(10.)).child(label)
-                                                    })
-                                                    .build(window, cx)
+                                                    widgets::tooltip(label, window, cx)
                                                 })
                                             })
                                             .on_mouse_down(
@@ -559,7 +538,7 @@ impl Render for FilterBar {
                     toolbar.child(
                         div()
                             .w(px(TOOLBAR_DIVIDER_WIDTH))
-                            .h(px(14.))
+                            .h(Space::Lg.px())
                             .flex_shrink_0()
                             .bg(toolbar_divider),
                     )
@@ -569,21 +548,17 @@ impl Render for FilterBar {
                         div()
                             .id("filter-tags")
                             .w(px(24.))
-                            .h(px(22.))
+                            .h(Ctrl::Chip.px())
                             .flex_shrink_0()
-                            .rounded(px(5.))
+                            .rounded(Radius::Sm.px())
                             .flex()
                             .items_center()
                             .justify_center()
                             .tooltip(|window, cx| {
-                                let label = I18nKey::FilterTagsTooltip.text();
-                                Tooltip::element(move |_window, _cx| {
-                                    div().text_size(fs(10.)).child(label)
-                                })
-                                .build(window, cx)
+                                widgets::tooltip(I18nKey::FilterTagsTooltip.text(), window, cx)
                             })
                             .bg(if has_tag_filter {
-                                theme.accent_overlay()
+                                p.accent_soft()
                             } else {
                                 inactive_button_bg
                             })
@@ -597,13 +572,11 @@ impl Render for FilterBar {
                                     });
                                 }
                             })
-                            .child(
-                                div()
-                                    .text_size(fs(14.))
-                                    .font_family("iconfont")
-                                    .text_color(if has_tag_filter { accent } else { text_2 })
-                                    .child("\u{e886}"),
-                            ),
+                            .child(widgets::icon(
+                                "\u{e886}",
+                                IconSize::Sm.px(),
+                                if has_tag_filter { accent } else { text_2 },
+                            )),
                     ),
                 );
         let measured_width = self.measured_width.clone();

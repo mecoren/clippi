@@ -1,9 +1,7 @@
 //! Compact window chrome with animated shortcut hints.
 
-use crate::ui::font::fs;
 use gpui::prelude::*;
 use gpui::*;
-use gpui_kit::component::tooltip::Tooltip;
 use std::sync::{Arc, OnceLock};
 
 use crate::core::i18n_keys::I18nKey;
@@ -11,21 +9,24 @@ use crate::state::app::AppState;
 
 use super::clipboard_list::ClipboardListView;
 use super::components::shortcut_hint::{shortcut_popover, shortcut_progress};
+use super::design::palette::Palette;
+use super::design::size::{Ctrl, IconSize, Radius, Space};
+use super::design::typography::{self, type_role};
 use super::theme::ClippiTheme;
-
-const TITLEBAR_BUTTON_SIZE: f32 = 28.0;
+use super::widgets;
 
 /// Shared hit area and hover treatment for every titlebar action.
-fn titlebar_button(id: &'static str, theme: &ClippiTheme) -> Stateful<Div> {
+fn titlebar_button(id: &'static str, p: &Palette) -> Stateful<Div> {
+    let p = *p;
     div()
         .id(id)
-        .size(px(TITLEBAR_BUTTON_SIZE))
-        .rounded(px(6.))
+        .size(Ctrl::Input.px())
+        .rounded(Radius::Md.px())
         .flex()
         .items_center()
         .justify_center()
         .cursor_pointer()
-        .hover(|style| style.bg(theme.btn_hover))
+        .hover(move |style| style.bg(p.hover))
 }
 
 /// In-app titlebar name: `Clippi`, or `Clippi (dev)` for a build that is not
@@ -189,9 +190,11 @@ impl Render for Titlebar {
         let pinned = self.pinned;
         let emoji_active = self.emoji_active;
         let emoji_titlebar = cx.entity().clone();
-        let accent = theme.accent;
-        let text_2 = theme.text_2;
-        let fav_color = theme.fav_color;
+        let p = Palette::current(cx);
+        let accent = p.accent;
+        let text_2 = p.ink_2;
+        let accent_soft = p.accent_soft();
+        let fav_color = p.fav;
         let hotkey_state = self.state.clone();
         let hotkey_list_view = self.list_view.clone();
         let fav_state = self.state.clone();
@@ -215,27 +218,27 @@ impl Render for Titlebar {
             .flex_row()
             .items_center()
             .w_full()
-            .h(px(30.0))
+            .h(super::design::tokens::dimension("titlebarHeight"))
             .flex_shrink_0()
             .rounded_t(px(top_radius))
-            .bg(theme.titlebar_bg)
+            .bg(p.background)
             // --- Left: logo + app name (also serves as drag area) ---
             .child(
                 div()
                     .flex()
                     .flex_row()
                     .items_center()
-                    .pl(px(12.))
-                    .pr(px(4.))
-                    .gap(px(7.))
+                    .pl(Space::Lg.px())
+                    .pr(Space::Xs.px())
+                    .gap(Space::Md.px())
                     .window_control_area(WindowControlArea::Drag)
                     // --- Logo (20x20, loaded from assets) ---
                     .child(gpui::img(logo).w(px(20.)).h(px(20.)))
                     // --- App name ---
                     .child(
                         div()
-                            .text_size(fs(12.))
-                            .font_weight(FontWeight::BOLD)
+                            .text_size(typography::font(type_role::BODY))
+                            .font_weight(typography::LABEL_WEIGHT)
                             .text_color(text_2)
                             .child(titlebar_app_name()),
                     ),
@@ -253,22 +256,17 @@ impl Render for Titlebar {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap(px(2.))
-                    .pr(px(4.))
+                    .gap(Space::Xxs.px())
+                    .pr(Space::Xs.px())
                     .when(emoji_enabled, |bar| {
                         bar.child(
                             div()
                                 .relative()
                                 .child(
-                                    titlebar_button("titlebar-emoji", theme)
-                                        .when(emoji_active, |button| button.bg(theme.accent_soft))
+                                    titlebar_button("titlebar-emoji", &p)
+                                        .when(emoji_active, |button| button.bg(accent_soft))
                                         .tooltip(|window, cx| {
-                                            Tooltip::element(|_, _| {
-                                                div()
-                                                    .text_size(fs(10.))
-                                                    .child(I18nKey::EmojiPanel.text())
-                                            })
-                                            .build(window, cx)
+                                            widgets::tooltip(I18nKey::EmojiPanel.text(), window, cx)
                                         })
                                         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                                             emoji_titlebar.update(cx, |_, cx| {
@@ -278,7 +276,7 @@ impl Render for Titlebar {
                                         .child(
                                             svg()
                                                 .path("picker-icons/smile.svg")
-                                                .size(px(17.))
+                                                .size(IconSize::Md.px())
                                                 .text_color(if emoji_active {
                                                     accent
                                                 } else {
@@ -304,13 +302,13 @@ impl Render for Titlebar {
                             div()
                                 .relative()
                                 .child(
-                                    titlebar_button("titlebar-hotkeys-filter", theme)
+                                    titlebar_button("titlebar-hotkeys-filter", &p)
                                         .tooltip(|window, cx| {
-                                            let label = I18nKey::TitlebarTooltipHotkeys.text();
-                                            Tooltip::element(move |_window, _cx| {
-                                                div().text_size(fs(10.)).child(label)
-                                            })
-                                            .build(window, cx)
+                                            widgets::tooltip(
+                                                I18nKey::TitlebarTooltipHotkeys.text(),
+                                                window,
+                                                cx,
+                                            )
                                         })
                                         .on_mouse_down(
                                             MouseButton::Left,
@@ -327,17 +325,11 @@ impl Render for Titlebar {
                                                     .update(cx, |_titlebar, cx| cx.notify());
                                             },
                                         )
-                                        .child(
-                                            div()
-                                                .text_size(fs(15.))
-                                                .font_family("iconfont")
-                                                .text_color(if hotkeys_active {
-                                                    accent
-                                                } else {
-                                                    text_2
-                                                })
-                                                .child("\u{e66b}"),
-                                        ),
+                                        .child(widgets::icon(
+                                            "\u{e66b}",
+                                            IconSize::Md.px(),
+                                            if hotkeys_active { accent } else { text_2 },
+                                        )),
                                 )
                                 .when(
                                     self.hotkeys_shortcut_available
@@ -358,13 +350,13 @@ impl Render for Titlebar {
                             div()
                                 .relative()
                                 .child(
-                                    titlebar_button("titlebar-transfer-filter", theme)
+                                    titlebar_button("titlebar-transfer-filter", &p)
                                         .tooltip(|window, cx| {
-                                            let label = I18nKey::TransferStation.text();
-                                            Tooltip::element(move |_window, _cx| {
-                                                div().text_size(fs(10.)).child(label)
-                                            })
-                                            .build(window, cx)
+                                            widgets::tooltip(
+                                                I18nKey::TransferStation.text(),
+                                                window,
+                                                cx,
+                                            )
                                         })
                                         .on_mouse_down(
                                             MouseButton::Left,
@@ -374,17 +366,11 @@ impl Render for Titlebar {
                                                 });
                                             },
                                         )
-                                        .child(
-                                            div()
-                                                .text_size(fs(15.))
-                                                .font_family("iconfont")
-                                                .text_color(if transfer_active {
-                                                    accent
-                                                } else {
-                                                    text_2
-                                                })
-                                                .child("\u{e794}"),
-                                        ),
+                                        .child(widgets::icon(
+                                            "\u{e794}",
+                                            IconSize::Md.px(),
+                                            if transfer_active { accent } else { text_2 },
+                                        )),
                                 )
                                 .when(
                                     self.transfer_shortcut_available
@@ -405,13 +391,13 @@ impl Render for Titlebar {
                             div()
                                 .relative()
                                 .child(
-                                    titlebar_button("titlebar-favorites-filter", theme)
+                                    titlebar_button("titlebar-favorites-filter", &p)
                                         .tooltip(|window, cx| {
-                                            let label = I18nKey::TitlebarTooltipFavorites.text();
-                                            Tooltip::element(move |_window, _cx| {
-                                                div().text_size(fs(10.)).child(label)
-                                            })
-                                            .build(window, cx)
+                                            widgets::tooltip(
+                                                I18nKey::TitlebarTooltipFavorites.text(),
+                                                window,
+                                                cx,
+                                            )
                                         })
                                         .on_mouse_down(
                                             MouseButton::Left,
@@ -427,17 +413,11 @@ impl Render for Titlebar {
                                                     .update(cx, |_titlebar, cx| cx.notify());
                                             },
                                         )
-                                        .child(
-                                            div()
-                                                .text_size(fs(15.))
-                                                .font_family("iconfont")
-                                                .text_color(if fav_active {
-                                                    fav_color
-                                                } else {
-                                                    text_2
-                                                })
-                                                .child("\u{e630}"),
-                                        ),
+                                        .child(widgets::icon(
+                                            "\u{e630}",
+                                            IconSize::Md.px(),
+                                            if fav_active { fav_color } else { text_2 },
+                                        )),
                                 )
                                 .when(
                                     self.alt_shortcuts_available && favorite_hint_progress > 0.001,
@@ -453,54 +433,38 @@ impl Render for Titlebar {
                     })
                     // --- Pin button (28x28) ---
                     .child(
-                        titlebar_button("titlebar-pin", theme)
+                        titlebar_button("titlebar-pin", &p)
                             .tooltip(move |window, cx| {
                                 let label = if pinned {
                                     I18nKey::TitlebarTooltipUnpin.text()
                                 } else {
                                     I18nKey::TitlebarTooltipPin.text()
                                 };
-                                Tooltip::element(move |_window, _cx| {
-                                    div().text_size(fs(10.)).child(label)
-                                })
-                                .build(window, cx)
+                                widgets::tooltip(label, window, cx)
                             })
                             .on_mouse_down(MouseButton::Left, move |_ev, _window, cx| {
                                 pin_titlebar.update(cx, |_titlebar, cx| {
                                     cx.emit(TitlebarEvent::TogglePin);
                                 });
                             })
-                            .child(
-                                div()
-                                    .text_size(fs(15.))
-                                    .font_family("iconfont")
-                                    .text_color(if pinned { accent } else { text_2 })
-                                    .child("\u{e633}"),
-                            ),
+                            .child(widgets::icon(
+                                "\u{e633}",
+                                IconSize::Md.px(),
+                                if pinned { accent } else { text_2 },
+                            )),
                     )
                     // --- Settings button (28x28) ---
                     .child(
-                        titlebar_button("titlebar-settings", theme)
+                        titlebar_button("titlebar-settings", &p)
                             .tooltip(|window, cx| {
-                                Tooltip::element(|_, _| {
-                                    div()
-                                        .text_size(fs(10.))
-                                        .child(I18nKey::SettingsTitle.text())
-                                })
-                                .build(window, cx)
+                                widgets::tooltip(I18nKey::SettingsTitle.text(), window, cx)
                             })
                             .on_mouse_down(MouseButton::Left, move |_ev, _window, cx| {
                                 settings_titlebar.update(cx, |_titlebar, cx| {
                                     cx.emit(TitlebarEvent::OpenSettings);
                                 });
                             })
-                            .child(
-                                div()
-                                    .text_size(fs(16.))
-                                    .font_family("iconfont")
-                                    .text_color(text_2)
-                                    .child("\u{e6b6}"),
-                            ),
+                            .child(widgets::icon("\u{e6b6}", IconSize::Md.px(), text_2)),
                     ),
             )
     }

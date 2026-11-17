@@ -3,13 +3,11 @@
 //!
 //! --- Matches the original Slint design: ---
 //! --- - 26px height, 1px top border, divider color ---
-//! --- - Left: app icon (15×15) + app name (12px) + window title (11px) ---
+//! --- - Left: app icon (16×16) + app name (12px) + window title (10px) ---
 //! --- - Right: clipboard-blacklist + hotkey-blacklist icon buttons (22×22) ---
 
-use crate::ui::font::fs;
 use gpui::prelude::*;
 use gpui::*;
-use gpui_kit::component::tooltip::Tooltip;
 
 use crate::core::i18n_keys::I18nKey;
 use crate::state::app::AppState;
@@ -17,34 +15,28 @@ use crate::ui::settings::hotkey;
 use crate::ui::settings::SettingsEvent;
 use crate::ui::settings::SettingsPanel;
 
-use super::theme::ClippiTheme;
+use super::design::palette::Palette;
+use super::design::size::{Ctrl, IconSize, Radius, Space};
+use super::design::typography::{self, type_role};
+use super::{design::tokens, widgets};
 
 #[derive(IntoElement)]
 pub struct BottomBar {
     state: Entity<AppState>,
     settings: Entity<SettingsPanel>,
-    theme: ClippiTheme,
 }
 
 impl BottomBar {
-    pub fn new(
-        state: Entity<AppState>,
-        settings: Entity<SettingsPanel>,
-        theme: ClippiTheme,
-    ) -> Self {
-        Self {
-            state,
-            settings,
-            theme,
-        }
+    pub fn new(state: Entity<AppState>, settings: Entity<SettingsPanel>) -> Self {
+        Self { state, settings }
     }
 }
 
 impl RenderOnce for BottomBar {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = self.theme.clone();
         let app_state = self.state.clone();
         let settings = self.settings.clone();
+        let p = Palette::current(cx);
 
         let (fg_name, fg_title) = {
             let state = app_state.read(cx);
@@ -59,28 +51,27 @@ impl RenderOnce for BottomBar {
             .filter(|path| path.exists());
 
         div()
-            .h(px(26.))
+            .h(tokens::dimension("bottomBarHeight"))
             .w_full()
-            .px(px(10.))
+            .px(Space::Lg.px())
             .flex()
             .items_center()
             .justify_between()
             .border_t(px(1.))
-            .border_color(theme.divider)
+            .border_color(p.stroke)
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(7.))
+                    .gap(Space::Md.px())
                     .min_w(px(0.))
                     .overflow_hidden()
                     .flex_1()
                     .when_some(foreground_icon, |row, image| {
                         row.child(
                             gpui::img(image)
-                                .w(px(15.))
-                                .h(px(15.))
-                                .rounded(px(2.))
+                                .size(IconSize::Md.px())
+                                .rounded(Radius::Sm.px())
                                 .flex_shrink_0(),
                         )
                     })
@@ -95,9 +86,9 @@ impl RenderOnce for BottomBar {
                                 .child(
                                     div()
                                         .flex_shrink_0()
-                                        .text_size(fs(12.))
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .text_color(theme.text_2)
+                                        .text_size(typography::font(type_role::BODY))
+                                        .font_weight(typography::LABEL_WEIGHT)
+                                        .text_color(p.ink_2)
                                         .child(fg_name.clone()),
                                 )
                                 .when(!fg_title.is_empty(), |text| {
@@ -107,12 +98,9 @@ impl RenderOnce for BottomBar {
                                             .overflow_hidden()
                                             .text_ellipsis()
                                             .flex_1()
-                                            .text_size(fs(11.))
-                                            .text_color(theme.text_3)
-                                            .child(format!(
-                                                " \u{2014} {}",
-                                                fg_title
-                                            )),
+                                            .text_size(typography::font(type_role::CAPTION))
+                                            .text_color(p.ink_3)
+                                            .child(format!(" \u{2014} {}", fg_title)),
                                     )
                                 }),
                         )
@@ -120,8 +108,8 @@ impl RenderOnce for BottomBar {
                     .when(!has_fg, |row| {
                         row.child(
                             div()
-                                .text_size(fs(11.))
-                                .text_color(theme.text_3)
+                                .text_size(typography::font(type_role::CAPTION))
+                                .text_color(p.ink_3)
                                 .child(I18nKey::BottomBarNoApp.text()),
                         )
                     }),
@@ -131,7 +119,7 @@ impl RenderOnce for BottomBar {
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(2.))
+                        .gap(Space::Xxs.px())
                         .child({
                             let fg = fg_name.clone();
                             let app_state = app_state.clone();
@@ -141,7 +129,7 @@ impl RenderOnce for BottomBar {
                                 &fg,
                             );
 
-                            let base_color = if is_blacklisted { theme.fav_color } else { theme.text_3 };
+                            let base_color = if is_blacklisted { p.fav } else { p.ink_3 };
                             let tooltip_label = if is_blacklisted {
                                 I18nKey::ConfirmRemoveClipboardBlacklistTitle.text()
                             } else {
@@ -149,20 +137,15 @@ impl RenderOnce for BottomBar {
                             };
                             div()
                                 .id("bottom-clipboard-blacklist")
-                                .w(px(22.))
-                                .h(px(22.))
-                                .rounded(px(4.))
-                                .font_family("iconfont")
-                                .text_size(fs(13.))
-                                .text_color(base_color)
+                                .size(Ctrl::Chip.px())
+                                .rounded(Radius::Sm.px())
                                 .flex()
                                 .items_center()
                                 .justify_center()
                                 .cursor(CursorStyle::PointingHand)
-                                .hover(|style| style.text_color(theme.accent))
+                                .hover(move |style| style.bg(p.hover))
                                 .tooltip(move |window, cx| {
-                                    let label = tooltip_label;
-                                    Tooltip::element(move |_window, _cx| div().text_size(fs(10.)).child(label)).build(window, cx)
+                                    widgets::tooltip(tooltip_label, window, cx)
                                 })
                                 .on_mouse_down(MouseButton::Left, move |_ev, _window, cx| {
                                     cx.stop_propagation();
@@ -172,7 +155,11 @@ impl RenderOnce for BottomBar {
                                         settings.update(cx, |_panel, cx| cx.emit(SettingsEvent::ShowHotkeyConfirm(hotkey::HotkeyConfirmAction::AddClipboardBlacklist { app_name: fg.clone() })));
                                     }
                                 })
-                                .child("\u{e638}")
+                                .child(widgets::icon(
+                                    "\u{e638}",
+                                    IconSize::Sm.px(),
+                                    base_color,
+                                ))
                         })
                         .child({
                             let fg = fg_name.clone();
@@ -180,20 +167,19 @@ impl RenderOnce for BottomBar {
                             let settings = settings.clone();
                             div()
                                 .id("bottom-hotkey-blacklist")
-                                .w(px(22.))
-                                .h(px(22.))
-                                .rounded(px(4.))
-                                .font_family("iconfont")
-                                .text_size(fs(13.))
-                                .text_color(theme.text_3)
+                                .size(Ctrl::Chip.px())
+                                .rounded(Radius::Sm.px())
                                 .flex()
                                 .items_center()
                                 .justify_center()
                                 .cursor(CursorStyle::PointingHand)
-                                .hover(|style| style.text_color(theme.accent))
+                                .hover(move |style| style.bg(p.hover))
                                 .tooltip(|window, cx| {
-                                    let label = I18nKey::BottomBarHotkeyBlacklist.text();
-                                    Tooltip::element(move |_window, _cx| div().text_size(fs(10.)).child(label)).build(window, cx)
+                                    widgets::tooltip(
+                                        I18nKey::BottomBarHotkeyBlacklist.text(),
+                                        window,
+                                        cx,
+                                    )
                                 })
                                 .on_mouse_down(MouseButton::Left, move |_ev, _window, cx| {
                                     cx.stop_propagation();
@@ -203,7 +189,7 @@ impl RenderOnce for BottomBar {
                                         settings.update(cx, |_panel, cx| cx.emit(SettingsEvent::ShowHotkeyConfirm(hotkey::HotkeyConfirmAction::AddBlacklist { app_name: fg.clone() })));
                                     }
                                 })
-                                .child("\u{e600}")
+                                .child(widgets::icon("\u{e600}", IconSize::Sm.px(), p.ink_3))
                         })
                 )
             })

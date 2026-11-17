@@ -3,7 +3,6 @@
 //! Split out of the legacy combined `SearchBar`: this component owns only the
 //! input field and its keyboard behavior. Type/tag filters live in `FilterBar`.
 
-use crate::ui::font::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -19,8 +18,11 @@ use crate::core::i18n_keys::I18nKey;
 use crate::state::app::AppState;
 
 use super::clipboard_list::{ClipboardListEvent, ClipboardListView};
+use super::design::size::{Ctrl, IconSize, Radius, Space};
+use super::design::typography::{self, type_role};
 use super::emoji_panel::EmojiPanel;
 use super::theme::ClippiTheme;
+use super::widgets;
 
 /// Debounce for applying search keywords: only the last stable keyword typed
 /// within this window is submitted.
@@ -258,9 +260,9 @@ impl Render for SearchBox {
                             .items_center()
                             .flex_1()
                             .min_w(px(0.))
-                            .h(px(28.))
+                            .h(Ctrl::Input.px())
                             .bg(surface)
-                            .rounded(px(10.))
+                            .rounded(Radius::Card.px())
                             .border(px(1.))
                             .border_color(divider)
                             .overflow_hidden()
@@ -394,16 +396,10 @@ impl Render for SearchBox {
                                     .w_full()
                                     .h_full()
                                     .px(px(0.))
-                                    .text_size(fs(12.))
-                                    .prefix(
-                                        div()
-                                            .pl(px(8.))
-                                            .pr(px(3.))
-                                            .text_size(fs(14.))
-                                            .font_family("iconfont")
-                                            .text_color(text_3)
-                                            .child("\u{e688}"),
-                                    ),
+                                    .text_size(typography::font(type_role::BODY))
+                                    .prefix(div().pl(Space::Md.px()).pr(Space::Xxs.px()).child(
+                                        widgets::icon("\u{e688}", IconSize::Md.px(), text_3.into()),
+                                    )),
                             ),
                     )
                     .child({
@@ -419,9 +415,9 @@ impl Render for SearchBox {
                             .items_center()
                             .flex_shrink_0()
                             .w(px(new_item_w))
-                            .h(px(NEW_ITEM_BUTTON_SIZE))
+                            .h(Ctrl::Input.px())
                             .bg(new_item_bg)
-                            .rounded(px(10.))
+                            .rounded(Radius::Card.px())
                             .border(px(1.))
                             .border_color(new_item_border)
                             .overflow_hidden()
@@ -454,24 +450,24 @@ impl Render for SearchBox {
                                     // compress instead of wiping into view.
                                     .flex_shrink_0()
                                     // Centers the glyph inside the collapsed 28px pill.
-                                    .pl(px(6.))
+                                    .pl(Space::Sm.px())
                                     .child(
                                         div()
-                                            .w(px(16.))
+                                            .w(IconSize::Md.px())
                                             .flex()
                                             .items_center()
                                             .justify_center()
-                                            .text_size(fs(16.))
+                                            .text_size(typography::font(type_role::TITLE))
                                             .text_color(new_item_fg)
                                             .child("+"),
                                     )
-                                    .child(div().w(px(4.)))
+                                    .child(div().w(Space::Xs.px()))
                                     .child(
                                         div()
                                             .w(px(NEW_ITEM_LABEL_WIDTH))
                                             .overflow_hidden()
                                             .whitespace_nowrap()
-                                            .text_size(fs(11.))
+                                            .text_size(typography::font(type_role::BODY))
                                             .text_color(new_item_fg)
                                             .opacity(expand)
                                             .child(I18nKey::EditNewItem.text()),

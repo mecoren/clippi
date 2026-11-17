@@ -1740,11 +1740,8 @@ impl Render for RootView {
                     )
                     // ── Bottom foreground-app status bar (clipboard + settings views) ──
                     .when(!is_edit, |panel| {
-                        let bottom = BottomBar::new(
-                            self.state.clone(),
-                            self.settings_panel.clone(),
-                            theme.clone(),
-                        );
+                        let bottom =
+                            BottomBar::new(self.state.clone(), self.settings_panel.clone());
                         panel.child(bottom)
                     }),
             )
