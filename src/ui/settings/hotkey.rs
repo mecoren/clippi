@@ -831,7 +831,7 @@ impl SettingsPanel {
             cfg!(target_os = "windows") && takeover_status != WinVTakeoverStatus::Disabled;
 
         // 借用本地克隆而不是 `self.theme`：下面的行构造闭包会捕获这个引用并活到函数尾部，
-        // 若直接借用 `self`，后面需要 `&mut self`（`toggle_states`）的开关行就无法构造。
+        // 与后面 `&mut self` 的行构造（Win+V 接管行）冲突。
         let p = self.palette;
         let theme_owned = self.theme.clone();
         let theme = &theme_owned;
