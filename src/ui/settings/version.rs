@@ -3,8 +3,8 @@
 use crate::ui::font::fs;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::scroll::ScrollableElement;
-use gpui_component::text::{TextView, TextViewStyle};
+use gpui_kit::component::scroll::ScrollableElement;
+use gpui_kit::component::text::{TextView, TextViewStyle};
 
 use crate::core::i18n_keys::I18nKey;
 use crate::services::update::UpdatePhase;
@@ -14,7 +14,7 @@ use super::SettingsPanel;
 impl SettingsPanel {
     pub fn render_version_tab(
         &mut self,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = &self.theme;
@@ -198,7 +198,7 @@ impl SettingsPanel {
             })
             .into_any_element()];
         if show_release_notes {
-            let mut build_notes = |el: Div| {
+            let build_notes = |el: Div| {
                 let notes = update_available
                     .as_ref()
                     .map(|i| i.release_notes.clone())
@@ -247,7 +247,7 @@ impl SettingsPanel {
                                 .text_size(fs(11.))
                                 .text_color(text_2)
                                 .child(
-                                    TextView::markdown("version-release-notes", notes, window, cx)
+                                    TextView::markdown("version-release-notes", notes)
                                         .style(style)
                                         .selectable(false),
                                 )
@@ -263,6 +263,20 @@ impl SettingsPanel {
             self.settings_group(I18nKey::GroupUpdate.text(), update_rows)
                 .into_any_element()
         });
+
+        // --- Changelog (bundled release notes, one page for every version) ---
+        container = container.child(div().flex_shrink_0().child(self.settings_group(
+            I18nKey::Changelog.text(),
+            vec![self
+                    .setting_row_opener(
+                        I18nKey::Changelog.text(),
+                        I18nKey::DescChangelog.text(),
+                        move |_window, cx| {
+                            this.update(cx, |panel, cx| panel.open_changelog(cx));
+                        },
+                    )
+                    .into_any_element()],
+        )));
 
         container
     }

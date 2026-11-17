@@ -20,9 +20,9 @@ use std::time::Duration;
 use crate::core::i18n_keys::I18nKey;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_transitions::WindowUseTransition;
 
 use crate::ui::theme::ClippiTheme;
+use crate::ui::transition::keyed_transition;
 
 type DialogHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 
@@ -241,26 +241,24 @@ impl ConfirmDialog {
 
         let animating = generation != 0;
         let (opacity, scale) = if animating {
-            let t_op = window.use_keyed_transition(
+            let op = keyed_transition(
+                window,
+                cx,
                 ("cd-opacity", generation),
-                cx,
                 DIALOG_ANIM_DURATION,
-                move |_, _| 0.0,
+                0.0_f32,
+                linear,
+                1.0,
             );
-            t_op.update(cx, |v, _cx| {
-                *v = 1.0;
-            });
-            let op = *t_op.evaluate(window, cx);
-            let t_sc = window.use_keyed_transition(
+            let sc = keyed_transition(
+                window,
+                cx,
                 ("cd-scale", generation),
-                cx,
                 DIALOG_ANIM_DURATION,
-                move |_, _| 0.96,
+                0.96_f32,
+                linear,
+                1.0,
             );
-            t_sc.update(cx, |v, _cx| {
-                *v = 1.0;
-            });
-            let sc = *t_sc.evaluate(window, cx);
             (op, sc)
         } else {
             (1.0, 1.0)
@@ -273,7 +271,7 @@ impl ConfirmDialog {
         };
 
         if let Some(ref handle) = focus_handle {
-            handle.focus(window);
+            handle.focus(window, cx);
         }
 
         crate::ui::components::modal_overlay::modal_overlay()

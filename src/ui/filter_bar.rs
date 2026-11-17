@@ -8,7 +8,7 @@ use crate::ui::font::fs;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui::{InteractiveElement, StatefulInteractiveElement};
-use gpui_component::tooltip::Tooltip;
+use gpui_kit::component::tooltip::Tooltip;
 
 use crate::core::frontend::PANEL_OFFSET_X;
 use crate::core::i18n_keys::I18nKey;

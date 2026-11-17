@@ -8,7 +8,6 @@
 //! - Bottom info row: tag pills + time label (9px font, 18px pills)
 //! - Dynamic height: 68/96/128px based on content type and card-height-mode
 
-use gpui_transitions::WindowUseTransition;
 use std::rc::Rc;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -16,8 +15,10 @@ use std::time::Duration;
 use base64::Engine;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::input::{Input, InputState};
-use gpui_component::text::{TextView, TextViewStyle};
+use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::text::{TextView, TextViewStyle};
+
+use crate::ui::transition::keyed_transition;
 
 use crate::core::color::detect_color;
 use crate::core::frontend::PANEL_OFFSET_X;
@@ -2459,8 +2460,6 @@ impl RenderOnce for ClipboardCard {
                                         TextView::html(
                                             ("clipboard-card-html", item.content_hash),
                                             html,
-                                            window,
-                                            cx,
                                         )
                                         .style(style)
                                         .selectable(false),
@@ -2484,8 +2483,6 @@ impl RenderOnce for ClipboardCard {
                                         TextView::markdown(
                                             ("clipboard-card-markdown", item.content_hash),
                                             markdown,
-                                            window,
-                                            cx,
                                         )
                                         .style(style)
                                         .selectable(false),
@@ -2929,6 +2926,7 @@ impl RenderOnce for ClipboardCard {
                             }
                             .into(),
                             offset: point(sc(0.), sc(1.)),
+                            inset: false,
                             blur_radius: sc(2.),
                             spread_radius: sc(0.),
                         }])
@@ -2959,6 +2957,7 @@ impl RenderOnce for ClipboardCard {
                         }
                         .into(),
                         offset: point(sc(0.), sc(1.)),
+                        inset: false,
                         blur_radius: sc(2.),
                         spread_radius: sc(0.),
                     }])
@@ -2988,6 +2987,7 @@ impl RenderOnce for ClipboardCard {
                             }
                             .into(),
                             offset: point(sc(0.), sc(1.)),
+                            inset: false,
                             blur_radius: sc(2.),
                             spread_radius: sc(0.),
                         }])
@@ -3019,6 +3019,7 @@ impl RenderOnce for ClipboardCard {
                             }
                             .into(),
                             offset: point(sc(0.), sc(1.)),
+                            inset: false,
                             blur_radius: sc(2.),
                             spread_radius: sc(0.),
                         }])
@@ -3058,6 +3059,7 @@ impl RenderOnce for ClipboardCard {
                             }
                             .into(),
                             offset: point(sc(0.), sc(1.)),
+                            inset: false,
                             blur_radius: sc(2.),
                             spread_radius: sc(0.),
                         }])
@@ -3105,6 +3107,7 @@ impl RenderOnce for ClipboardCard {
                             }
                             .into(),
                             offset: point(sc(0.), sc(1.)),
+                            inset: false,
                             blur_radius: sc(2.),
                             spread_radius: sc(0.),
                         }])
@@ -3146,6 +3149,7 @@ impl RenderOnce for ClipboardCard {
                             }
                             .into(),
                             offset: point(sc(0.), sc(1.)),
+                            inset: false,
                             blur_radius: sc(2.),
                             spread_radius: sc(0.),
                         }])
@@ -3175,6 +3179,7 @@ impl RenderOnce for ClipboardCard {
                         }
                         .into(),
                         offset: point(sc(0.), sc(1.)),
+                        inset: false,
                         blur_radius: sc(2.),
                         spread_radius: sc(0.),
                     }])
@@ -3260,19 +3265,17 @@ impl RenderOnce for ClipboardCard {
         // toolbar even though they also use negative ids. ---
         let toolbar_visible =
             is_hovered && !editing && !recording_hotkey && item.meta_type != "pending-image";
-        let reveal = window
-            .use_keyed_transition(
-                SharedString::from(format!("card-toolbar-{}", item.id)),
-                cx,
-                Duration::from_millis(160),
-                |_, _| 0.0_f32,
-            )
-            .with_easing(|t| 1.0 - (1.0 - t).powi(3));
-        // evaluate() schedules animation frames; notifying here also redraws idle cards.
-        reveal.update(cx, |value, _cx| {
-            *value = if toolbar_visible { 1.0 } else { 0.0 };
-        });
-        let reveal = *reveal.evaluate(window, cx);
+        // motion::transition schedules animation frames while running; the
+        // hover key state above also redraws idle cards.
+        let reveal = keyed_transition(
+            window,
+            cx,
+            SharedString::from(format!("card-toolbar-{}", item.id)),
+            Duration::from_millis(160),
+            0.0_f32,
+            |t| 1.0 - (1.0 - t).powi(3),
+            if toolbar_visible { 1.0 } else { 0.0 },
+        );
         // The wrapper allows tabs to extend above the clipped card without
         // reserving list space. Deferred painting keeps them above adjacent rows
         // and allows the toolbar shadow to extend beyond its own bounds.

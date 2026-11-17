@@ -22,8 +22,8 @@ use crate::ui::filter_bar::{
     filter_type_display, source_app_chip_width, source_app_filter_bar, visible_filter_types,
 };
 use crate::ui::theme::ClippiTheme;
-use gpui_component::tooltip::Tooltip;
-use gpui_transitions::WindowUseTransition;
+use crate::ui::transition::keyed_transition;
+use gpui_kit::component::tooltip::Tooltip;
 
 const VISIBLE_ROWS: usize = 5;
 const ROW_HEIGHT: f32 = 44.0;
@@ -69,7 +69,8 @@ const TOOLTIP_SEPARATOR_HEIGHT: f32 = 5.0;
 fn advanced_modifier_pressed(modifiers: Modifiers) -> bool {
     #[cfg(target_os = "macos")]
     {
-        modifiers.control || modifiers.secondary()
+        // gpui 0.3 起 `secondary()` 需要 `&App`；macOS 上等价于 Cmd。
+        modifiers.control || modifiers.platform
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -557,7 +558,7 @@ impl QuickPasteView {
         let generation = self.cursor_blink_generation;
         self.cursor_blink_on = true;
         self._cursor_blink_task = Some(cx.spawn(async move |weak_view, cx| loop {
-            Timer::after(CURSOR_BLINK_INTERVAL).await;
+            cx.background_executor().timer(CURSOR_BLINK_INTERVAL).await;
             let keep_going = weak_view
                 .update(cx, |view, cx| {
                     if !view.query_focused || view.cursor_blink_generation != generation {
@@ -1311,7 +1312,7 @@ impl Render for QuickPasteView {
             .bg(theme.bg)
             .flex()
             .flex_col()
-            .on_scroll_wheel(cx.listener(|this, ev: &ScrollWheelEvent, _window, cx| {
+            .on_scroll(cx.listener(|this, ev: &ScrollEvent, _window, cx| {
                 let pixel = ev.delta.pixel_delta(px(16.0));
                 if advanced_modifier_pressed(ev.modifiers) {
                     if matches!(ev.touch_phase, TouchPhase::Started) {
@@ -1481,19 +1482,16 @@ impl Render for QuickPasteView {
                             let tag_color = parse_hex_for_tag(color_hex);
                             let tag_id = *id;
                             let indicator_target: f32 = if active { 1.0 } else { 0.0 };
-                            let indicator_transition = window
-                                .use_keyed_transition(
-                                    ("quick-tag-indicator", tag_id as u64),
-                                    cx,
-                                    TAG_INDICATOR_ANIM_DURATION,
-                                    move |_, _| indicator_target,
-                                )
-                                .with_easing(quick_tag_indicator_ease);
-                            indicator_transition.update(cx, |value, _cx| {
-                                *value = indicator_target;
-                            });
-                            let indicator_progress = (*indicator_transition.evaluate(window, cx))
-                                .clamp(0.0_f32, 1.0_f32);
+                            let indicator_progress = keyed_transition(
+                                window,
+                                cx,
+                                ("quick-tag-indicator", tag_id as u64),
+                                TAG_INDICATOR_ANIM_DURATION,
+                                indicator_target,
+                                quick_tag_indicator_ease,
+                                indicator_target,
+                            )
+                            .clamp(0.0_f32, 1.0_f32);
                             let indicator_offset = (1.0_f32 - indicator_progress) / 2.0_f32;
                             let app_state = self.state.clone();
                             let tag_name = name.clone();
@@ -2077,11 +2075,7 @@ impl Render for QuickPasteView {
                                             .font_weight(FontWeight::BOLD)
                                             .text_color(theme.accent)
                                     })
-                                    .child(if self.ctrl_held {
-                                        format!("{} 高级功能", advanced_modifier_label())
-                                    } else {
-                                        format!("{} 高级功能", advanced_modifier_label())
-                                    }),
+                                    .child(format!("{} 高级功能", advanced_modifier_label())),
                             ),
                     )
                     // Search field. The popup never takes focus, so this renders

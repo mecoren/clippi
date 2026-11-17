@@ -26,5 +26,6 @@ pub mod tag_filter;
 pub mod tag_picker;
 pub mod theme;
 pub mod titlebar;
+pub mod transition;
 pub mod type_filter_config;
 pub mod window_manager;

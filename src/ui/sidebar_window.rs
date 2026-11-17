@@ -50,11 +50,13 @@ pub fn open(
         let sidebar_for_setup = sidebar.clone();
         let handle = gpui::Window::window_handle(window);
         cx.spawn(async move |cx| {
-            Timer::after(std::time::Duration::from_millis(1)).await;
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(1))
+                .await;
             let result = side_native
                 .ok_or("tag window native handle unavailable")
                 .and_then(|side| Attachment::install(main_native, side));
-            let _ = cx.update(|cx| match result {
+            cx.update(|cx| match result {
                 Ok(attachment) => {
                     sidebar_for_setup.update(cx, |sidebar, cx| {
                         sidebar.attach_window(attachment.clone(), cx);
@@ -68,7 +70,7 @@ pub fn open(
             });
         })
         .detach();
-        cx.new(|cx| gpui_component::Root::new(sidebar, window, cx))
+        cx.new(|cx| gpui_kit::component::Root::new(sidebar, window, cx))
     })
     .map_err(|error| error.to_string())?;
     Ok(())

@@ -1,6 +1,5 @@
 //! Individual action tabs extending above the clipboard card.
 
-use gpui_transitions::WindowUseTransition;
 use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Duration;
@@ -13,12 +12,13 @@ type ToolbarActionHandler = Rc<dyn Fn(&str, &mut gpui::Window, &mut gpui::App)>;
 
 use gpui::prelude::*;
 use gpui::*;
-use gpui_component::tooltip::Tooltip;
+use gpui_kit::component::tooltip::Tooltip;
 
 use crate::core::i18n_keys::I18nKey;
 use crate::core::types::{ContentType, RichData};
 
 use super::theme::ClippiTheme;
+use crate::ui::transition::keyed_transition;
 
 /// Properties that determine which toolbar buttons to show.
 pub struct HoverToolbarProps {
@@ -493,18 +493,17 @@ impl RenderOnce for HoverToolbar {
                     |_, _| false,
                 );
                 let is_hovered = *hovered.read(cx);
-                let extend = window
-                    .use_keyed_transition(
-                        SharedString::from(format!("toolbar-button-extend-{item_id}-{action_id}")),
-                        cx,
-                        Duration::from_millis(110),
-                        |_, _| 0.0_f32,
-                    )
-                    .with_easing(|t| 1.0 - (1.0 - t).powi(3));
-                extend.update(cx, |value, _cx| {
-                    *value = if is_hovered { 1.0 } else { 0.0 };
-                });
-                let extension = 6.0 * *extend.evaluate(window, cx);
+                let extend = keyed_transition(
+                    window,
+                    cx,
+                    SharedString::from(format!("toolbar-button-extend-{item_id}-{action_id}")),
+                    Duration::from_millis(110),
+                    0.0_f32,
+                    |t| 1.0 - (1.0 - t).powi(3),
+                    if is_hovered { 1.0 } else { 0.0 },
+                );
+
+                let extension = 6.0 * extend;
 
                 div()
                     .id(action_id)
@@ -522,6 +521,7 @@ impl RenderOnce for HoverToolbar {
                     .shadow(vec![BoxShadow {
                         color: pill_shadow.into(),
                         offset: point(sc(0.), sc(if below_card { 0.5 } else { -0.5 })),
+                        inset: false,
                         blur_radius: sc(1.),
                         spread_radius: sc(0.),
                     }])

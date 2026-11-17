@@ -5,15 +5,15 @@ use std::time::{Duration, Instant};
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::input::{Input, InputEvent, InputState};
-use gpui_component::scroll::ScrollableElement;
-use gpui_transitions::WindowUseTransition;
+use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::scroll::ScrollableElement;
 
 use crate::core::i18n_keys::I18nKey;
 use crate::core::settings::{compose_webdav_url, BackendConfig};
 use crate::services::backends::local_folder::detect_presets;
 use crate::services::gpui_sync::test_webdav_connection;
 use crate::ui::theme::ClippiTheme;
+use crate::ui::transition::keyed_transition;
 use crate::ui::window_manager::{WebDavBackendForm, WindowManager};
 
 const BACKEND_PANEL_ANIM_DURATION: Duration = Duration::from_millis(150);
@@ -204,14 +204,15 @@ impl AddBackendPanel {
         initial: f32,
         target: f32,
     ) -> f32 {
-        let transition = window
-            .use_keyed_transition(key, cx, BACKEND_PANEL_ANIM_DURATION, move |_, _| initial)
-            .with_easing(Self::ease_out);
-        transition.update(cx, |value, _cx| {
-            *value = target;
-        });
-        let value = *transition.evaluate(window, cx);
-        value
+        keyed_transition(
+            window,
+            cx,
+            key,
+            BACKEND_PANEL_ANIM_DURATION,
+            initial,
+            Self::ease_out,
+            target,
+        )
     }
 
     fn ease_out(delta: f32) -> f32 {
@@ -237,7 +238,7 @@ impl AddBackendPanel {
         self._test_task = Some(cx.spawn(async move |weak, cx| {
             let ok = background.await;
             if let Some(this) = weak.upgrade() {
-                let _ = this.update(cx, |panel, cx| {
+                this.update(cx, |panel, cx| {
                     panel.test_pending = false;
                     panel.test_ok = ok;
                     panel.test_error = if ok {
@@ -477,7 +478,9 @@ impl AddBackendPanel {
                     move |window, cx| {
                         let name = name_input.read(cx).value().to_string();
                         if name.trim().is_empty() {
-                            name_input.update(cx, |input, cx| input.focus_handle(cx).focus(window));
+                            name_input.update(cx, |input, cx| {
+                                input.focus_handle(cx).focus(window, cx);
+                            });
                             wm.update(cx, |wm, cx| {
                                 wm.show_warning_toast(I18nKey::BackendNameRequired.text(), cx);
                             });
@@ -584,7 +587,7 @@ impl AddBackendPanel {
                                 let name = name_input.read(cx).value().to_string();
                                 if name.trim().is_empty() {
                                     name_input.update(cx, |input, cx| {
-                                        input.focus_handle(cx).focus(window)
+                                        input.focus_handle(cx).focus(window, cx);
                                     });
                                     wm.update(cx, |wm, cx| {
                                         wm.show_warning_toast(
@@ -597,7 +600,7 @@ impl AddBackendPanel {
                                 let root_url = url_input.read(cx).value().to_string();
                                 if root_url.trim().is_empty() {
                                     url_input.update(cx, |input, cx| {
-                                        input.focus_handle(cx).focus(window)
+                                        input.focus_handle(cx).focus(window, cx);
                                     });
                                     wm.update(cx, |wm, cx| {
                                         wm.show_warning_toast(

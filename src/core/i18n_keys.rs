@@ -88,6 +88,9 @@ define_i18n! {
     VersionVerifying:       ("正在验证...", "Verifying..."),
     VersionInstalling:      ("正在安装...", "Installing..."),
     VersionReady:           ("更新准备就绪，点击重启", "Ready — restart to apply"),
+    Changelog:              ("更新日志", "Changelog"),
+    DescChangelog:          ("查看每个版本的新增、优化与修复", "See what changed in every release"),
+    ChangelogCurrent:       ("当前版本", "Current version"),
 
     // ─── Update settings ───
     SettingAutoCheckUpdate: ("自动检查更新", "Auto update check"),

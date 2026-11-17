@@ -316,14 +316,14 @@ fn main() {
 
     log::info!("Starting Clippi (GPUI experiment)");
 
-    Application::new().with_assets(ui::assets::PickerAssets).run(|cx: &mut App| {
+    gpui_kit::application().with_assets(ui::assets::PickerAssets).run(|cx: &mut App| {
         cx.on_app_quit(|_| {
             if !crate::services::usage_touch::flush() {
                 log::warn!("Quitting before all usage timestamps could be saved");
             }
             async {}
         }).detach();
-        gpui_component::init(cx);
+        gpui_kit::init(cx);
         // --- iconfont.ttf has an 'm' glyph added (mapped to first icon ---
         // --- glyph) because GPUI's load_family skips any font without ---
         // --- glyph_for_char('m') — icon-only fonts would be silently ---
@@ -415,12 +415,17 @@ fn main() {
             _ => core::settings::is_system_dark_mode(),
         };
         let theme_mode = if is_dark {
-            gpui_component::ThemeMode::Dark
+            gpui_kit::component::ThemeMode::Dark
         } else {
-            gpui_component::ThemeMode::Light
+            gpui_kit::component::ThemeMode::Light
         };
-        gpui_component::Theme::change(theme_mode, None, cx);
-        gpui_component::Theme::global_mut(cx).background = Hsla::transparent_black();
+        gpui_kit::component::Theme::change(theme_mode, None, cx);
+        // --- Must set a transparent background so the window's own rounded ---
+        // --- DWM frame shows through. `Theme::update` (unlike `global_mut`) ---
+        // --- keeps the Base-layer projection in step with this field. ---
+        gpui_kit::component::Theme::update(cx, |theme| {
+            theme.background = Hsla::transparent_black();
+        });
 
         // --- Apply the user's font scale + family. Must run after ---
         // --- `Theme::change` (which resets font_size/font_family to defaults). ---
@@ -516,7 +521,7 @@ fn main() {
                                 .unwrap_or_else(|| platform::monitor::get_scale_factor(0, 0));
                             let phys_w = (initial_logical_w * scale).round() as i32;
                             let phys_h = (initial_logical_h * scale).round() as i32;
-                            cx.spawn(async move |_cx| {
+                            cx.spawn(async move |cx| {
                                 use windows_sys::Win32::UI::WindowsAndMessaging::{
                                     SetWindowPos, HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
                                 };
@@ -537,7 +542,7 @@ fn main() {
                                             SWP_NOACTIVATE | SWP_NOSIZE,
                                         );
                                     }
-                                    Timer::after(std::time::Duration::from_millis(1)).await;
+                                    cx.background_executor().timer(std::time::Duration::from_millis(1)).await;
                                 }
 
                                 // Saved dimensions are logical outer-window sizes;
@@ -720,7 +725,7 @@ fn main() {
                         }
                     }
 
-                    cx.new(|cx| gpui_component::Root::new(quick_view, quick_window, cx))
+                    cx.new(|cx| gpui_kit::component::Root::new(quick_view, quick_window, cx))
                 }) {
                     log::error!("Failed to create quick paste window: {err}");
                 }
@@ -759,7 +764,7 @@ fn main() {
                 });
 
                 log::info!("startup: main view ready at +{}ms", startup_ms());
-                cx.new(|cx| gpui_component::Root::new(view, window, cx))
+                cx.new(|cx| gpui_kit::component::Root::new(view, window, cx))
             },
         )
         .unwrap();

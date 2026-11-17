@@ -3,7 +3,7 @@
 use crate::ui::font::fs;
 use gpui::prelude::*;
 use gpui::*;
-use gpui_component::tooltip::Tooltip;
+use gpui_kit::component::tooltip::Tooltip;
 use std::sync::{Arc, OnceLock};
 
 use crate::core::i18n_keys::I18nKey;

@@ -3,12 +3,19 @@
 # Copyright 2022-2024, axodotdev
 # SPDX-License-Identifier: MIT or Apache-2.0
 #
-# CI that, on every push to the release branch (`wait`):
+# CI that, on push of a `v*` tag:
 #
-# * resolves the version from Cargo.toml — there is no tag to push
-# * builds artifacts with dist (archives, installers, hashes)
+# * validates the tag against Cargo.toml and RELEASES.md (cheap `audit` gate)
+# * builds artifacts with dist (archives, NSIS installer, DMG, hashes)
 # * uploads those artifacts to the temporary workflow zip
-# * on success publishes a GitHub Release for v<version>
+# * on success publishes a stable GitHub Release for that tag
+#
+# Pushing to `wait` no longer releases: the tag is the release, so bot commits
+# and ordinary merges cannot rebuild or overwrite a published version.
+#
+# `workflow_dispatch` is a rehearsal — `dry_run` defaults to true and only
+# builds + uploads workflow artifacts. Turning it off publishes from the
+# current ref, which is the manual backfill path (it creates the tag too).
 #
 # The release is created directly as a stable (non-prerelease) release because
 # the in-app updater reads `/releases/latest`, which ignores prereleases.
@@ -17,19 +24,31 @@ name: Release
 permissions:
   "contents": "write"
 
+# A release must never be cancelled halfway: a half-uploaded Release is worse
+# than a queued one, so `cancel-in-progress` stays false.
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 # Locally customized from the dist-generated template: `dist init` regenerates
-# this file with tag-push triggers, so keep the `on:` block and the tag
-# resolution step in the `plan` job when that happens (dist-workspace.toml
-# already lists "ci" in `allow-dirty`).
+# this file with its own `on:` block, so keep the trigger and the `plan` job's
+# tag resolution when that happens (dist-workspace.toml already lists "ci" in
+# `allow-dirty`).
 #
-# Publishing is idempotent per version — the "Create GitHub Release" step
-# deletes the existing tag/release first — so pushing again without a version
-# bump just rebuilds the current release.
+# Publishing is idempotent per tag — the "Create GitHub Release" step deletes
+# the existing release first and never moves the tag — so re-running a failed
+# release rebuilds the same assets.
 on:
   push:
-    branches:
-      - wait
+    tags:
+      - 'v*'
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "只构建不发布（默认开启；确认流水线无问题后手动关闭才真正发版）"
+        required: false
+        default: true
+        type: boolean
 
 jobs:
   # Run 'dist plan' (or host) to determine what tasks we need to do
@@ -39,7 +58,11 @@ jobs:
       val: ${{ steps.plan.outputs.manifest }}
       tag: ${{ steps.tag.outputs.tag }}
       tag-flag: ${{ steps.tag.outputs.tag-flag }}
+      # Builds always run; `host` is what decides whether a Release is created.
       publishing: 'true'
+      # A tag push publishes. A dispatch only publishes when dry_run is
+      # explicitly turned off (the manual backfill path).
+      publish_release: ${{ github.event_name == 'push' || inputs.dry_run == false || inputs.dry_run == 'false' }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -47,19 +70,26 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
-      # The branch push carries no version, so the release tag is derived from
-      # the crate version. `[package] version` is the first match in Cargo.toml.
-      - name: Resolve release tag from Cargo.toml
+      # A tag push carries the version in the tag itself, so nothing is
+      # inferred. A manual dispatch has no tag, so it falls back to the crate
+      # version to keep `--tag` a valid semver for dist. `audit` rejects a tag
+      # that disagrees with the crate version before anything is built.
+      - name: Resolve release tag
         id: tag
         shell: bash
         run: |
-          VERSION="$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -n1)"
-          if [ -z "$VERSION" ]; then
-            echo "Cannot read the package version from Cargo.toml" >&2
-            exit 1
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            VERSION="$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -n1)"
+            if [ -z "$VERSION" ]; then
+              echo "Cannot read the package version from Cargo.toml" >&2
+              exit 1
+            fi
+            TAG="v${VERSION}"
           fi
-          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "tag-flag=--tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "tag-flag=--tag=${TAG}" >> "$GITHUB_OUTPUT"
       - name: Install dist
         # we specify bash to get pipefail; it guards against the `curl` command
         # failing. otherwise `sh` won't catch that `curl` returned non-0
@@ -70,11 +100,17 @@ jobs:
         with:
           name: cargo-dist-cache
           path: ~/.cargo/bin/dist
-      # Always `host`: this workflow only runs for the release branch, never for
-      # pull requests, so there is no plan-only mode to choose between.
+      # `host --steps=create` is what creates the Release object for a real
+      # publication; a rehearsal must stay side-effect free and use `plan`.
       - id: plan
+        env:
+          PUBLISH_RELEASE: ${{ github.event_name == 'push' || inputs.dry_run == false || inputs.dry_run == 'false' }}
         run: |
-          dist host --steps=create ${{ steps.tag.outputs.tag-flag }} --output-format=json > plan-dist-manifest.json
+          if [ "${PUBLISH_RELEASE}" = "true" ]; then
+            dist host --steps=create ${{ steps.tag.outputs.tag-flag }} --output-format=json > plan-dist-manifest.json
+          else
+            dist plan --output-format=json > plan-dist-manifest.json
+          fi
           echo "dist ran successfully"
           cat plan-dist-manifest.json
           echo "manifest=$(jq -c "." plan-dist-manifest.json)" >> "$GITHUB_OUTPUT"
@@ -84,12 +120,52 @@ jobs:
           name: artifacts-plan-dist-manifest
           path: plan-dist-manifest.json
 
+  # Cheap gate before the build matrix: a wrong tag or a missing changelog
+  # section would otherwise only surface after the Windows + macOS builds.
+  audit:
+    runs-on: "ubuntu-22.04"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Check tag, crate version and release notes agree
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -n1)"
+          if [ -z "$VERSION" ]; then
+            echo "::error::Cannot read the package version from Cargo.toml"
+            exit 1
+          fi
+
+          # `[package.metadata.bundle] version` is a second copy that must move
+          # with the crate version; drift ships a wrong app bundle version.
+          BUNDLE_VERSION="$(awk '/^\[package\.metadata\.bundle\]/{f=1; next} /^\[/{f=0} f && /^version = /{gsub(/[",]/, ""); print $3; exit}' Cargo.toml)"
+          if [ -n "$BUNDLE_VERSION" ] && [ "$BUNDLE_VERSION" != "$VERSION" ]; then
+            echo "::error::Cargo.toml [package] version ${VERSION} != [package.metadata.bundle] version ${BUNDLE_VERSION}"
+            exit 1
+          fi
+
+          if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "v${VERSION}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match Cargo.toml version v${VERSION} — bump the version, commit, then tag that commit"
+            exit 1
+          fi
+
+          if ! bash scripts/extract_release_notes.sh "$VERSION" RELEASES.md > /dev/null; then
+            echo "::error::RELEASES.md has no '# Version ${VERSION}' section"
+            exit 1
+          fi
+
+          echo "audit ok: v${VERSION}"
+
   # Build and packages all the platform-specific things
   build-local-artifacts:
     name: build-local-artifacts (${{ join(matrix.targets, ', ') }})
     # Let the initial task tell us to not run (currently very blunt)
     needs:
       - plan
+      - audit
     if: ${{ fromJson(needs.plan.outputs.val).ci.github.artifacts_matrix.include != null && (needs.plan.outputs.publishing == 'true' || fromJson(needs.plan.outputs.val).ci.github.pr_run_mode == 'upload') }}
     strategy:
       fail-fast: false
@@ -337,10 +413,13 @@ jobs:
   host:
     needs:
       - plan
+      - audit
       - build-local-artifacts
       - build-global-artifacts
-    # Only run if we're "publishing", and only if plan, local and global didn't fail (skipped is fine)
-    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.publishing == 'true' && (needs.build-global-artifacts.result == 'skipped' || needs.build-global-artifacts.result == 'success') && (needs.build-local-artifacts.result == 'skipped' || needs.build-local-artifacts.result == 'success') }}
+    # Only a real publication runs this job (tag push, or a dispatch with
+    # dry_run off), and only when audit, plan, local and global didn't fail
+    # (skipped is fine).
+    if: ${{ always() && needs.audit.result == 'success' && needs.plan.result == 'success' && needs.plan.outputs.publishing == 'true' && needs.plan.outputs.publish_release == 'true' && (needs.build-global-artifacts.result == 'skipped' || needs.build-global-artifacts.result == 'success') && (needs.build-local-artifacts.result == 'skipped' || needs.build-local-artifacts.result == 'success') }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     runs-on: "ubuntu-22.04"
@@ -418,13 +497,24 @@ jobs:
             printf '%s\n' "$ANNOUNCEMENT_BODY" | sed -n '/^## Download/,$p'
           } > "$RUNNER_TEMP/notes.txt"
 
-          gh release delete "$TAG" --cleanup-tag -y || true
+          # Never delete the tag: on a tag push it is the input of this run and
+          # must keep pointing at the same commit, so a re-run only rebuilds
+          # the release assets.
+          gh release delete "$TAG" -y || true
+
           # Title follows the repo convention of the tag name (v0.4.4, v0.4.5)
           # instead of cargo-dist's changelog-derived "Version 0.4.5".
           # Published as a stable release: the updater queries
           # `/releases/latest`, which skips prereleases, so nothing would ever
           # see a prerelease here.
-          gh release create "$TAG" --target "$RELEASE_COMMIT" --title "$TAG" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
+          #
+          # `--target` is only for the manual backfill (no tag yet); attaching
+          # to an existing tag must not try to move it.
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" > /dev/null 2>&1; then
+            gh release create "$TAG" --title "$TAG" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
+          else
+            gh release create "$TAG" --target "$RELEASE_COMMIT" --title "$TAG" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
+          fi
       - name: Add DMG and NSIS to release notes
         env:
           TAG: "${{ needs.plan.outputs.tag }}"

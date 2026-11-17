@@ -5,8 +5,8 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::input::Input;
-use gpui_component::tooltip::Tooltip;
+use gpui_kit::component::input::Input;
+use gpui_kit::component::tooltip::Tooltip;
 
 use crate::core::i18n_keys::I18nKey;
 use crate::core::settings::migrate_database;
@@ -80,7 +80,7 @@ impl SettingsPanel {
                 None
             };
             if let Some(panel) = weak.upgrade() {
-                let _ = panel.update(cx, |panel, cx| {
+                panel.update(cx, |panel, cx| {
                     panel.local_backup_busy = false;
                     match result {
                         Some(Ok(prepared))
@@ -179,7 +179,7 @@ impl SettingsPanel {
                 }
             };
             if let Some(panel) = weak.upgrade() {
-                let _ = panel.update(cx, |panel, cx| {
+                panel.update(cx, |panel, cx| {
                     panel.local_backup_busy = false;
                     match result {
                         Some(Ok(Some(mut settings))) => {
@@ -522,60 +522,45 @@ impl SettingsPanel {
                                         };
                                         let new_path = new_path.path().to_path_buf();
                                         let path_str = new_path.to_string_lossy().to_string();
-                                        let old = match cx.read_entity(&state, |s, _cx| {
+                                        let old = cx.read_entity(&state, |s, _cx| {
                                             s.settings.resolve_db_path()
-                                        }) {
-                                            Ok(old) => old,
-                                            Err(e) => {
-                                                log::error!("failed to read settings: {e}");
-                                                return;
-                                            }
-                                        };
+                                        });
                                         if old == new_path {
                                             return;
                                         }
                                         // AppState mutations run on this thread; drain usage jobs
                                         // before checkpointing and copying, with no await in between.
                                         if !crate::services::usage_touch::flush() {
-                                            let _ = task_panel.update(cx, |_panel, cx| {
+                                            task_panel.update(cx, |_panel, cx| {
                                                 cx.emit(SettingsEvent::DataError(
                                                     I18nKey::ErrUsagePending.text().into(),
                                                 ));
                                             });
                                             return;
                                         }
-                                        match cx.read_entity(&state, |s, _cx| {
+                                        if let Err(e) = cx.read_entity(&state, |s, _cx| {
                                             s.db.checkpoint_for_migration()
                                         }) {
-                                            Ok(Err(e)) => {
-                                                log::error!(
-                                                    "checkpoint failed before migration: {e}"
-                                                );
-                                                let _ = task_panel.update(cx, |_panel, cx| {
-                                                    cx.emit(SettingsEvent::DataError(format!(
-                                                        "{}: {e}",
-                                                        I18nKey::ErrDataOp.text()
-                                                    )));
-                                                });
-                                                return;
-                                            }
-                                            Err(e) => {
-                                                log::error!("failed to read database: {e}");
-                                                return;
-                                            }
-                                            Ok(Ok(())) => {}
+                                            log::error!("checkpoint failed before migration: {e}");
+                                            task_panel.update(cx, |_panel, cx| {
+                                                cx.emit(SettingsEvent::DataError(format!(
+                                                    "{}: {e}",
+                                                    I18nKey::ErrDataOp.text()
+                                                )));
+                                            });
+                                            return;
                                         }
                                         match migrate_database(&old, &new_path) {
                                             Ok(()) => {
-                                                let _ = state.update(cx, |s, _cx| {
+                                                state.update(cx, |s, _cx| {
                                                     s.settings.db_path = path_str;
                                                     s.settings.save();
                                                 });
                                                 let _ = crate::core::settings::spawn_new_process();
-                                                let _ = cx.update(|cx| cx.quit());
+                                                cx.update(|cx| cx.quit());
                                             }
                                             Err(e) => {
-                                                let _ = task_panel.update(cx, |_panel, cx| {
+                                                task_panel.update(cx, |_panel, cx| {
                                                     cx.emit(SettingsEvent::DataError(e));
                                                 });
                                             }

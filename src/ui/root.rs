@@ -11,10 +11,10 @@ use std::time::{Duration, Instant};
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_transitions::WindowUseTransition;
 
 use crate::core::i18n_keys::I18nKey;
 use crate::state::app::AppState;
+use crate::ui::transition::keyed_transition;
 use crate::ui::window_manager::{WindowManager, WindowManagerEvent};
 
 /// Toast enter / exit animation duration.
@@ -137,18 +137,21 @@ impl RootView {
         // --- Sync gpui_component theme so that Input, Scrollbar ---
         // --- and other gpui_component widgets follow our theme. ---
         let is_dark = theme.bg == rgb(0x191a1b);
-        gpui_component::Theme::change(
+        gpui_kit::component::Theme::change(
             if is_dark {
-                gpui_component::ThemeMode::Dark
+                gpui_kit::component::ThemeMode::Dark
             } else {
-                gpui_component::ThemeMode::Light
+                gpui_kit::component::ThemeMode::Light
             },
             None,
             cx,
         );
         // --- Must restore transparent background after Theme::change ---
         // --- resets it — otherwise the window loses transparency. ---
-        gpui_component::Theme::global_mut(cx).background = Hsla::transparent_black();
+        // --- `Theme::update` keeps the Base projection in step. ---
+        gpui_kit::component::Theme::update(cx, |theme| {
+            theme.background = Hsla::transparent_black();
+        });
         // --- Theme::change also resets font_size/font_family to ---
         // --- defaults; re-push the user's font scale and family. ---
         super::font::apply_to_global_theme(cx);
@@ -207,7 +210,7 @@ impl RootView {
                 window_manager.clone(),
             )
         });
-        list_view.update(cx, |list, _cx| list.focus(window));
+        list_view.update(cx, |list, cx| list.focus(window, cx));
         let titlebar = cx.new(|_cx| Titlebar::new(state.clone(), list_view.clone(), theme.clone()));
         let search_box = cx
             .new(|cx| SearchBox::new(state.clone(), list_view.clone(), theme.clone(), window, cx));
@@ -1384,7 +1387,7 @@ impl Render for RootView {
                     bar.focus(window, cx);
                 });
             } else {
-                self.list_view.update(cx, |list, _cx| list.focus(window));
+                self.list_view.update(cx, |list, cx| list.focus(window, cx));
             }
         }
 
@@ -1427,9 +1430,9 @@ impl Render for RootView {
                         self.toast_generation = self.toast_generation.wrapping_add(1);
                         self._toast_timer =
                             Some(cx.spawn(async move |weak_self: WeakEntity<RootView>, cx| {
-                                Timer::after(dur).await;
+                                cx.background_executor().timer(dur).await;
                                 if let Some(this) = weak_self.upgrade() {
-                                    let _ = this.update(cx, |root, root_cx| {
+                                    this.update(cx, |root, root_cx| {
                                         // --- Start exit animation — same generation so the ---
                                         // --- transition smoothly reverses from its current value. ---
                                         root.toast_dismissing = true;
@@ -1437,10 +1440,11 @@ impl Render for RootView {
                                     });
                                     // --- Cleanup after the exit transition finishes, plus a ---
                                     // --- small grace period so the visual zero point is stable. ---
-                                    Timer::after(TOAST_ANIM_DURATION + Duration::from_millis(60))
+                                    cx.background_executor()
+                                        .timer(TOAST_ANIM_DURATION + Duration::from_millis(60))
                                         .await;
                                     if let Some(this) = weak_self.upgrade() {
-                                        let _ = this.update(cx, |root, root_cx| {
+                                        this.update(cx, |root, root_cx| {
                                             root.state.update(root_cx, |s, _cx| s.clear_toast());
                                             root.toast_dismissing = false;
                                             root.toast_actions = None;
@@ -1501,7 +1505,7 @@ impl Render for RootView {
             // paints into the transparent border ring.
             .border(px(panel_margin))
             .border_color(rgba(0x00000000))
-            .font_family(gpui_component::Theme::global(cx).font_family.clone())
+            .font_family(gpui_kit::component::Theme::global(cx).font_family.clone())
             .track_focus(&root_focus)
             .capture_key_down(move |ev: &KeyDownEvent, window, cx| {
                 if ev.keystroke.key == "escape"
@@ -1630,7 +1634,9 @@ impl Render for RootView {
                     cx.stop_propagation();
                 } else if is_settings {
                     // Close the innermost overlay first, then go back to clipboard
-                    if root_settings.read(cx).font_picker_open {
+                    if root_settings.read(cx).changelog_open {
+                        root_settings.update(cx, |panel, cx| panel.close_changelog(cx));
+                    } else if root_settings.read(cx).font_picker_open {
                         root_settings.update(cx, |panel, cx| panel.close_font_picker(cx));
                     } else if root_settings.read(cx).app_list_popup_open() {
                         root_settings.update(cx, |panel, cx| {
@@ -1645,7 +1651,7 @@ impl Render for RootView {
                             this.switch_view("clipboard");
                             cx.notify();
                         });
-                        root_list.update(cx, |list, _cx| list.focus(window));
+                        root_list.update(cx, |list, cx| list.focus(window, cx));
                     }
                     cx.stop_propagation();
                 } else if is_edit {
@@ -1662,7 +1668,7 @@ impl Render for RootView {
                         });
                     } else {
                         // Panels were dismissed by ESC — return focus to the list
-                        root_list.update(cx, |list, _cx| list.focus(window));
+                        root_list.update(cx, |list, cx| list.focus(window, cx));
                     }
                     cx.stop_propagation();
                 }
@@ -1876,7 +1882,7 @@ impl Render for RootView {
                                 l.update(cx, |lst, cx| lst.dismiss_context_menu(cx));
                             }
                         })
-                        .on_scroll_wheel({
+                        .on_scroll({
                             let l = list.clone();
                             move |_ev, _window, cx| {
                                 l.update(cx, |lst, cx| lst.dismiss_context_menu(cx));
@@ -3124,31 +3130,25 @@ impl Render for RootView {
                         12.0
                     };
 
-                    let opacity_transition = window
-                        .use_keyed_transition(
-                            ("toast-opacity", toast_key),
-                            cx,
-                            TOAST_ANIM_DURATION,
-                            move |_, _| 1.0 - opacity_target,
-                        )
-                        .with_easing(RootView::toast_ease_out);
-                    opacity_transition.update(cx, |value, _cx| {
-                        *value = opacity_target;
-                    });
-                    let opacity = *opacity_transition.evaluate(window, cx);
+                    let opacity = keyed_transition(
+                        window,
+                        cx,
+                        ("toast-opacity", toast_key),
+                        TOAST_ANIM_DURATION,
+                        1.0_f32 - opacity_target,
+                        RootView::toast_ease_out,
+                        opacity_target,
+                    );
 
-                    let slide_transition = window
-                        .use_keyed_transition(
-                            ("toast-slide-y", toast_key),
-                            cx,
-                            TOAST_ANIM_DURATION,
-                            move |_, _| 12.0_f32,
-                        )
-                        .with_easing(RootView::toast_ease_out);
-                    slide_transition.update(cx, |value, _cx| {
-                        *value = slide_target;
-                    });
-                    let slide_y = *slide_transition.evaluate(window, cx);
+                    let slide_y = keyed_transition(
+                        window,
+                        cx,
+                        ("toast-slide-y", toast_key),
+                        TOAST_ANIM_DURATION,
+                        12.0_f32,
+                        RootView::toast_ease_out,
+                        slide_target,
+                    );
 
                     let dismiss_state = self.toast_dismissing;
                     let actions = self.toast_actions.clone().unwrap_or_default();
@@ -3350,13 +3350,13 @@ impl RootView {
                 if self.state.read(cx).settings.auto_focus_search {
                     self.search_box.update(cx, |bar, cx| bar.focus(window, cx));
                 } else {
-                    self.list_view.update(cx, |list, _cx| list.focus(window));
+                    self.list_view.update(cx, |list, cx| list.focus(window, cx));
                 }
             }
             "emoji" => self
                 .emoji_panel
                 .update(cx, |panel, cx| panel.focus(window, cx)),
-            _ => self.focus_handle.focus(window),
+            _ => self.focus_handle.focus(window, cx),
         }
     }
 
@@ -3462,14 +3462,15 @@ impl RootView {
         initial: f32,
         target: f32,
     ) -> f32 {
-        let transition = window
-            .use_keyed_transition(key, cx, duration, move |_, _| initial)
-            .with_easing(RootView::ease_out);
-        transition.update(cx, |value, _cx| {
-            *value = target;
-        });
-        let value = *transition.evaluate(window, cx);
-        value
+        keyed_transition(
+            window,
+            cx,
+            key,
+            duration,
+            initial,
+            RootView::ease_out,
+            target,
+        )
     }
 
     fn ease_out(delta: f32) -> f32 {

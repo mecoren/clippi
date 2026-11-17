@@ -12,9 +12,9 @@ use std::rc::Rc;
 
 use gpui::prelude::*;
 use gpui::*;
-use gpui_component::input::{Input, InputState};
-use gpui_component::scroll::{ScrollableElement, ScrollbarAxis};
-use gpui_component::tooltip::Tooltip;
+use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::scroll::{ScrollableElement, ScrollbarAxis};
+use gpui_kit::component::tooltip::Tooltip;
 
 use crate::core::i18n_keys::I18nKey;
 use crate::core::types::{tag_preset_colors, TagInfo};

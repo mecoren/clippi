@@ -15,7 +15,6 @@ use std::time::{Duration, Instant};
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_transitions::WindowUseTransition;
 
 use crate::core::types::TagInfo;
 use crate::state::app::AppState;
@@ -23,6 +22,7 @@ use crate::state::app::AppState;
 use super::clipboard_list::ClipboardListView;
 use super::components::reorder::{ease_in_out, row_drag_position};
 use super::theme::ClippiTheme;
+use crate::ui::transition::keyed_transition;
 
 /// Sidebar top offset (must match `top(px(65.))` in root.rs).
 /// Aligned with type filter bar top: titlebar(30) + pt(1) + search(28) + mb(6) = 65.
@@ -183,7 +183,9 @@ impl Sidebar {
         if hovered {
             let label = label.to_owned();
             self.tooltip_task = Some(cx.spawn(async move |this, cx| {
-                Timer::after(Duration::from_millis(500)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(500))
+                    .await;
                 let _ = this.update(cx, |sidebar, cx| {
                     if sidebar.tooltip_hover.tag_id == Some(tag_id) {
                         cx.emit(SidebarEvent::Tooltip(Some((label, y))));
@@ -494,76 +496,60 @@ impl Render for Sidebar {
                 let state_for_right = state_for_click.clone();
                 let sidebar_for_right = sidebar_for_notify.clone();
 
-                let row_x_transition = window
-                    .use_keyed_transition(("sidebar-tag-x", tag_key), cx, duration, move |_, _| {
-                        initial_row_x
-                    })
-                    .with_easing(ease_in_out);
-                row_x_transition.update(cx, |value, _cx| {
-                    *value = target_row_x;
-                });
-                let row_x = *row_x_transition.evaluate(window, cx);
+                let row_x = keyed_transition(
+                    window,
+                    cx,
+                    ("sidebar-tag-x", tag_key),
+                    duration,
+                    initial_row_x,
+                    ease_in_out,
+                    target_row_x,
+                );
 
-                let opacity_transition = window
-                    .use_keyed_transition(
-                        ("sidebar-tag-opacity", tag_key),
-                        cx,
-                        duration,
-                        move |_, _| initial_opacity,
-                    )
-                    .with_easing(ease_in_out);
-                opacity_transition.update(cx, |value, _cx| {
-                    *value = target_opacity;
-                });
-                let opacity = *opacity_transition.evaluate(window, cx);
+                let opacity = keyed_transition(
+                    window,
+                    cx,
+                    ("sidebar-tag-opacity", tag_key),
+                    duration,
+                    initial_opacity,
+                    ease_in_out,
+                    target_opacity,
+                );
 
-                let text_opacity_transition = window
-                    .use_keyed_transition(
-                        ("sidebar-tag-text-opacity", tag_key),
-                        cx,
-                        duration,
-                        move |_, _| initial_text_opacity,
-                    )
-                    .with_easing(ease_in_out);
-                text_opacity_transition.update(cx, |value, _cx| {
-                    *value = target_text_opacity;
-                });
-                let text_opacity = *text_opacity_transition.evaluate(window, cx);
+                let text_opacity = keyed_transition(
+                    window,
+                    cx,
+                    ("sidebar-tag-text-opacity", tag_key),
+                    duration,
+                    initial_text_opacity,
+                    ease_in_out,
+                    target_text_opacity,
+                );
 
-                let bar_height_transition = window
-                    .use_keyed_transition(
-                        ("sidebar-tag-bar-height", tag_key),
-                        cx,
-                        duration,
-                        move |_, _| initial_bar_height,
-                    )
-                    .with_easing(ease_in_out);
-                bar_height_transition.update(cx, |value, _cx| {
-                    *value = target_bar_height;
-                });
-                let bar_height = *bar_height_transition.evaluate(window, cx);
+                let bar_height = keyed_transition(
+                    window,
+                    cx,
+                    ("sidebar-tag-bar-height", tag_key),
+                    duration,
+                    initial_bar_height,
+                    ease_in_out,
+                    target_bar_height,
+                );
 
                 let original_slot = visible_ids.iter().position(|id| *id == tag_id).unwrap_or(0);
                 let target_slot = preview_ids
                     .iter()
                     .position(|id| *id == tag_id)
                     .unwrap_or(original_slot);
-                let y_transition = window
-                    .use_keyed_transition(
-                        ("sidebar-tag-y", tag_id as u64),
-                        cx,
-                        Duration::from_millis(140),
-                        move |_, _| px(original_slot as f32 * ROW_HEIGHT),
-                    )
-                    .with_easing(ease_in_out);
-                y_transition.update(cx, |value, cx| {
-                    let target = px(target_slot as f32 * ROW_HEIGHT);
-                    if *value != target {
-                        *value = target;
-                        cx.notify();
-                    }
-                });
-                let animated_y = *y_transition.evaluate(window, cx);
+                let animated_y = keyed_transition(
+                    window,
+                    cx,
+                    ("sidebar-tag-y", tag_id as u64),
+                    Duration::from_millis(140),
+                    px(original_slot as f32 * ROW_HEIGHT),
+                    ease_in_out,
+                    px(target_slot as f32 * ROW_HEIGHT),
+                );
                 let row_y = if Some(tag_id) == dragging_id {
                     px(dragged_top)
                 } else if let Some((_, top, started)) = settling.filter(|(id, _, _)| *id == tag_id)
@@ -589,6 +575,7 @@ impl Render for Sidebar {
                         .shadow(vec![BoxShadow {
                             color: row_shadow.into(),
                             offset: point(px(0.), px(1.)),
+                            inset: false,
                             blur_radius: px(4.),
                             spread_radius: px(0.),
                         }])

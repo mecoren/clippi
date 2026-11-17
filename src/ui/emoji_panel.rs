@@ -1,9 +1,9 @@
 //! Offline emoji, kaomoji and symbol picker. The foreground-app bar belongs to RootView.
 use gpui::prelude::*;
 use gpui::*;
-use gpui_component::input::{InputEvent, InputState};
-use gpui_component::scroll::{Scrollbar, ScrollbarShow};
-use gpui_component::tooltip::Tooltip;
+use gpui_kit::component::input::{InputEvent, InputState};
+use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
+use gpui_kit::component::tooltip::Tooltip;
 
 use super::filter_bar::{filter_chip, filter_toolbar};
 use super::font::fs;
@@ -108,7 +108,7 @@ impl EmojiPanel {
     }
 
     pub fn focus(&self, window: &mut Window, cx: &mut Context<Self>) {
-        self.input.focus_handle(cx).focus(window);
+        self.input.focus_handle(cx).focus(window, cx);
     }
 
     pub fn input_entity(&self) -> Entity<InputState> {
@@ -220,7 +220,7 @@ impl EmojiPanel {
             let start = (category - 1) as f32 * 35.;
             let offset = -f32::from(self.category_scroll.offset().x);
             let width = f32::from(self.category_scroll.bounds().size.width);
-            let limit = f32::from(self.category_scroll.max_offset().width);
+            let limit = f32::from(self.category_scroll.max_offset().x);
             let target = if start < offset {
                 start
             } else if start + 32. > offset + width {
@@ -238,7 +238,7 @@ impl EmojiPanel {
             input.set_value("", window, cx);
         });
         self.rebuild(cx);
-        self.focus_handle.focus(window);
+        self.focus_handle.focus(window, cx);
     }
 
     pub fn handle_key(
@@ -256,7 +256,7 @@ impl EmojiPanel {
             cx.stop_propagation();
             return;
         }
-        if event.keystroke.modifiers.secondary() && matches!(key, "k" | "f") {
+        if event.keystroke.modifiers.secondary(cx) && matches!(key, "k" | "f") {
             self.focus(window, cx);
             cx.stop_propagation();
             return;
@@ -298,7 +298,7 @@ impl EmojiPanel {
                 self.selected / self.columns
             };
             self.scroll.scroll_to_item(row, ScrollStrategy::Center);
-            self.focus_handle.focus(window);
+            self.focus_handle.focus(window, cx);
         }
         cx.stop_propagation();
         cx.notify();
@@ -537,7 +537,7 @@ impl Render for EmojiPanel {
                         .collect()
                 }),
             )
-            .track_scroll(self.scroll.clone())
+            .track_scroll(&self.scroll)
             .flex_1()
             .min_h(px(0.))
             .into_any_element()
@@ -578,8 +578,7 @@ impl Render for EmojiPanel {
                                 .bottom(px(0.))
                                 .w(px(16.))
                                 .child(
-                                    Scrollbar::vertical(&self.scroll)
-                                        .scrollbar_show(ScrollbarShow::Always),
+                                    Scrollbar::vertical(&self.scroll).mode(ScrollbarMode::Always),
                                 ),
                         )
                     }),

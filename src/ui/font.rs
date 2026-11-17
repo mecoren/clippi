@@ -222,9 +222,12 @@ pub fn apply_to_global_theme(cx: &mut App) {
     } else {
         current.to_string().into()
     };
-    let theme = gpui_component::Theme::global_mut(cx);
-    theme.font_size = rem_base();
-    theme.font_family = resolved;
+    // `Theme::update` keeps the semantic tokens and the Base-layer projection
+    // in step with the legacy font fields (gpui-kit 0.9).
+    gpui_kit::component::Theme::update(cx, |theme| {
+        theme.font_size = rem_base();
+        theme.font_family = resolved;
+    });
 }
 
 /// Keep the window rem size current. gpui-component's `Root` also does this on

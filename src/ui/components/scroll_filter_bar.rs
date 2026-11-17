@@ -5,11 +5,11 @@ use crate::ui::font::fs;
 use crate::ui::theme::ClippiTheme;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::tooltip::Tooltip;
+use gpui_kit::component::tooltip::Tooltip;
 
 pub(crate) fn scroll_edges(scroll: &ScrollHandle) -> (bool, bool) {
     let offset = f32::from(scroll.offset().x);
-    let limit = f32::from(scroll.max_offset().width);
+    let limit = f32::from(scroll.max_offset().x);
     (offset < -0.5, -offset < limit - 0.5)
 }
 
@@ -100,7 +100,7 @@ pub(crate) fn scroll_filter_bar(
             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                 cx.stop_propagation();
                 if enabled {
-                    let limit = f32::from(scroll.max_offset().width);
+                    let limit = f32::from(scroll.max_offset().x);
                     scroll.set_offset(point(px(if left { 0. } else { -limit }), px(0.)));
                     cx.notify(owner);
                 }
@@ -136,7 +136,7 @@ pub(crate) fn scroll_filter_bar(
                 .items_center()
                 .gap(px(layout.chip_gap))
                 .children(choices)
-                .on_scroll_wheel(move |event, _, cx| {
+                .on_scroll(move |event, _, cx| {
                     cx.stop_propagation();
                     let delta = event.delta.pixel_delta(px(22.));
                     let delta = if delta.x.abs() > delta.y.abs() {
@@ -147,7 +147,7 @@ pub(crate) fn scroll_filter_bar(
                     if delta.abs() < 0.01 || stride <= 0. {
                         return;
                     }
-                    let limit = f32::from(wheel_scroll.max_offset().width);
+                    let limit = f32::from(wheel_scroll.max_offset().x);
                     let current = -f32::from(wheel_scroll.offset().x);
                     let target = scroll_target(current, limit, stride, -delta.signum());
                     wheel_scroll.set_offset(point(px(-target), px(0.)));
@@ -188,7 +188,7 @@ pub(crate) fn scroll_filter_bar(
                     // A resize changes the column width. Re-align the saved offset
                     // after layout so it cannot leave the first visible icon sliced.
                     let current = -f32::from(scroll.offset().x);
-                    let limit = f32::from(scroll.max_offset().width);
+                    let limit = f32::from(scroll.max_offset().x);
                     let aligned = scroll_target(current, limit, stride, 0.);
                     if (current - aligned).abs() > 0.1 {
                         scroll.set_offset(point(px(-aligned), px(0.)));

@@ -8,7 +8,7 @@
 /// Apply a language code (`"en"`, `"zh"`, or empty for the system language).
 pub fn set_language(lang: &str) {
     crate::core::i18n::set_language(lang);
-    gpui_component::set_locale(if crate::core::i18n::is_en() {
+    gpui_kit::component::set_locale(if crate::core::i18n::is_en() {
         "en"
     } else {
         "zh-CN"

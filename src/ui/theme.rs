@@ -134,12 +134,16 @@ impl ClippiTheme {
     }
 
     pub fn sync_component_accent(&self, cx: &mut gpui::App) {
-        let global = gpui_component::Theme::global_mut(cx);
-        global.primary = self.accent.into();
-        global.primary_hover = self.accent.into();
-        global.primary_active = self.accent.into();
-        global.selection = self.accent_overlay().into();
-        global.ring = self.accent.into();
+        // `Theme::update` keeps the legacy fields, the semantic tokens and the
+        // Base-layer projection (scrollbar, resize handles) in step; plain
+        // `global_mut` field writes desynchronize them in gpui-kit 0.9.
+        gpui_kit::component::Theme::update(cx, |global| {
+            global.primary = self.accent.into();
+            global.primary_hover = self.accent.into();
+            global.primary_active = self.accent.into();
+            global.selection = self.accent_overlay().into();
+            global.ring = self.accent.into();
+        });
     }
 
     pub fn from_setting(theme: &str, appearance: Option<WindowAppearance>) -> Self {

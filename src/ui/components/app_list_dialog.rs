@@ -8,8 +8,8 @@ use std::rc::Rc;
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::scroll::{Scrollbar, ScrollbarAxis};
-use gpui_component::tooltip::Tooltip;
+use gpui_kit::component::scroll::{Scrollbar, ScrollbarAxis};
+use gpui_kit::component::tooltip::Tooltip;
 
 use crate::core::i18n_keys::I18nKey;
 use crate::ui::theme::ClippiTheme;
@@ -80,7 +80,7 @@ pub struct AppListDialogParams {
 
 /// Scrollable entry list with a per-dialog scroll-state key.
 ///
-/// Mirrors `gpui_component::scroll::Scrollable` (tracked scroll handle +
+/// Mirrors `gpui_kit::component::scroll::Scrollable` (tracked scroll handle +
 /// overlay scrollbar), but keys the `ScrollHandle` by an explicit name
 /// instead of the call-site location, so each app-list popup keeps its own
 /// scroll state and never inherits another popup's offset.

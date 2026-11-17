@@ -18,6 +18,12 @@ fn main() {
 
     #[cfg(target_os = "windows")]
     {
+        // gpui-kit 0.9 的组件树（Root → Base → 视图）比 gpui-component 0.5
+        // 更深，debug 构建的单层渲染栈帧也更大：Windows 默认 1MB 主线程栈
+        // 在首帧渲染时溢出（M0 冒烟实测）。32MB 为纯保留地址空间，按需提交，
+        // 不增加常驻内存。仅影响 bin 目标的链接参数，不改 profile。
+        println!("cargo:rustc-link-arg-bins=/STACK:33554432");
+
         let mut res = winresource::WindowsResource::new();
         res.set_icon("assets/LOGO_notext.ico");
         res.set("FileDescription", "Clippi");

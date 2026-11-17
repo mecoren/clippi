@@ -1,6 +1,6 @@
 //! Animated toggle switch — reusable component for settings UI.
 //!
-//! Uses `gpui_transitions::use_keyed_transition` for a smooth 200ms
+//! Uses `ui::transition::keyed_transition` for a smooth 200ms
 //! --- knob slide between OFF (left, 2px) and ON (right, 20px) positions. ---
 //!
 //! --- The `key` distinguishes toggles so transitions are independent; ---
@@ -10,7 +10,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use gpui::*;
-use gpui_transitions::WindowUseTransition;
+
+use crate::ui::transition::keyed_transition;
 
 #[derive(Clone, Copy)]
 pub(crate) struct ToggleTransitionState {
@@ -72,31 +73,26 @@ pub fn render_toggle(
         .fold(0u64, |h, b| h.wrapping_mul(31).wrapping_add(b as u64));
     let transition_key = hash_key.wrapping_add(generation << 32);
 
-    let knob_transition = window
-        .use_keyed_transition(
-            ("settings-toggle-knob", transition_key),
-            cx,
-            Duration::from_millis(200),
-            move |_, _| initial_x,
-        )
-        .with_easing(ease_in_out);
-    knob_transition.update(cx, |value, _cx| {
-        *value = target_x;
-    });
-    let knob_x = *knob_transition.evaluate(window, cx);
-
-    let bg_transition = window
-        .use_keyed_transition(
-            ("settings-toggle-bg", transition_key),
-            cx,
-            Duration::from_millis(200),
-            move |_, _| initial_bg,
-        )
-        .with_easing(ease_in_out);
-    bg_transition.update(cx, |value, _cx| {
-        *value = target_bg;
-    });
-    let track_bg = *bg_transition.evaluate(window, cx);
+    // The track color animates in HSL space: `gpui_kit`'s `Lerp` has no
+    // `Rgba` impl, but end states are identical either way.
+    let knob_x = keyed_transition(
+        window,
+        cx,
+        ("settings-toggle-knob", transition_key),
+        Duration::from_millis(200),
+        initial_x,
+        ease_in_out,
+        target_x,
+    );
+    let track_bg = keyed_transition(
+        window,
+        cx,
+        ("settings-toggle-bg", transition_key),
+        Duration::from_millis(200),
+        Hsla::from(initial_bg),
+        ease_in_out,
+        Hsla::from(target_bg),
+    );
 
     div()
         .w(px(40.))

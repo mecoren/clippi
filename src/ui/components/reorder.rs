@@ -346,7 +346,7 @@ impl DragAutoScroll {
             return;
         }
         let offset = self.handle.offset();
-        let limit = f32::from(self.handle.max_offset().height);
+        let limit = f32::from(self.handle.max_offset().y);
         let target = (f32::from(offset.y) + step).clamp(-limit, 0.);
         // Standing still against an end of the list stops the frame loop.
         if px(target) == offset.y {

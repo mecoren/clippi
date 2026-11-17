@@ -13,10 +13,10 @@ use std::time::{Duration, Instant};
 
 use gpui::prelude::*;
 use gpui::*;
-use gpui_transitions::WindowUseTransition;
 
 use crate::core::i18n_keys::I18nKey;
 use crate::state::app::AppState;
+use crate::ui::transition::keyed_transition;
 
 use super::components::reorder::{
     drag_grip, ease_in_out, row_drag_position, GRABBING_CURSOR, GRAB_CURSOR,
@@ -315,22 +315,15 @@ impl Render for TypeFilterConfigPanel {
                             .unwrap_or(original_slot);
                         let is_dragging = dragging_key.as_deref() == Some(key.as_str());
 
-                        let y_transition = window
-                            .use_keyed_transition(
-                                SharedString::from(format!("type-filter-y-{key}")),
-                                cx,
-                                Duration::from_millis(SETTLE_MS),
-                                move |_, _| px(original_slot as f32 * ROW_PITCH),
-                            )
-                            .with_easing(ease_in_out);
-                        y_transition.update(cx, |value, cx| {
-                            let target = px(target_slot as f32 * ROW_PITCH);
-                            if *value != target {
-                                *value = target;
-                                cx.notify();
-                            }
-                        });
-                        let animated_y = *y_transition.evaluate(window, cx);
+                        let animated_y = keyed_transition(
+                            window,
+                            cx,
+                            SharedString::from(format!("type-filter-y-{key}")),
+                            Duration::from_millis(SETTLE_MS),
+                            px(original_slot as f32 * ROW_PITCH),
+                            ease_in_out,
+                            px(target_slot as f32 * ROW_PITCH),
+                        );
                         let row_y = if is_dragging {
                             px(dragged_top)
                         } else if let Some((_, top, started)) = settling

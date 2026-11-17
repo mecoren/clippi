@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_transitions::WindowUseTransition;
 
+use crate::ui::transition::keyed_transition;
 use crate::ui::{font, theme::ClippiTheme};
 
 const TRANSITION_MS: u64 = 160;
@@ -22,14 +22,16 @@ pub fn shortcut_progress(
     window: &mut Window,
     cx: &mut App,
 ) -> f32 {
-    let transition = window
-        .use_keyed_transition(id, cx, Duration::from_millis(TRANSITION_MS), |_, _| 0.0_f32)
-        .with_easing(|t| 1.0 - (1.0 - t).powi(3));
-    transition.update(cx, |value, _cx| {
-        *value = if visible { 1.0 } else { 0.0 };
-    });
-    let progress = *transition.evaluate(window, cx);
-    progress.clamp(0.0, 1.0)
+    keyed_transition(
+        window,
+        cx,
+        id,
+        Duration::from_millis(TRANSITION_MS),
+        0.0_f32,
+        |t| 1.0 - (1.0 - t).powi(3),
+        if visible { 1.0 } else { 0.0 },
+    )
+    .clamp(0.0, 1.0)
 }
 
 #[derive(Clone, Copy)]

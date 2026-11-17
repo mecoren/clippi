@@ -861,16 +861,15 @@ impl WindowManager {
 
     fn start_poll_loop(&mut self, cx: &mut Context<Self>) {
         self._poll_task = Some(cx.spawn(async move |weak_self, cx| loop {
-            Timer::after(Duration::from_millis(
-                crate::services::poll_loop::POLL_INTERVAL_MS,
-            ))
-            .await;
+            cx.background_executor()
+                .timer(Duration::from_millis(
+                    crate::services::poll_loop::POLL_INTERVAL_MS,
+                ))
+                .await;
             let Some(this) = weak_self.upgrade() else {
                 break;
             };
-            if this.update(cx, |wm, cx| wm.poll(cx)).is_err() {
-                break;
-            }
+            this.update(cx, |wm, cx| wm.poll(cx));
         }));
     }
 
@@ -878,27 +877,24 @@ impl WindowManager {
     /// Gives responsive keyboard navigation without the 200ms main poll delay.
     fn start_quick_poll(&mut self, cx: &mut Context<Self>) {
         self._quick_poll_task = Some(cx.spawn(async move |weak_self, cx| loop {
-            Timer::after(Duration::from_millis(16)).await;
+            cx.background_executor()
+                .timer(Duration::from_millis(16))
+                .await;
             let Some(this) = weak_self.upgrade() else {
                 break;
             };
-            let visible = this.update(cx, |wm, _cx| wm.quick_visible).unwrap_or(false);
+            let visible = this.update(cx, |wm, _cx| wm.quick_visible);
             if !visible {
                 break;
             }
-            if this
-                .update(cx, |wm, cx| {
-                    wm.poll_hotkey(cx);
-                    wm.update_quick_type_shortcuts(cx);
-                    // Runs before the key batch so the Shift/Ctrl state the keys
-                    // are matched against is the freshest one in this tick.
-                    wm.poll_quick_click_outside(cx);
-                    wm.poll_quick_keys(cx);
-                })
-                .is_err()
-            {
-                break;
-            }
+            this.update(cx, |wm, cx| {
+                wm.poll_hotkey(cx);
+                wm.update_quick_type_shortcuts(cx);
+                // Runs before the key batch so the Shift/Ctrl state the keys
+                // are matched against is the freshest one in this tick.
+                wm.poll_quick_click_outside(cx);
+                wm.poll_quick_keys(cx);
+            });
         }));
     }
 
@@ -991,18 +987,18 @@ impl WindowManager {
 
     fn start_recording_poll(&mut self, cx: &mut Context<Self>) {
         self._recording_poll_task = Some(cx.spawn(async move |weak_self, cx| loop {
-            Timer::after(Duration::from_millis(16)).await;
+            cx.background_executor()
+                .timer(Duration::from_millis(16))
+                .await;
             let Some(this) = weak_self.upgrade() else {
                 break;
             };
-            let recording = this
-                .update(cx, |wm, cx| {
-                    wm.poll_recording(cx);
-                    wm.hotkey
-                        .as_ref()
-                        .is_some_and(|hotkey| hotkey.is_recording())
-                })
-                .unwrap_or(false);
+            let recording = this.update(cx, |wm, cx| {
+                wm.poll_recording(cx);
+                wm.hotkey
+                    .as_ref()
+                    .is_some_and(|hotkey| hotkey.is_recording())
+            });
             if !recording {
                 break;
             }
@@ -2257,13 +2253,13 @@ impl WindowManager {
         // window hides. A stale instance from a previous show can linger for a
         // single tick, which is harmless — it polls the same gate.
         cx.spawn(async move |weak_self, cx| loop {
-            Timer::after(Duration::from_millis(16)).await;
+            cx.background_executor()
+                .timer(Duration::from_millis(16))
+                .await;
             let Some(this) = weak_self.upgrade() else {
                 break;
             };
-            let keep_watching = this
-                .update(cx, |wm, cx| wm.poll_alt_hint_gate(cx))
-                .unwrap_or(false);
+            let keep_watching = this.update(cx, |wm, cx| wm.poll_alt_hint_gate(cx));
             if !keep_watching {
                 break;
             }
@@ -2939,16 +2935,16 @@ impl WindowManager {
             // Yield until the poll update has released GPUI's AppCell borrow
             // so synchronous WM_DPICHANGED / WM_SIZE / WM_MOVE callbacks can
             // re-borrow (Windows DPI re-entrancy).
-            Timer::after(Duration::from_millis(1)).await;
+            cx.background_executor()
+                .timer(Duration::from_millis(1))
+                .await;
 
             let Some(this) = weak_self.upgrade() else {
                 return;
             };
-            let should_move = this
-                .update(cx, |wm, _cx| {
-                    wm.visible && wm.hwnd == hwnd_isize && wm.topology_generation == generation
-                })
-                .unwrap_or(false);
+            let should_move = this.update(cx, |wm, _cx| {
+                wm.visible && wm.hwnd == hwnd_isize && wm.topology_generation == generation
+            });
             if !should_move || hwnd_isize == 0 {
                 return;
             }
@@ -3060,18 +3056,18 @@ impl WindowManager {
         let quick_window = self.quick_window;
         self._quick_monitor_migration_task = Some(cx.spawn(async move |weak_self, cx| {
             // Yield until the poll update has released GPUI's AppCell borrow.
-            Timer::after(Duration::from_millis(1)).await;
+            cx.background_executor()
+                .timer(Duration::from_millis(1))
+                .await;
 
             let Some(this) = weak_self.upgrade() else {
                 return;
             };
-            let should_position = this
-                .update(cx, |wm, _cx| {
-                    wm.quick_visible
-                        && wm.quick_hwnd == quick_hwnd
-                        && wm.topology_generation == generation
-                })
-                .unwrap_or(false);
+            let should_position = this.update(cx, |wm, _cx| {
+                wm.quick_visible
+                    && wm.quick_hwnd == quick_hwnd
+                    && wm.topology_generation == generation
+            });
             if !should_position || quick_hwnd == 0 {
                 return;
             }
@@ -3084,14 +3080,14 @@ impl WindowManager {
 
             // Phase 2: enforce the target-monitor client size with the frame
             // insets measured after the DPI change (two-phase pattern).
-            Timer::after(Duration::from_millis(1)).await;
-            let should_finish = this
-                .update(cx, |wm, _cx| {
-                    wm.quick_visible
-                        && wm.quick_hwnd == quick_hwnd
-                        && wm.topology_generation == generation
-                })
-                .unwrap_or(false);
+            cx.background_executor()
+                .timer(Duration::from_millis(1))
+                .await;
+            let should_finish = this.update(cx, |wm, _cx| {
+                wm.quick_visible
+                    && wm.quick_hwnd == quick_hwnd
+                    && wm.topology_generation == generation
+            });
             if !should_finish {
                 return;
             }
@@ -3494,7 +3490,7 @@ impl WindowManager {
             self._main_show_task = Some(cx.spawn(async move |weak_self, cx| {
                 // Yield until the WindowManager update that handled the hotkey
                 // or tray action has released GPUI's AppCell borrow.
-                Timer::after(Duration::from_millis(1)).await;
+                cx.background_executor().timer(Duration::from_millis(1)).await;
 
                 let Some(this) = weak_self.upgrade() else {
                     return;
@@ -3520,8 +3516,7 @@ impl WindowManager {
                             return false;
                         }
                         true
-                    })
-                    .unwrap_or(false);
+                    });
                 if !proceed {
                     return;
                 }
@@ -3558,7 +3553,7 @@ impl WindowManager {
                 );
                 if !is_visible {
                     log::warn!("wm show failed: window is still hidden after retry");
-                    let _ = this.update(cx, |wm, _cx| {
+                    this.update(cx, |wm, _cx| {
                         if wm.hwnd == hwnd {
                             wm.main_show_pending = false;
                             wm.visible = false;
@@ -3575,15 +3570,15 @@ impl WindowManager {
                 // Protect the freshly shown window while the first frame and the
                 // reload are still to come, then give the message loop one turn
                 // so WM_PAINT lands before the (possibly slow) reload blocks it.
-                let _ = this.update(cx, |wm, _cx| {
+                this.update(cx, |wm, _cx| {
                     wm.suppress_until =
                         Some(Instant::now() + Duration::from_millis(SUPPRESS_DURATION_MS));
                 });
-                Timer::after(Duration::from_millis(1)).await;
+                cx.background_executor().timer(Duration::from_millis(1)).await;
 
                 // Pixels are up: only now pay for the reload, and only after it
                 // start the suppression window the panel is entitled to.
-                let _ = this.update(cx, |wm, cx| wm.after_main_window_shown(cx));
+                this.update(cx, |wm, cx| wm.after_main_window_shown(cx));
             }));
         }
 
@@ -3612,7 +3607,9 @@ impl WindowManager {
                 self._main_show_task = Some(cx.spawn(async move |weak_self, cx| {
                     // Yield until the WindowManager update that handled the
                     // hotkey or tray action has released GPUI's app borrow.
-                    Timer::after(Duration::from_millis(1)).await;
+                    cx.background_executor()
+                        .timer(Duration::from_millis(1))
+                        .await;
 
                     let Some(this) = weak_self.upgrade() else {
                         return;
@@ -3646,16 +3643,18 @@ impl WindowManager {
                     }
                     // The app must be active before ordering front, otherwise
                     // keyboard events keep going to the previous app (doc §3.3).
-                    let _ = cx.update(|cx| cx.activate(true));
+                    cx.update(|cx| cx.activate(true));
                     WindowManager::activate_ns_window(ns_window);
                     // Same two-step as the Windows branch: protect the window,
                     // let the first frame land, then reload.
-                    let _ = this.update(cx, |wm, _cx| {
+                    this.update(cx, |wm, _cx| {
                         wm.suppress_until =
                             Some(Instant::now() + Duration::from_millis(SUPPRESS_DURATION_MS));
                     });
-                    Timer::after(Duration::from_millis(1)).await;
-                    let _ = this.update(cx, |wm, cx| wm.after_main_window_shown(cx));
+                    cx.background_executor()
+                        .timer(Duration::from_millis(1))
+                        .await;
+                    this.update(cx, |wm, cx| wm.after_main_window_shown(cx));
                 }));
             }
         }
@@ -4384,16 +4383,16 @@ impl WindowManager {
             self._quick_position_task = Some(cx.spawn(async move |weak_self, cx| {
                 // Yield until the WindowManager update that handled the hotkey
                 // has released GPUI's AppCell borrow.
-                Timer::after(Duration::from_millis(1)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(1))
+                    .await;
 
                 let Some(this) = weak_self.upgrade() else {
                     return;
                 };
-                let should_position = this
-                    .update(cx, |wm, _cx| {
-                        wm.quick_visible && wm.quick_hwnd == quick_hwnd
-                    })
-                    .unwrap_or(false);
+                let should_position = this.update(cx, |wm, _cx| {
+                    wm.quick_visible && wm.quick_hwnd == quick_hwnd
+                });
                 if !should_position || quick_hwnd == 0 {
                     return;
                 }
@@ -4404,12 +4403,12 @@ impl WindowManager {
 
                 // Let WM_DPICHANGED update GPUI before measuring the new frame
                 // insets and enforcing the final target-monitor client size.
-                Timer::after(Duration::from_millis(1)).await;
-                let should_finish = this
-                    .update(cx, |wm, _cx| {
-                        wm.quick_visible && wm.quick_hwnd == quick_hwnd
-                    })
-                    .unwrap_or(false);
+                cx.background_executor()
+                    .timer(Duration::from_millis(1))
+                    .await;
+                let should_finish = this.update(cx, |wm, _cx| {
+                    wm.quick_visible && wm.quick_hwnd == quick_hwnd
+                });
                 if !should_finish {
                     return;
                 }
@@ -5083,7 +5082,9 @@ impl WindowManager {
         self._main_compact_task = Some(cx.spawn(async move |weak_self, cx| {
             let deadline = Instant::now() + Duration::from_millis(100);
             loop {
-                Timer::after(Duration::from_millis(10)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(10))
+                    .await;
                 let Some(this) = weak_self.upgrade() else {
                     return;
                 };
@@ -5179,7 +5180,9 @@ impl WindowManager {
         self._main_restore_task = Some(cx.spawn(async move |weak_self, cx| {
             let deadline = Instant::now() + Duration::from_millis(100);
             loop {
-                Timer::after(Duration::from_millis(10)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(10))
+                    .await;
                 let Some(this) = weak_self.upgrade() else {
                     return;
                 };
@@ -5205,7 +5208,7 @@ impl WindowManager {
                 if Instant::now() >= deadline {
                     // Never leave the user unable to open the window: force
                     // the size synchronously and disable further compaction.
-                    let _ = this.update(cx, |wm, _cx| {
+                    this.update(cx, |wm, _cx| {
                         if wm.surface_generation != restore_generation
                             || wm
                                 .main_compacted_state
@@ -5266,15 +5269,17 @@ impl WindowManager {
                 // Keep the existing activation semantics of `show_and_focus`
                 // (doc §3.3): the app must be active before ordering front,
                 // otherwise keyboard events keep going to the previous app.
-                let _ = cx.update(|cx| cx.activate(true));
+                cx.update(|cx| cx.activate(true));
                 Self::activate_ns_window(ns_window);
                 log::debug!("surface restore: main window shown");
-                let _ = this.update(cx, |wm, _cx| {
+                this.update(cx, |wm, _cx| {
                     wm.suppress_until =
                         Some(Instant::now() + Duration::from_millis(SUPPRESS_DURATION_MS));
                 });
-                Timer::after(Duration::from_millis(1)).await;
-                let _ = this.update(cx, |wm, cx| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(1))
+                    .await;
+                this.update(cx, |wm, cx| {
                     if wm.visible && wm.surface_generation == restore_generation {
                         wm.after_main_window_shown(cx);
                     }
@@ -5338,7 +5343,9 @@ impl WindowManager {
         self._quick_compact_task = Some(cx.spawn(async move |weak_self, cx| {
             let deadline = Instant::now() + Duration::from_millis(100);
             loop {
-                Timer::after(Duration::from_millis(10)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(10))
+                    .await;
                 let Some(this) = weak_self.upgrade() else {
                     return;
                 };
@@ -5443,7 +5450,9 @@ impl WindowManager {
             // released GPUI's app borrow; every step below re-enters GPUI and
             // would otherwise be dropped (see
             // `show_quick_macos_window_deferred`).
-            Timer::after(Duration::from_millis(1)).await;
+            cx.background_executor()
+                .timer(Duration::from_millis(1))
+                .await;
 
             let Some(this) = weak_self.upgrade() else {
                 return;
@@ -5480,7 +5489,9 @@ impl WindowManager {
             // misbehaves.
             let deadline = Instant::now() + Duration::from_millis(100);
             loop {
-                Timer::after(Duration::from_millis(5)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(5))
+                    .await;
                 let Some(this) = weak_self.upgrade() else {
                     return;
                 };
@@ -5505,7 +5516,7 @@ impl WindowManager {
                     .unwrap_or(Some(false));
                 match decision {
                     Some(true) => {
-                        let _ = this.update(cx, |wm, _cx| {
+                        this.update(cx, |wm, _cx| {
                             if wm.quick_visible && wm.surface_generation == generation {
                                 wm.show_quick_macos_window();
                             }

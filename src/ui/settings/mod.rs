@@ -16,10 +16,12 @@ use std::time::{Duration, Instant};
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::input::InputState;
-use gpui_component::scroll::{Scrollbar, ScrollbarAxis, ScrollbarShow};
-use gpui_transitions::WindowUseTransition;
+use gpui_kit::component::input::InputState;
+use gpui_kit::component::scroll::{Scrollbar, ScrollbarAxis, ScrollbarMode};
 
+use crate::ui::transition::keyed_transition;
+
+mod changelog;
 mod clipboard;
 mod data;
 mod general;
@@ -87,6 +89,8 @@ pub struct SettingsPanel {
     tab_transition_generation: u64,
     tab_transition_started: Option<Instant>,
     backend_panel: Entity<AddBackendPanel>,
+    /// Whether the bundled changelog page is open in place of the tab content.
+    pub changelog_open: bool,
     /// Whether the latest hotkeys popup is open.
     pub latest_hotkeys_popup_open: bool,
     /// Application list popup visibility (hotkey blacklist / paste shortcuts / clipboard blacklist).
@@ -184,8 +188,9 @@ impl SettingsPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let max_items_input = cx.new(|cx| gpui_component::input::InputState::new(window, cx));
-        let retention_days_input = cx.new(|cx| gpui_component::input::InputState::new(window, cx));
+        let max_items_input = cx.new(|cx| gpui_kit::component::input::InputState::new(window, cx));
+        let retention_days_input =
+            cx.new(|cx| gpui_kit::component::input::InputState::new(window, cx));
         let backend_panel =
             cx.new(|cx| AddBackendPanel::new(window_manager.clone(), theme.clone(), window, cx));
 
@@ -238,6 +243,7 @@ impl SettingsPanel {
             tab_transition_started: None,
             focus_handle: cx.focus_handle(),
             backend_panel,
+            changelog_open: false,
             latest_hotkeys_popup_open: false,
             hotkey_blacklist_popup_open: false,
             paste_shortcuts_popup_open: false,
@@ -285,6 +291,9 @@ impl SettingsPanel {
 
     /// Switch to a specific tab by index.
     pub fn set_active_tab(&mut self, index: usize) {
+        // The changelog is a sub-page of the version tab; any tab navigation
+        // leaves it, including reopening settings straight on the version tab.
+        self.changelog_open = false;
         if self.active_tab != index {
             self.local_backup_dialog = None;
             self.local_backup_dialog_generation =
@@ -534,6 +543,7 @@ fn format_uploaded_at(rfc3339: &str) -> String {
 impl Render for SettingsPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active = self.active_tab;
+        let changelog_open = self.changelog_open;
         let theme = &self.theme;
         let this = cx.entity().clone();
         let tab_key = ((active as u64) << 32).wrapping_add(self.tab_transition_generation);
@@ -582,8 +592,14 @@ impl Render for SettingsPanel {
                             .on_mouse_down(MouseButton::Left, {
                                 let this = this.clone();
                                 move |_ev, _window, cx| {
-                                    this.update(cx, |_panel, cx| {
-                                        cx.emit(SettingsEvent::Back);
+                                    this.update(cx, |panel, cx| {
+                                        // The changelog is a sub-page: the same
+                                        // arrow first returns to the version tab.
+                                        if panel.changelog_open {
+                                            panel.close_changelog(cx);
+                                        } else {
+                                            cx.emit(SettingsEvent::Back);
+                                        }
                                     });
                                 }
                             })
@@ -601,68 +617,75 @@ impl Render for SettingsPanel {
                             .text_size(fs(14.))
                             .font_weight(FontWeight::BOLD)
                             .text_color(theme.text_1)
-                            .child(I18nKey::SettingsTitle.text()),
+                            .child(if changelog_open {
+                                I18nKey::Changelog.text()
+                            } else {
+                                I18nKey::SettingsTitle.text()
+                            }),
                     ),
             )
-            //  Tab bar (height 36px, mt 8px matching Slint spacing)
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .h(px(36.))
-                    .px(px(8.))
-                    .mt(px(2.))
-                    .border_b(px(1.))
-                    .border_color(theme.divider)
-                    .children(tab_names().iter().enumerate().map(|(i, name)| {
-                        let is_active = i == active;
-                        let tab_color = if is_active {
-                            theme.accent
-                        } else {
-                            theme.text_2
-                        };
-                        let underline_bg = if is_active {
-                            theme.accent
-                        } else {
-                            rgba(0x00000000)
-                        };
-                        let this = this.clone();
+            //  Tab bar (height 36px, mt 8px matching Slint spacing). Hidden on
+            //  the changelog sub-page, which owns the panel below the title.
+            .when(!changelog_open, |el| {
+                el.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .h(px(36.))
+                        .px(px(8.))
+                        .mt(px(2.))
+                        .border_b(px(1.))
+                        .border_color(theme.divider)
+                        .children(tab_names().iter().enumerate().map(|(i, name)| {
+                            let is_active = i == active;
+                            let tab_color = if is_active {
+                                theme.accent
+                            } else {
+                                theme.text_2
+                            };
+                            let underline_bg = if is_active {
+                                theme.accent
+                            } else {
+                                rgba(0x00000000)
+                            };
+                            let this = this.clone();
 
-                        div()
-                            .flex_1()
-                            .min_w(px(0.))
-                            .h_full()
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .justify_center()
-                            .cursor(CursorStyle::PointingHand)
-                            .on_mouse_down(MouseButton::Left, move |_ev, _window, cx| {
-                                this.update(cx, |panel, cx| {
-                                    panel.set_active_tab(i);
-                                    panel.close_app_list_popups();
-                                    panel.latest_hotkeys_popup_open = false;
-                                    panel.font_picker_open = false;
-                                    cx.emit(SettingsEvent::TabChanged(i));
-                                    cx.notify();
-                                });
-                            })
-                            // --- Tab label ---
-                            .child(
-                                div()
-                                    .text_size(fs(12.))
-                                    .font_weight(if is_active {
-                                        FontWeight::BOLD
-                                    } else {
-                                        FontWeight::default()
-                                    })
-                                    .text_color(tab_color)
-                                    .child(*name),
-                            )
-                            // --- Active underline indicator (2px) ---
-                            .child(div().w_full().h(px(2.)).mt(px(4.)).bg(underline_bg))
-                    })),
-            )
+                            div()
+                                .flex_1()
+                                .min_w(px(0.))
+                                .h_full()
+                                .flex()
+                                .flex_col()
+                                .items_center()
+                                .justify_center()
+                                .cursor(CursorStyle::PointingHand)
+                                .on_mouse_down(MouseButton::Left, move |_ev, _window, cx| {
+                                    this.update(cx, |panel, cx| {
+                                        panel.set_active_tab(i);
+                                        panel.close_app_list_popups();
+                                        panel.latest_hotkeys_popup_open = false;
+                                        panel.font_picker_open = false;
+                                        cx.emit(SettingsEvent::TabChanged(i));
+                                        cx.notify();
+                                    });
+                                })
+                                // --- Tab label ---
+                                .child(
+                                    div()
+                                        .text_size(fs(12.))
+                                        .font_weight(if is_active {
+                                            FontWeight::BOLD
+                                        } else {
+                                            FontWeight::default()
+                                        })
+                                        .text_color(tab_color)
+                                        .child(*name),
+                                )
+                                // --- Active underline indicator (2px) ---
+                                .child(div().w_full().h(px(2.)).mt(px(4.)).bg(underline_bg))
+                        })),
+                )
+            })
             // --- Tab content (fills remaining space, scrollable) ---
             .child(
                 div()
@@ -694,27 +717,33 @@ impl Render for SettingsPanel {
                                             .px(px(8.))
                                             .opacity(tab_opacity)
                                             .mt(px(tab_offset))
-                                            .when(active != 5, |el| el.pb(px(56.)))
-                                            .child(match active {
-                                                0 => self
-                                                    .render_general_tab(window, cx)
-                                                    .into_any_element(),
-                                                1 => self
-                                                    .render_clipboard_tab(window, cx)
-                                                    .into_any_element(),
-                                                2 => self
-                                                    .render_hotkey_tab(window, cx)
-                                                    .into_any_element(),
-                                                3 => self
-                                                    .render_data_tab(window, cx)
-                                                    .into_any_element(),
-                                                4 => self
-                                                    .render_sync_tab(window, cx)
-                                                    .into_any_element(),
-                                                5 => self
-                                                    .render_version_tab(window, cx)
-                                                    .into_any_element(),
-                                                _ => div().into_any_element(),
+                                            .when(active != 5 || changelog_open, |el| {
+                                                el.pb(px(56.))
+                                            })
+                                            .child(if changelog_open {
+                                                self.render_changelog(window, cx).into_any_element()
+                                            } else {
+                                                match active {
+                                                    0 => self
+                                                        .render_general_tab(window, cx)
+                                                        .into_any_element(),
+                                                    1 => self
+                                                        .render_clipboard_tab(window, cx)
+                                                        .into_any_element(),
+                                                    2 => self
+                                                        .render_hotkey_tab(window, cx)
+                                                        .into_any_element(),
+                                                    3 => self
+                                                        .render_data_tab(window, cx)
+                                                        .into_any_element(),
+                                                    4 => self
+                                                        .render_sync_tab(window, cx)
+                                                        .into_any_element(),
+                                                    5 => self
+                                                        .render_version_tab(window, cx)
+                                                        .into_any_element(),
+                                                    _ => div().into_any_element(),
+                                                }
                                             }),
                                     ),
                             )
@@ -727,7 +756,7 @@ impl Render for SettingsPanel {
                                     .w(px(16.))
                                     .child(
                                         Scrollbar::vertical(&self.scroll_handle)
-                                            .scrollbar_show(ScrollbarShow::Scrolling),
+                                            .mode(ScrollbarMode::Scrolling),
                                     ),
                             ),
                     ),
@@ -751,14 +780,15 @@ impl SettingsPanel {
         initial: f32,
         target: f32,
     ) -> f32 {
-        let transition = window
-            .use_keyed_transition(key, cx, TAB_ANIM_DURATION, move |_, _| initial)
-            .with_easing(Self::ease_out);
-        transition.update(cx, |value, _cx| {
-            *value = target;
-        });
-        let value = *transition.evaluate(window, cx);
-        value
+        keyed_transition(
+            window,
+            cx,
+            key,
+            TAB_ANIM_DURATION,
+            initial,
+            Self::ease_out,
+            target,
+        )
     }
 
     fn ease_out(delta: f32) -> f32 {
@@ -1360,7 +1390,7 @@ impl SettingsPanel {
             if let Some(row) = scroll_handle.bounds_for_item(current_index) {
                 let viewport_top = f32::from(scroll_handle.bounds().top());
                 let row_top = f32::from(row.top());
-                let max_scroll = f32::from(scroll_handle.max_offset().height);
+                let max_scroll = f32::from(scroll_handle.max_offset().y);
                 let y = px((viewport_top - row_top).clamp(-max_scroll, 0.0));
                 scroll_handle.set_offset(point(px(0.), y));
             }

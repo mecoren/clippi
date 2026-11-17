@@ -1,6 +1,6 @@
 //! --- Clipboard list — variable-height virtual scrolling list. ---
 //!
-//! --- Uses `gpui_component::v_virtual_list` to efficiently render thousands ---
+//! --- Uses `gpui_kit::component::v_virtual_list` to efficiently render thousands ---
 //! --- of clipboard items with dynamic card heights (68— 28px). ---
 
 use crate::ui::font::fs;
@@ -8,10 +8,10 @@ use std::{cell::Cell, collections::HashSet, rc::Rc};
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::input::InputState;
-use gpui_component::scroll::{Scrollbar, ScrollbarShow};
-use gpui_component::v_virtual_list;
-use gpui_component::VirtualListScrollHandle;
+use gpui_kit::component::input::InputState;
+use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
+use gpui_kit::component::v_virtual_list;
+use gpui_kit::component::VirtualListScrollHandle;
 
 use crate::core::i18n_keys::I18nKey;
 use crate::core::types::{
@@ -35,12 +35,23 @@ const TAG_PICKER_CARD_ANCHOR_Y: f32 = 10.0;
 const TAG_PICKER_FALLBACK_X: f32 = 400.0;
 const TAG_PICKER_FALLBACK_Y: f32 = 80.0;
 
+/// gpui 0.3 起 `Modifiers::secondary` 需要 `&App` 查询平台；旧版（0.2.2）
+/// 是编译期判断。此处保持旧语义（Windows=Ctrl / macOS=Cmd），避免把
+/// `&App` 穿进纯逻辑与其单测。
+fn secondary_modifier(modifiers: Modifiers) -> bool {
+    if cfg!(target_os = "macos") {
+        modifiers.platform
+    } else {
+        modifiers.control
+    }
+}
+
 fn additive_selection_modifier(modifiers: Modifiers) -> bool {
-    modifiers.control || modifiers.secondary()
+    modifiers.control || secondary_modifier(modifiers)
 }
 
 fn primary_modifier_pressed(modifiers: Modifiers) -> bool {
-    modifiers.secondary()
+    secondary_modifier(modifiers)
 }
 
 /// Pending image placeholders are non-persisted and identified by meta_type.
@@ -881,8 +892,8 @@ impl ClipboardListView {
         cx.notify();
     }
 
-    pub fn focus(&self, window: &mut Window) {
-        self.focus_handle.focus(window);
+    pub fn focus(&self, window: &mut Window, cx: &mut App) {
+        self.focus_handle.focus(window, cx);
     }
 
     fn select_index(
@@ -1914,7 +1925,7 @@ impl ClipboardListView {
         self.note_input.update(cx, move |input, cx| {
             input.set_value(text, window, cx);
             // --- Auto-focus so user can type immediately ---
-            input.focus_handle(cx).focus(window);
+            input.focus_handle(cx).focus(window, cx);
         });
         cx.notify();
     }
@@ -2015,7 +2026,7 @@ impl ClipboardListView {
         self.editing_note_id = -1;
         self.hovered_index = None;
         // --- Return focus to the list so keyboard navigation continues to work ---
-        self.focus_handle.focus(window);
+        self.focus_handle.focus(window, cx);
         cx.notify();
     }
 
@@ -2808,7 +2819,7 @@ impl Render for ClipboardListView {
             .overflow_hidden()
             .rounded_b(px(12.))
             .bg(bg)
-            .on_scroll_wheel({
+            .on_scroll({
                 let list_for_scroll_lock = list_entity.clone();
                 move |_ev, _window, cx| {
                     list_for_scroll_lock.update(cx, |this, cx| {
@@ -2922,7 +2933,7 @@ impl Render for ClipboardListView {
                                                   modifiers: Modifiers,
                                                   window: &mut Window,
                                                   cx: &mut App| {
-                                                focus_handle.focus(window);
+                                                focus_handle.focus(window, cx);
                                                 list_view.update(cx, move |this, cx| {
                                                     this.handle_card_click(idx, modifiers, window, cx);
                                                 });
@@ -2947,7 +2958,7 @@ impl Render for ClipboardListView {
                                                 .w_full()
                                                 .h_full()
                                                 .py(px(4.))
-                                                .on_scroll_wheel({
+                                                .on_scroll({
                                                     let list_for_scroll_lock =
                                                         list_entity.clone();
                                                     move |_ev, _window, cx| {
@@ -3182,7 +3193,7 @@ impl Render for ClipboardListView {
                             .when(self.inline_locked_item_id().is_none(), |el| {
                                 el.child(
                                     Scrollbar::vertical(&self.scroll_handle)
-                                        .scrollbar_show(ScrollbarShow::Scrolling),
+                                        .mode(ScrollbarMode::Scrolling),
                                 )
                             }),
                     )

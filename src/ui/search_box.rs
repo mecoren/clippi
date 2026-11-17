@@ -11,8 +11,9 @@ use std::time::Duration;
 use gpui::prelude::FluentBuilder;
 use gpui::InteractiveElement;
 use gpui::*;
-use gpui_component::input::{Input, InputEvent, InputState};
-use gpui_transitions::WindowUseTransition;
+use gpui_kit::component::input::{Input, InputEvent, InputState};
+
+use crate::ui::transition::keyed_transition;
 
 use crate::core::i18n_keys::I18nKey;
 use crate::state::app::AppState;
@@ -35,7 +36,12 @@ const NEW_ITEM_LABEL_WIDTH: f32 = 58.0;
 const NEW_ITEM_EXPAND_MS: u64 = 240;
 
 fn primary_modifier_pressed(modifiers: Modifiers) -> bool {
-    modifiers.secondary()
+    // gpui 0.3 起 `secondary()` 需要 `&App`；与 clipboard_list 同理保持旧语义。
+    if cfg!(target_os = "macos") {
+        modifiers.platform
+    } else {
+        modifiers.control
+    }
 }
 
 /// Linear blend between two colors; `t` is clamped to 0..=1.
@@ -107,35 +113,24 @@ impl SearchBox {
             let list_for_input = list_for_input.clone();
             cx.spawn(async move |_this, cx| {
                 // Trailing-edge debounce: wait for the input to stabilize.
-                Timer::after(Duration::from_millis(SEARCH_DEBOUNCE_MS)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(SEARCH_DEBOUNCE_MS))
+                    .await;
                 if generation.load(Ordering::SeqCst) != my_generation {
                     return; // superseded by a newer keystroke
                 }
-                let items = match state_for_input.update(cx, |state, _cx| {
+                // gpui 0.3 起 async 上下文的 `update` 直接返回值（旧版的
+                // fallible 语义已移除），错误分支随之取消。
+                let items = state_for_input.update(cx, |state, _cx| {
                     state.set_keyword(&keyword);
                     state.visible_items()
-                }) {
-                    Ok(items) => items,
-                    // GPUI reports a nested `update` while its app borrow is
-                    // held as "already borrowed" and drops the work. Losing a
-                    // keyword update silently would leave the list showing the
-                    // previous query with nothing in the log to explain it.
-                    Err(error) => {
-                        log::warn!(
-                            "search: dropped keyword update for {:?}: {error:#}",
-                            keyword
-                        );
-                        return;
-                    }
-                };
-                if let Err(error) = list_for_input.update(cx, |list, cx| {
+                });
+                list_for_input.update(cx, |list, cx| {
                     list.set_items(items, cx);
                     // Typing a keyword is an explicit reorder intent: when
                     // favorites-first applies, follow the reorder to the top.
                     list.select_and_scroll_to_top_if_favorites_first(cx);
-                }) {
-                    log::warn!("search: could not apply results for {keyword:?}: {error:#}");
-                }
+                });
             })
             .detach();
         })];
@@ -173,7 +168,7 @@ impl SearchBox {
         if let Some(picker) = &self.picker {
             picker.update(cx, |picker, cx| picker.focus(window, cx));
         } else {
-            self.input.focus_handle(cx).focus(window);
+            self.input.focus_handle(cx).focus(window, cx);
         }
     }
 
@@ -219,18 +214,15 @@ impl Render for SearchBox {
         // --- squeezes the search field next to it. The transition retargets ---
         // --- from its current value, so entering and leaving mid-flight stays ---
         // --- continuous instead of snapping.
-        let expand = window
-            .use_keyed_transition(
-                "search-new-item-expand",
-                cx,
-                Duration::from_millis(NEW_ITEM_EXPAND_MS),
-                |_, _| 0.0_f32,
-            )
-            .with_easing(ease_out_damped);
-        expand.update(cx, |value, _cx| {
-            *value = if self.new_item_hovered { 1.0 } else { 0.0 };
-        });
-        let expand = *expand.evaluate(window, cx);
+        let expand = keyed_transition(
+            window,
+            cx,
+            "search-new-item-expand",
+            Duration::from_millis(NEW_ITEM_EXPAND_MS),
+            0.0_f32,
+            ease_out_damped,
+            if self.new_item_hovered { 1.0 } else { 0.0 },
+        );
         let new_item_w = NEW_ITEM_BUTTON_SIZE + NEW_ITEM_LABEL_SPAN * expand;
         // Idle the button is a plain surface chip with a grey glyph. Once open
         // it is a solid accent pill — border and fill are the same color — and
@@ -327,7 +319,7 @@ impl Render for SearchBox {
                                             let plain =
                                                 app_state.read(cx).settings.copy_as_plain_text;
                                             list.update(cx, |list, cx| {
-                                                list.focus(window);
+                                                list.focus(window, cx);
                                                 list.action_paste(plain, cx);
                                             });
                                             cx.stop_propagation();
@@ -335,7 +327,7 @@ impl Render for SearchBox {
                                         // Shift+Enter — paste as plain text
                                         (false, true, "enter") => {
                                             list.update(cx, |list, cx| {
-                                                list.focus(window);
+                                                list.focus(window, cx);
                                                 list.action_paste(true, cx);
                                             });
                                             cx.stop_propagation();
@@ -345,7 +337,7 @@ impl Render for SearchBox {
                                         // lives inside the list's unified action method.
                                         (true, false, "enter") => {
                                             list.update(cx, |list, cx| {
-                                                list.focus(window);
+                                                list.focus(window, cx);
                                                 list.action_paste_bitmap_or_default(cx);
                                             });
                                             cx.stop_propagation();
@@ -353,7 +345,7 @@ impl Render for SearchBox {
                                         // Ctrl+D — toggle favorite
                                         (true, false, "d") => {
                                             list.update(cx, |list, cx| {
-                                                list.focus(window);
+                                                list.focus(window, cx);
                                                 list.action_toggle_favorite(cx);
                                             });
                                             cx.stop_propagation();
@@ -361,7 +353,7 @@ impl Render for SearchBox {
                                         // Ctrl+E — edit
                                         (true, false, "e") => {
                                             list.update(cx, |list, cx| {
-                                                list.focus(window);
+                                                list.focus(window, cx);
                                                 list.action_edit(cx);
                                             });
                                             cx.stop_propagation();
@@ -369,7 +361,7 @@ impl Render for SearchBox {
                                         // Ctrl+T — tag picker
                                         (true, false, "t") => {
                                             list.update(cx, |list, cx| {
-                                                list.focus(window);
+                                                list.focus(window, cx);
                                                 list.action_show_tag_picker(cx);
                                             });
                                             cx.stop_propagation();
@@ -377,7 +369,7 @@ impl Render for SearchBox {
                                         // F2 — edit note
                                         (false, false, "f2") => {
                                             list.update(cx, |list, cx| {
-                                                list.focus(window);
+                                                list.focus(window, cx);
                                                 list.action_edit_note(window, cx);
                                             });
                                             cx.stop_propagation();
@@ -385,7 +377,7 @@ impl Render for SearchBox {
                                         // Delete — delete item(s)
                                         (false, false, "delete") => {
                                             list.update(cx, |list, cx| {
-                                                list.focus(window);
+                                                list.focus(window, cx);
                                                 list.action_delete(cx);
                                             });
                                             cx.stop_propagation();

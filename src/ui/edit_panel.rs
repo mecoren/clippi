@@ -4,10 +4,10 @@ use crate::ui::font::fs;
 use base64::Engine;
 use gpui::prelude::*;
 use gpui::*;
-use gpui_component::input::{Input, InputEvent, InputState, RopeExt};
-use gpui_component::scroll::ScrollableElement;
-use gpui_component::text::{TextView, TextViewStyle};
-use gpui_component::tooltip::Tooltip;
+use gpui_kit::component::input::{Input, InputEvent, InputState, RopeExt, Textarea, TextareaState};
+use gpui_kit::component::scroll::ScrollableElement;
+use gpui_kit::component::text::{TextView, TextViewStyle};
+use gpui_kit::component::tooltip::Tooltip;
 use percent_encoding::percent_decode_str;
 use std::borrow::Cow;
 use std::ops::Range;
@@ -41,7 +41,7 @@ const TYPE_OPTIONS: [(&str, I18nKey); 10] = [
 
 pub struct EditPanel {
     state: Entity<AppState>,
-    content_input: Entity<InputState>,
+    content_input: Entity<TextareaState>,
     selected_type: String,
     type_menu_open: bool,
     last_item_id: i64,
@@ -91,9 +91,9 @@ impl EditPanel {
         cx: &mut Context<Self>,
     ) -> Self {
         let content_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .multi_line(true)
-                .placeholder(I18nKey::EditContentPlaceholder.text())
+            // gpui-kit 0.9 的多行输入是独立的 TextareaState/Textarea（编译期
+            // 模式），旧 `.multi_line(true)` builder 已删除。
+            TextareaState::new(window, cx).placeholder(I18nKey::EditContentPlaceholder.text())
         });
         let find_input = cx
             .new(|cx| InputState::new(window, cx).placeholder(I18nKey::EditFindPlaceholder.text()));
@@ -407,12 +407,11 @@ impl EditPanel {
         };
         self.content_input.update(cx, |input, cx| {
             input.set_value(content.clone(), window, cx);
-            input.focus_handle(cx).focus(window);
         });
     }
 
     fn apply_content_transform(
-        input: &Entity<InputState>,
+        input: &Entity<TextareaState>,
         window: &mut Window,
         cx: &mut App,
         transform: impl FnOnce(&str) -> String,
@@ -953,7 +952,7 @@ impl Render for EditPanel {
                                             });
                                         }
                                         input_handle.update(cx, |input, cx| {
-                                            input.focus_handle(cx).focus(window);
+                                            input.focus_handle(cx).focus(window, cx);
                                         });
                                     })
                                     .child(
@@ -969,7 +968,7 @@ impl Render for EditPanel {
 }
 
 fn editor_box(
-    input: &Entity<InputState>,
+    input: &Entity<TextareaState>,
     surface: Rgba,
     divider: Rgba,
     height: Pixels,
@@ -980,18 +979,17 @@ fn editor_box(
         .border(px(1.))
         .border_color(divider)
         .bg(surface)
-        // 8px is the whole inset: gpui-component's input carries its own theme
-        // padding (12px/8px at Medium) and that is removed below, so nothing
-        // stacks on top of this.
+        // 8px is the whole inset: the component input/textarea carries its own
+        // theme padding and that is removed below, so nothing stacks on top of
+        // this.
         .pt(px(8.))
         .pb(px(8.))
         .pl(px(8.))
         .pr(px(0.))
         .child(
-            Input::new(input)
+            Textarea::new(input)
                 .appearance(false)
                 .bordered(false)
-                .focus_bordered(false)
                 .w_full()
                 .h_full()
                 // Drop the theme's input padding: the box above already keeps
@@ -1016,8 +1014,8 @@ fn render_rich_preview(
     generation: u64,
     fallback_color: Rgba,
     background: Rgba,
-    window: &mut Window,
-    cx: &mut Context<EditPanel>,
+    _window: &mut Window,
+    _cx: &mut Context<EditPanel>,
 ) -> AnyElement {
     let preview_key = (item_id.max(0) as u64)
         .wrapping_mul(1_000_003)
@@ -1041,7 +1039,7 @@ fn render_rich_preview(
                 ))
                 .into_any_element();
         }
-        TextView::html(("edit-html-preview", preview_key), stripped, window, cx)
+        TextView::html(("edit-html-preview", preview_key), stripped)
             .style(style)
             .selectable(false)
             .into_any_element()
@@ -1049,8 +1047,6 @@ fn render_rich_preview(
         TextView::markdown(
             ("edit-markdown-preview", preview_key),
             rich_preview::strip_markdown_links(text),
-            window,
-            cx,
         )
         .style(style)
         .selectable(false)

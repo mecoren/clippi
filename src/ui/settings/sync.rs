@@ -5,9 +5,10 @@ use std::time::Duration;
 
 use gpui::prelude::*;
 use gpui::*;
-use gpui_component::scroll::ScrollableElement;
-use gpui_component::tooltip::Tooltip;
-use gpui_transitions::WindowUseTransition;
+use gpui_kit::component::scroll::ScrollableElement;
+use gpui_kit::component::tooltip::Tooltip;
+
+use crate::ui::transition::keyed_transition;
 
 use crate::core::i18n_keys::I18nKey;
 use crate::services::gpui_sync::format_last_sync;
@@ -1226,14 +1227,15 @@ fn transition_f32(
     initial: f32,
     target: f32,
 ) -> f32 {
-    let transition = window
-        .use_keyed_transition(key, cx, COLLAPSE_DURATION, move |_, _| initial)
-        .with_easing(ease_out);
-    transition.update(cx, |value, _cx| {
-        *value = target;
-    });
-    let value = *transition.evaluate(window, cx);
-    value
+    keyed_transition(
+        window,
+        cx,
+        key,
+        COLLAPSE_DURATION,
+        initial,
+        ease_out,
+        target,
+    )
 }
 
 fn hash_key(value: &str) -> u64 {
