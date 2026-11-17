@@ -305,7 +305,11 @@ impl SettingsPanel {
                                 .flex_1()
                                 .h(px(22.))
                                 .rounded(px(6.))
-                                .bg(if selected { accent } else { rgba(0x00000000) })
+                                .bg(if selected {
+                                    accent
+                                } else {
+                                    Rgba::from(Hsla::transparent_black())
+                                })
                                 .text_size(fs(10.))
                                 .text_color(if selected {
                                     Rgba::from(p.on_accent)
@@ -605,7 +609,7 @@ impl SettingsPanel {
                                         .justify_between()
                                         .text_size(fs(10.))
                                         .text_color(if active { accent } else { text_1 })
-                                        .bg(if active { accent_soft } else { rgba(0x00000000) })
+                                        .bg(if active { accent_soft } else { Rgba::from(Hsla::transparent_black()) })
                                         .cursor(CursorStyle::PointingHand)
                                         .hover(move |style| {
                                             if !active {
@@ -1085,7 +1089,11 @@ impl SettingsPanel {
                                 .flex_1()
                                 .h(px(20.))
                                 .rounded(px(6.))
-                                .bg(if selected { accent } else { rgba(0x00000000) })
+                                .bg(if selected {
+                                    accent
+                                } else {
+                                    Rgba::from(Hsla::transparent_black())
+                                })
                                 .text_size(fs(10.))
                                 .font_weight(FontWeight::BOLD)
                                 .text_color(if selected {

@@ -1,6 +1,5 @@
 //! GPUI edit panel for clipboard text and rich-text items.
 
-use crate::ui::font::fs;
 use base64::Engine;
 use gpui::prelude::*;
 use gpui::*;
@@ -17,8 +16,10 @@ use crate::core::i18n_keys::I18nKey;
 use crate::core::types::{ClipboardItem, RichData};
 use crate::state::app::AppState;
 
+use super::design::palette::Palette;
+use super::design::size::{Ctrl, IconSize, Radius, Space};
+use super::design::typography::{self, type_role};
 use super::rich_preview;
-use super::theme::ClippiTheme;
 
 /// The find bar is a single row of fields. The split handle's drag math needs
 /// its height: the bar shortens the area the rich-text split divides.
@@ -53,7 +54,6 @@ pub struct EditPanel {
     /// of updating one.
     is_new: bool,
     preview_generation: u64,
-    theme: ClippiTheme,
     last_lang_version: u64,
     /// 编辑器区域占内容区的比例（0.0~1.0），默认 0.5 各占一半
     split_ratio: f32,
@@ -84,12 +84,7 @@ pub enum EditPanelEvent {
 impl EventEmitter<EditPanelEvent> for EditPanel {}
 
 impl EditPanel {
-    pub fn new(
-        state: Entity<AppState>,
-        theme: ClippiTheme,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(state: Entity<AppState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let content_input = cx.new(|cx| {
             // gpui-kit 0.9 的多行输入是独立的 TextareaState/Textarea（编译期
             // 模式），旧 `.multi_line(true)` builder 已删除。
@@ -136,7 +131,6 @@ impl EditPanel {
             last_session: 0,
             is_new: false,
             preview_generation: 0,
-            theme,
             last_lang_version: crate::core::i18n::lang_version(),
             split_ratio: 0.5,
             split_dragging: None,
@@ -150,8 +144,8 @@ impl EditPanel {
         }
     }
 
-    pub fn set_theme(&mut self, theme: ClippiTheme, cx: &mut Context<Self>) {
-        self.theme = theme;
+    /// 主题变化（设置页切换浅/暗）：取色每帧走 `Palette`，这里只需重绘。
+    pub fn set_theme(&mut self, cx: &mut Context<Self>) {
         cx.notify();
     }
 
@@ -294,17 +288,13 @@ impl EditPanel {
     /// 「设置光标位置」这一条定位途径），所以不做上一个/下一个、计数与
     /// 单处替换 —— 定位靠光标，替换了多少处靠替换后的提示。
     fn find_bar(&self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = &self.theme;
-        let surface = theme.surface;
-        let divider = theme.divider;
-        let text_2 = theme.text_2;
-        let text_3 = theme.text_3;
-        let accent = theme.accent;
-        let hover_bg = if theme.dark {
-            rgba(0xffffff10)
-        } else {
-            rgba(0x0000000a)
-        };
+        let p = Palette::current(cx);
+        let surface = Rgba::from(p.on_card("layer"));
+        let divider = Rgba::from(p.stroke);
+        let text_2 = Rgba::from(p.ink_2);
+        let text_3 = Rgba::from(p.ink_3);
+        let accent = Rgba::from(p.accent);
+        let hover_bg = Rgba::from(p.hover);
         let this = cx.entity();
 
         div()
@@ -506,18 +496,14 @@ impl Render for EditPanel {
         }
 
         let this = cx.entity();
-        let theme = self.theme.clone();
-        let surface = theme.surface;
-        let bg = theme.bg;
-        let divider = theme.divider;
-        let text_1 = theme.text_1;
-        let text_2 = theme.text_2;
-        let accent = theme.accent;
-        let hover_bg = if theme.dark {
-            rgba(0xffffff10)
-        } else {
-            rgba(0x0000000a)
-        };
+        let p = Palette::current(cx);
+        let surface = Rgba::from(p.on_card("layer"));
+        let bg = Rgba::from(p.background);
+        let divider = Rgba::from(p.stroke);
+        let text_1 = Rgba::from(p.ink);
+        let text_2 = Rgba::from(p.ink_2);
+        let accent = Rgba::from(p.accent);
+        let hover_bg = Rgba::from(p.hover);
         let is_rich_editor = is_rich_editor_type(&self.selected_type);
         let selected_label = type_label(&self.selected_type);
         let content_input = self.content_input.clone();
@@ -560,7 +546,7 @@ impl Render for EditPanel {
                     ))
                     .child(
                         div()
-                            .text_size(fs(14.))
+                            .text_size(typography::font(type_role::TITLE))
                             .font_weight(FontWeight::BOLD)
                             .text_color(text_1)
                             .child(if self.is_new {
@@ -579,10 +565,10 @@ impl Render for EditPanel {
                     .gap(px(4.))
                     .child(
                         div()
-                            .h(px(22.))
-                            .px(px(8.))
-                            .rounded(px(4.))
-                            .border(px(1.))
+                            .h(Ctrl::Chip.scaled())
+                            .px(Space::Md.scaled())
+                            .rounded(Radius::Sm.scaled())
+                            .border_1()
                             .border_color(if self.type_menu_open { accent } else { divider })
                             .bg(surface)
                             .flex()
@@ -599,7 +585,7 @@ impl Render for EditPanel {
                             })
                             .child(
                                 div()
-                                    .text_size(fs(10.))
+                                    .text_size(typography::font(type_role::CAPTION))
                                     .text_color(accent)
                                     .child(selected_label),
                             ),
@@ -846,7 +832,7 @@ impl Render for EditPanel {
                         I18nKey::BtnCancel.text(),
                         text_2,
                         divider,
-                        rgba(0x00000000),
+                        Rgba::from(p.background.opacity(0.)),
                         {
                             let this = this.clone();
                             move |_window, cx| {
@@ -858,7 +844,7 @@ impl Render for EditPanel {
                     ))
                     .child(text_button(
                         I18nKey::EditSave.text(),
-                        rgb(0xffffff),
+                        Rgba::from(p.on_accent),
                         accent,
                         accent,
                         {
@@ -886,17 +872,18 @@ impl Render for EditPanel {
                             }),
                     )
                     .child(
+                        // 下拉菜单：不透明 flyout + stroke_strong + 8px 圆角，
+                        // 不再投影（层级靠描边和底色差）。
                         div()
                             .absolute()
                             .left(px(8.))
                             .top(px(78.))
                             .w(px(112.))
-                            .rounded(px(6.))
-                            .border(px(1.))
-                            .border_color(divider)
-                            .bg(surface)
-                            .shadow_lg()
-                            .p(px(4.))
+                            .rounded(Radius::Lg.px())
+                            .border_1()
+                            .border_color(p.stroke_strong)
+                            .bg(p.flyout)
+                            .p(Space::Xs.px())
                             .occlude()
                             .children(TYPE_OPTIONS.into_iter().map(|(key, label_key)| {
                                 let this = this.clone();
@@ -904,9 +891,9 @@ impl Render for EditPanel {
                                 let label = label_key.text();
                                 let active = self.selected_type == key;
                                 div()
-                                    .h(px(26.))
-                                    .rounded(px(4.))
-                                    .px(px(8.))
+                                    .h(Ctrl::Input.scaled())
+                                    .rounded(Radius::Sm.scaled())
+                                    .px(Space::Md.scaled())
                                     .flex()
                                     .items_center()
                                     .cursor(CursorStyle::PointingHand)
@@ -957,7 +944,7 @@ impl Render for EditPanel {
                                     })
                                     .child(
                                         div()
-                                            .text_size(fs(11.))
+                                            .text_size(typography::font(type_role::BODY))
                                             .text_color(if active { accent } else { text_1 })
                                             .child(label),
                                     )
@@ -975,16 +962,16 @@ fn editor_box(
     fill: bool,
 ) -> Div {
     let box_el = div()
-        .rounded(px(8.))
-        .border(px(1.))
+        .rounded(Radius::Lg.scaled())
+        .border_1()
         .border_color(divider)
         .bg(surface)
         // 8px is the whole inset: the component input/textarea carries its own
         // theme padding and that is removed below, so nothing stacks on top of
         // this.
-        .pt(px(8.))
-        .pb(px(8.))
-        .pl(px(8.))
+        .pt(Space::Md.scaled())
+        .pb(Space::Md.scaled())
+        .pl(Space::Md.scaled())
         .pr(px(0.))
         .child(
             Textarea::new(input)
@@ -997,7 +984,7 @@ fn editor_box(
                 // wide for an editor that fills the panel.
                 .px(px(0.))
                 .py(px(0.))
-                .text_size(fs(12.)),
+                .text_size(typography::font(type_role::BODY)),
         );
     if fill {
         box_el.flex_1()
@@ -1065,9 +1052,9 @@ fn icon_button(
 ) -> Stateful<Div> {
     div()
         .id(id)
-        .w(px(22.))
-        .h(px(22.))
-        .rounded(px(4.))
+        .w(Ctrl::Chip.scaled())
+        .h(Ctrl::Chip.scaled())
+        .rounded(Radius::Sm.scaled())
         .flex()
         .items_center()
         .justify_center()
@@ -1075,8 +1062,12 @@ fn icon_button(
         .hover(move |style| style.bg(hover_bg))
         .when_some(tooltip, |button, tip| {
             button.tooltip(move |window, cx| {
-                Tooltip::element(move |_window, _cx| div().text_size(fs(10.)).child(tip))
-                    .build(window, cx)
+                Tooltip::element(move |_window, _cx| {
+                    div()
+                        .text_size(typography::font(type_role::CAPTION))
+                        .child(tip)
+                })
+                .build(window, cx)
             })
         })
         .on_mouse_down(MouseButton::Left, move |_ev, window, cx| {
@@ -1085,7 +1076,7 @@ fn icon_button(
         .child(
             div()
                 .font_family("iconfont")
-                .text_size(fs(14.))
+                .text_size(IconSize::Md.scaled())
                 .text_color(normal)
                 .hover(move |style| style.text_color(hover))
                 .child(icon),
@@ -1108,17 +1099,17 @@ fn find_field(
         .min_w(px(0.))
         .h(px(FIND_ROW_H))
         .bg(surface)
-        .rounded(px(6.))
-        .border(px(1.))
+        .rounded(Radius::Md.scaled())
+        .border_1()
         .border_color(divider)
         .overflow_hidden()
         .child(
             div()
-                .pl(px(6.))
-                .pr(px(3.))
+                .pl(Space::Sm.scaled())
+                .pr(Space::Xs.scaled())
                 .flex_shrink_0()
                 .font_family("iconfont")
-                .text_size(fs(12.))
+                .text_size(typography::font(type_role::BASE))
                 .text_color(icon_color)
                 .child(icon),
         )
@@ -1133,7 +1124,7 @@ fn find_field(
                 // 26px-high field, or the text would have no room left.
                 .px(px(0.))
                 .py(px(0.))
-                .text_size(fs(11.)),
+                .text_size(typography::font(type_role::BODY)),
         )
 }
 
@@ -1146,9 +1137,9 @@ fn text_button(
 ) -> Div {
     div()
         .w(px(60.))
-        .h(px(28.))
-        .rounded(px(6.))
-        .border(px(1.))
+        .h(Ctrl::Input.scaled())
+        .rounded(Radius::Md.scaled())
+        .border_1()
         .border_color(border_color)
         .bg(bg)
         .flex()
@@ -1160,8 +1151,8 @@ fn text_button(
         })
         .child(
             div()
-                .text_size(fs(11.))
-                .font_weight(FontWeight::SEMIBOLD)
+                .text_size(typography::font(type_role::BODY))
+                .font_weight(typography::LABEL_WEIGHT)
                 .text_color(text_color)
                 .child(label),
         )

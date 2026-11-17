@@ -7,7 +7,6 @@
 //! --- - Edit/delete buttons per tag row ---
 //! - TagEditPanel overlay for editing name/color
 
-use crate::ui::font::fs;
 use std::rc::Rc;
 
 use gpui::prelude::*;
@@ -24,8 +23,10 @@ use super::clipboard_list::ClipboardListView;
 use super::components::reorder::{
     drag_source, drop_target, DragAutoScroll, ReorderDrag, ReorderKey,
 };
+use super::design::palette::Palette;
+use super::design::size::{Ctrl, Radius, Space};
+use super::design::typography::{self, type_role};
 use super::filter_bar::FilterBar;
-use super::theme::ClippiTheme;
 
 /// Pending tag-deletion target, emitted as a user intent and confirmed at the
 /// root level before any database mutation happens.
@@ -209,33 +210,22 @@ impl Render for TagFilterPanel {
             .collect();
         let tag_match_all = app_state.filters.is_tag_match_all();
         let has_tag_filter = !app_state.filters.tag_ids.is_empty();
-        let theme = ClippiTheme::from_settings(&app_state.settings, Some(window.appearance()));
         let _ = app_state;
 
-        let is_dark = theme.dark;
-        let accent = theme.accent;
-        let text_1 = theme.text_1;
-        let text_2 = theme.text_2;
-        let text_3 = theme.text_3;
-        let surface = theme.panel_surface;
-        let input_bg = theme.panel_input_bg;
-        let sep_line = theme.panel_sep_line;
-        let btn_hover = theme.btn_hover;
-        let accent_hover_bg = gpui::Rgba {
-            a: 0x35 as f32 / 255.0,
-            ..accent
-        };
-        let panel_border = if is_dark {
-            rgba(0xffffff14)
-        } else {
-            rgba(0x00000012)
-        };
-        let active_bg = theme.accent_overlay();
-        let danger_hover_bg = if is_dark {
-            rgba(0xff5f5720)
-        } else {
-            rgba(0xff5f5718)
-        };
+        // 浮层面板：不透明 flyout 底 + stroke_strong 描边，不投影。
+        let p = Palette::current(cx);
+        let accent = Rgba::from(p.accent);
+        let text_1 = Rgba::from(p.ink);
+        let text_2 = Rgba::from(p.ink_2);
+        let text_3 = Rgba::from(p.ink_3);
+        let surface = Rgba::from(p.flyout);
+        let input_bg = Rgba::from(p.on_card("control"));
+        let sep_line = Rgba::from(p.stroke);
+        let btn_hover = Rgba::from(p.on_card("hover"));
+        let accent_hover_bg = Rgba::from(p.accent.opacity(0.2));
+        let panel_border = Rgba::from(p.stroke_strong);
+        let active_bg = Rgba::from(p.accent.opacity(0.13));
+        let danger_hover_bg = Rgba::from(p.danger.opacity(0.18));
 
         let rows: Vec<Vec<(TagInfo, bool, bool)>> = tags.chunks(2).map(|r| r.to_vec()).collect();
         let rows_is_empty = rows.is_empty();
@@ -248,13 +238,12 @@ impl Render for TagFilterPanel {
             .max_h(px(360.))
             .bg(surface)
             .border_color(panel_border)
-            .border(px(1.))
-            .rounded(px(8.))
-            .shadow_lg()
-            .pt(px(8.))
-            .pb(px(8.))
-            .pl(px(8.))
-            .gap(px(4.))
+            .border_1()
+            .rounded(Radius::Lg.scaled())
+            .pt(Space::Md.scaled())
+            .pb(Space::Md.scaled())
+            .pl(Space::Md.scaled())
+            .gap(Space::Xs.scaled())
             // --- Title row ---
             .child({
                 let this = this_entity.clone();
@@ -266,7 +255,7 @@ impl Render for TagFilterPanel {
                     .items_center()
                     .child(
                         div()
-                            .text_size(fs(13.))
+                            .text_size(typography::font(type_role::BASE))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(text_1)
                             .child(I18nKey::TagFilterTitle.text()),
@@ -325,7 +314,7 @@ impl Render for TagFilterPanel {
                                     .focus_bordered(false)
                                     .w_full()
                                     .h(px(20.))
-                                    .text_size(fs(11.))
+                                    .text_size(typography::font(type_role::BODY))
                                     .text_color(text_1),
                             )
                             // --- Handle Enter key on the parent div — uses the raw ---
@@ -359,7 +348,7 @@ impl Render for TagFilterPanel {
                             .hover(move |style| style.bg(accent_hover_bg))
                             .child(
                                 div()
-                                    .text_size(fs(14.))
+                                    .text_size(typography::font(type_role::BASE))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(accent)
                                     .child(I18nKey::TagFilterAdd.text()),
@@ -411,7 +400,7 @@ impl Render for TagFilterPanel {
                                                 let tag_color_hex = tag.color.clone();
                                                 let this = this.clone();
                                                 let preview_tag = tag.clone();
-                                                let preview_theme = theme.clone();
+                                                let preview_palette = p;
                                                 let drag = ReorderDrag::new(
                                                     ReorderKey::Tag(tag_id),
                                                     move || {
@@ -419,21 +408,21 @@ impl Render for TagFilterPanel {
                                                             &preview_tag,
                                                             checked,
                                                             pinned,
-                                                            &preview_theme,
+                                                            &preview_palette,
                                                         )
                                                         .child(small_btn_visual(
                                                             "\u{e679}",
-                                                            preview_theme.text_3,
+                                                            Rgba::from(preview_palette.ink_3),
                                                         ))
                                                         .child(small_btn_visual(
                                                             "\u{e696}",
-                                                            preview_theme.text_3,
+                                                            Rgba::from(preview_palette.ink_3),
                                                         ))
                                                         .into_any_element()
                                                     },
                                                 );
                                                 let row =
-                                                    filter_tag_cell(&tag, checked, pinned, &theme)
+                                                    filter_tag_cell(&tag, checked, pinned, &p)
                                                         .id(("filter-tag", tag_id as u64))
                                                         .cursor(CursorStyle::PointingHand)
                                                         .hover(move |style| {
@@ -521,7 +510,7 @@ impl Render for TagFilterPanel {
                                                     drag_source(row, drag),
                                                     ReorderKey::Tag(tag_id),
                                                     true,
-                                                    &theme,
+                                                    &p,
                                                     move |source, after, _, cx| {
                                                         let ReorderKey::Tag(source) = source;
                                                         this.update(cx, |panel, cx| {
@@ -548,7 +537,7 @@ impl Render for TagFilterPanel {
                     div()
                         .py(px(8.))
                         .px(px(6.))
-                        .text_size(fs(11.))
+                        .text_size(typography::font(type_role::BODY))
                         .text_color(text_3)
                         .child(I18nKey::TagFilterNoTags.text()),
                 )
@@ -556,22 +545,26 @@ impl Render for TagFilterPanel {
     }
 }
 
-fn filter_tag_cell(tag: &TagInfo, checked: bool, pinned: bool, theme: &ClippiTheme) -> Div {
-    let active_bg = theme.accent_overlay();
-    let tag_color = parse_hex_to_rgba(&tag.color);
-    let accent = theme.accent;
-    let text_1 = theme.text_1;
+fn filter_tag_cell(tag: &TagInfo, checked: bool, pinned: bool, p: &Palette) -> Div {
+    let active_bg = Rgba::from(p.accent.opacity(0.13));
+    let tag_color = parse_hex_to_rgba(&tag.color, Rgba::from(p.accent));
+    let accent = Rgba::from(p.accent);
+    let text_1 = Rgba::from(p.ink);
     let tag_name = tag.name.clone();
     div()
         .w(px(140.))
-        .h(px(30.))
-        .rounded(px(5.))
-        .bg(if checked { active_bg } else { rgba(0x00000000) })
+        .h(Ctrl::Btn.scaled())
+        .rounded(Radius::Md.scaled())
+        .bg(if checked {
+            active_bg
+        } else {
+            Rgba::from(p.background.opacity(0.))
+        })
         .flex()
         .flex_row()
         .items_center()
-        .gap(px(5.))
-        .px(px(6.))
+        .gap(Space::Xs.scaled())
+        .px(Space::Sm.scaled())
         .child(if pinned {
             // Pin icon replacing color dot for pinned tags
             div()
@@ -580,7 +573,7 @@ fn filter_tag_cell(tag: &TagInfo, checked: bool, pinned: bool, theme: &ClippiThe
                 .flex()
                 .items_center()
                 .justify_center()
-                .text_size(fs(12.))
+                .text_size(typography::font(type_role::BODY))
                 .font_family("iconfont")
                 .text_color(tag_color)
                 .child("\u{e633}")
@@ -596,7 +589,7 @@ fn filter_tag_cell(tag: &TagInfo, checked: bool, pinned: bool, theme: &ClippiThe
         .child(
             div()
                 .flex_1()
-                .text_size(fs(11.))
+                .text_size(typography::font(type_role::BODY))
                 .font_weight(if checked {
                     FontWeight::SEMIBOLD
                 } else {
@@ -613,30 +606,25 @@ fn filter_tag_cell(tag: &TagInfo, checked: bool, pinned: bool, theme: &ClippiThe
 pub fn render_edit_panel(
     name_input: &Entity<InputState>,
     color: &str,
-    theme: ClippiTheme,
+    p: Palette,
     scale: f32,
     on_cancel: impl Fn(&mut Window, &mut App) + 'static,
     on_color: impl Fn(&mut Window, &mut App, String) + 'static,
     on_save: impl Fn(&mut Window, &mut App, String, String) + 'static,
 ) -> impl IntoElement {
-    let is_dark = theme.dark;
-    let accent = theme.accent;
-    let text_1 = theme.text_1;
-    let text_2 = theme.text_2;
-    let surface = theme.panel_surface;
-    let input_bg = theme.panel_input_bg;
-    let sep_line = theme.panel_sep_line;
-    let btn_hover = theme.btn_hover;
-    let panel_border = if is_dark {
-        rgba(0xffffff20)
-    } else {
-        rgba(0x00000012)
-    };
-    let accent_hover = gpui::Rgba { a: 0.8, ..accent };
-    let current_color = parse_hex_to_rgba(color);
+    let accent = Rgba::from(p.accent);
+    let text_1 = Rgba::from(p.ink);
+    let text_2 = Rgba::from(p.ink_2);
+    let surface = Rgba::from(p.flyout);
+    let input_bg = Rgba::from(p.on_card("control"));
+    let sep_line = Rgba::from(p.stroke);
+    let btn_hover = Rgba::from(p.on_card("hover"));
+    let panel_border = Rgba::from(p.stroke_strong);
+    let accent_hover = Rgba::from(p.accent.opacity(0.8));
+    let current_color = parse_hex_to_rgba(color, Rgba::from(p.accent));
     let presets: Vec<Rgba> = tag_preset_colors()
         .iter()
-        .map(|(_, hex)| parse_hex_to_rgba(hex))
+        .map(|(_, hex)| parse_hex_to_rgba(hex, Rgba::from(p.accent)))
         .collect();
     let color_rows: Vec<Vec<Rgba>> = presets.chunks(6).map(|r| r.to_vec()).collect();
     let on_cancel = Rc::new(on_cancel);
@@ -647,17 +635,16 @@ pub fn render_edit_panel(
         .w(px(260. * scale))
         .bg(surface)
         .border_color(panel_border)
-        .border(px(1.))
-        .rounded(px(8.))
-        .shadow_lg()
+        .border_1()
+        .rounded(Radius::Lg.scaled())
         .occlude()
-        .p(px(10. * scale))
+        .p(Space::Lg.scaled())
         .flex()
         .flex_col()
-        .gap(px(6.))
+        .gap(Space::Sm.scaled())
         .child(
             div()
-                .text_size(fs(13.))
+                .text_size(typography::font(type_role::BASE))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(text_1)
                 .child(I18nKey::TagEditTitle.text()),
@@ -665,7 +652,7 @@ pub fn render_edit_panel(
         .child(div().h(px(1.)).w_full().bg(sep_line))
         .child(
             div()
-                .text_size(fs(11.))
+                .text_size(typography::font(type_role::BODY))
                 .text_color(text_2)
                 .child(I18nKey::TagNameLabel.text()),
         )
@@ -685,14 +672,14 @@ pub fn render_edit_panel(
                         .w_full()
                         .h(px(20.))
                         .px(px(0.))
-                        .text_size(fs(11.))
+                        .text_size(typography::font(type_role::BODY))
                         .text_color(text_1),
                 ),
         )
         .child(div().h(px(1.)).w_full().bg(sep_line))
         .child(
             div()
-                .text_size(fs(11.))
+                .text_size(typography::font(type_role::BODY))
                 .text_color(text_2)
                 .child(I18nKey::TagColor.text()),
         )
@@ -750,7 +737,7 @@ pub fn render_edit_panel(
                         .justify_center()
                         .cursor(CursorStyle::PointingHand)
                         .hover(|style| style.bg(btn_hover))
-                        .text_size(fs(11.))
+                        .text_size(typography::font(type_role::BODY))
                         .text_color(text_2)
                         .child(I18nKey::BtnCancel.text())
                         .occlude()
@@ -770,9 +757,9 @@ pub fn render_edit_panel(
                         .justify_center()
                         .cursor(CursorStyle::PointingHand)
                         .hover(move |style| style.bg(accent_hover))
-                        .text_size(fs(11.))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(rgb(0xffffff))
+                        .text_size(typography::font(type_role::BODY))
+                        .font_weight(typography::LABEL_WEIGHT)
+                        .text_color(Rgba::from(p.on_accent))
                         .child(I18nKey::BackendSave.text())
                         .occlude()
                         .on_mouse_down(MouseButton::Left, {
@@ -809,14 +796,18 @@ fn icon_btn(
         .hover(move |style| style.bg(hover_bg))
         .when_some(tooltip, |button, tip| {
             button.tooltip(move |window, cx| {
-                Tooltip::element(move |_window, _cx| div().text_size(fs(10.)).child(tip))
-                    .build(window, cx)
+                Tooltip::element(move |_window, _cx| {
+                    div()
+                        .text_size(typography::font(type_role::CAPTION))
+                        .child(tip)
+                })
+                .build(window, cx)
             })
         })
         .child(
             div()
                 .font_family("iconfont")
-                .text_size(fs(12.))
+                .text_size(typography::font(type_role::BODY))
                 .text_color(color)
                 .child(icon),
         )
@@ -854,18 +845,18 @@ fn small_btn_visual(icon: &'static str, color: Rgba) -> Div {
         .child(
             div()
                 .font_family("iconfont")
-                .text_size(fs(12.))
+                .text_size(typography::font(type_role::BODY))
                 .text_color(color)
                 .child(icon),
         )
 }
 
-fn parse_hex_to_rgba(hex: &str) -> Rgba {
+fn parse_hex_to_rgba(hex: &str, fallback: Rgba) -> Rgba {
     let s = hex.strip_prefix('#').unwrap_or(hex);
     if s.len() == 6 {
         if let Ok(val) = u32::from_str_radix(s, 16) {
             return rgb(val);
         }
     }
-    rgb(0x888888)
+    fallback
 }

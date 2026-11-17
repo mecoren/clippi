@@ -882,7 +882,7 @@ fn type_card(
         .rounded(px(8.))
         .bg(background)
         .border(px(1.))
-        .border_color(rgba(0x00000000))
+        .border_color(Rgba::from(Hsla::transparent_black()))
         .p(px(10.))
         .flex()
         .flex_col()

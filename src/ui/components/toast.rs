@@ -8,6 +8,7 @@
 //! Action buttons can be added to toasts for interactive notifications
 //! (e.g. "Download" / "Later" for update notifications).
 
+use crate::ui::design::palette::Palette;
 use crate::ui::font::fs;
 use std::rc::Rc;
 
@@ -150,6 +151,8 @@ impl RenderOnce for Toast {
             let accent = self.theme.accent;
             let btn_hover = self.theme.btn_hover;
             let text_2 = self.theme.text_2;
+            let on_accent = Rgba::from(Palette::current(_cx).on_accent);
+            let transparent = Rgba::from(Hsla::transparent_black());
             let buttons = div()
                 .flex()
                 .flex_row()
@@ -157,8 +160,8 @@ impl RenderOnce for Toast {
                 .gap(px(6.))
                 .children(self.actions.into_iter().map(move |action| {
                     let is_primary = action.primary;
-                    let btn_bg = if is_primary { accent } else { rgba(0x00000000) };
-                    let btn_text = if is_primary { rgb(0xffffff) } else { text_2 };
+                    let btn_bg = if is_primary { accent } else { transparent };
+                    let btn_text = if is_primary { on_accent } else { text_2 };
                     div()
                         .h(px(22.))
                         .px(px(10.))

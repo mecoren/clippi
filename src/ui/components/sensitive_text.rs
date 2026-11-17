@@ -7,7 +7,7 @@
 
 use crate::ui::font::fs;
 use gpui::{
-    div, prelude::FluentBuilder, rgb, rgba, FontWeight, IntoElement, ParentElement, RenderOnce,
+    div, prelude::FluentBuilder, FontWeight, Hsla, IntoElement, ParentElement, RenderOnce, Rgba,
     Styled, Window,
 };
 
@@ -32,10 +32,11 @@ impl SensitiveText {
         Self {
             parts,
             search_terms: Vec::new(),
-            text_color: rgb(0x000000),
-            mask_color: rgb(0x000000),
-            highlight_bg: rgba(0x00000000),
-            highlight_text: rgb(0x000000),
+            // 全部占位为透明，真正取色由调用方按令牌注入。
+            text_color: Rgba::from(Hsla::transparent_black()),
+            mask_color: Rgba::from(Hsla::transparent_black()),
+            highlight_bg: Rgba::from(Hsla::transparent_black()),
+            highlight_text: Rgba::from(Hsla::transparent_black()),
             font_size: 13.0,
             font_weight: Some(FontWeight::BOLD),
         }

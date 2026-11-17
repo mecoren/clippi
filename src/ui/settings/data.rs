@@ -9,6 +9,7 @@ use gpui_kit::component::tooltip::Tooltip;
 
 use crate::core::i18n_keys::I18nKey;
 use crate::core::settings::migrate_database;
+use crate::ui::design::palette::Palette;
 use crate::ui::design::size::{Ctrl, Radius};
 use crate::ui::font::fs;
 use crate::ui::settings::SettingsEvent;
@@ -276,7 +277,7 @@ impl SettingsPanel {
                     "",
                     label.text().to_owned(),
                     checked,
-                    &theme,
+                    &Palette::current(cx),
                 )
                 .id(if settings {
                     "backup-settings"
@@ -583,7 +584,7 @@ impl SettingsPanel {
                                 .h(px(28.))
                                 .px(px(10.))
                                 .rounded(px(7.))
-                                .bg(rgba(0x00000000))
+                                .bg(Rgba::from(Hsla::transparent_black()))
                                 .border(px(1.))
                                 .border_color(text_3)
                                 .flex()
@@ -1033,8 +1034,11 @@ impl SettingsPanel {
                                     let cleanup_interval = cleanup_interval.clone();
                                     move |(key, label)| {
                                         let selected = *key == cleanup_interval;
-                                        let btn_bg =
-                                            if selected { accent } else { rgba(0x00000000) };
+                                        let btn_bg = if selected {
+                                            accent
+                                        } else {
+                                            Rgba::from(Hsla::transparent_black())
+                                        };
                                         let btn_text = if selected {
                                             Rgba::from(p.on_accent)
                                         } else {
@@ -1563,7 +1567,7 @@ impl SettingsPanel {
                             .bg(if selected {
                                 accent_soft
                             } else {
-                                rgba(0x00000000)
+                                Rgba::from(Hsla::transparent_black())
                             })
                             .p(px(10.))
                             .flex()
@@ -1604,7 +1608,7 @@ impl SettingsPanel {
                             .bg(if selected {
                                 accent_soft
                             } else {
-                                rgba(0x00000000)
+                                Rgba::from(Hsla::transparent_black())
                             })
                             .p(px(10.))
                             .flex()

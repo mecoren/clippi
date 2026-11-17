@@ -21,6 +21,7 @@ use crate::core::i18n_keys::I18nKey;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 
+use crate::ui::design::palette::Palette;
 use crate::ui::theme::ClippiTheme;
 use crate::ui::transition::keyed_transition;
 
@@ -269,6 +270,10 @@ impl ConfirmDialog {
         } else {
             theme.accent
         };
+        // 确认钮文字跟底色走语义对色（danger→on_danger，accent→on_accent），
+        // 不再写死白色。
+        let p = Palette::current(cx);
+        let confirm_text = Rgba::from(if is_danger { p.on_danger } else { p.on_accent });
 
         if let Some(ref handle) = focus_handle {
             handle.focus(window, cx);
@@ -416,7 +421,7 @@ impl ConfirmDialog {
                                     .px(px(12.))
                                     .rounded(px(4.))
                                     .text_size(fs(12.))
-                                    .text_color(rgb(0xffffff))
+                                    .text_color(confirm_text)
                                     .bg(confirm_color)
                                     .flex()
                                     .items_center()

@@ -30,7 +30,9 @@ use std::time::Instant;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 
-use crate::ui::font::fs;
+use crate::ui::design::motion::mix;
+use crate::ui::design::palette::Palette;
+use crate::ui::design::typography::{self, type_role};
 
 pub type SliderChange = Rc<dyn Fn(usize, &mut Window, &mut App)>;
 pub type SliderPreview = Rc<dyn Fn(&mut Window, &mut App)>;
@@ -102,6 +104,29 @@ pub struct SteppedSliderColors {
     /// Fill of an inactive number badge (see `badge_labels`).
     pub badge_bg: Rgba,
     pub text: Rgba,
+}
+
+impl SteppedSliderColors {
+    /// The layered palette every slider shares: track < fill < ticks < knob,
+    /// derived from the palette accent so it adapts to light/dark.
+    pub fn from_palette(p: &Palette) -> Self {
+        let accent: Rgba = p.accent.into();
+        let text: Rgba = p.ink_2.into();
+        // 滑块压在卡片面上，需要实色：半透明描边叠在「窗口底 + 卡片」上的等效值。
+        let track_off: Rgba = p.on_card("stroke-strong").into();
+        Self {
+            accent,
+            fill: mix(track_off.into(), accent.into(), 0.55).into(),
+            track_off,
+            tick_passed: accent,
+            tick_off: mix(track_off.into(), text.into(), 0.35).into(),
+            // 纯白/纯黑只做明度调整（提亮外环、压暗内芯），不随主题翻转。
+            knob_ring: mix(accent.into(), Hsla::white(), 0.45).into(),
+            knob_core: mix(accent.into(), Hsla::black(), 0.22).into(),
+            badge_bg: p.background.into(),
+            text,
+        }
+    }
 }
 
 /// Persistent interaction state for a [`SteppedSlider`].
@@ -235,7 +260,7 @@ pub struct SteppedSlider {
     id: ElementId,
     detents: Vec<SliderDetent>,
     active: usize,
-    colors: SteppedSliderColors,
+    colors: Option<SteppedSliderColors>,
     on_change: Option<SliderChange>,
     on_preview: Option<SliderPreview>,
     drag: Option<SliderDragState>,
@@ -256,17 +281,9 @@ impl SteppedSlider {
             id: id.into(),
             detents,
             active: 0,
-            colors: SteppedSliderColors {
-                accent: rgb(0x4a9e6f),
-                fill: rgb(0x4a9e6f),
-                track_off: rgb(0x3a3b3c),
-                tick_passed: rgb(0x4a9e6f),
-                tick_off: rgb(0x55575a),
-                knob_ring: rgb(0x8ed4a8),
-                knob_core: rgb(0x35805a),
-                badge_bg: rgb(0x2f3032),
-                text: rgb(0xeaebec),
-            },
+            // 不带色时的缺省在渲染时从 `Palette` 派生（`from_palette`）；
+            // 这里不再内置一套硬编码的暗色值。
+            colors: None,
             on_change: None,
             on_preview: None,
             drag: None,
@@ -282,7 +299,7 @@ impl SteppedSlider {
     }
 
     pub fn colors(mut self, colors: SteppedSliderColors) -> Self {
-        self.colors = colors;
+        self.colors = Some(colors);
         self
     }
 
@@ -337,6 +354,8 @@ impl RenderOnce for SteppedSlider {
             badge_labels,
             label_inset,
         } = self;
+        let p = Palette::current(cx);
+        let colors = colors.unwrap_or_else(|| SteppedSliderColors::from_palette(&p));
         let count = detents.len().max(1);
         let active = active.min(count - 1);
 
@@ -526,10 +545,10 @@ impl RenderOnce for SteppedSlider {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .text_size(fs(10.))
+                                .text_size(typography::font(type_role::CAPTION))
                                 .font_weight(FontWeight::BOLD)
                                 .text_color(if is_active {
-                                    rgb(0xffffff)
+                                    Rgba::from(p.on_accent)
                                 } else {
                                     colors.text
                                 })
@@ -540,7 +559,7 @@ impl RenderOnce for SteppedSlider {
                                 .overflow_hidden()
                                 .text_ellipsis()
                                 .whitespace_nowrap()
-                                .text_size(fs(11.))
+                                .text_size(typography::font(type_role::BODY))
                                 .font_weight(if is_active {
                                     FontWeight::BOLD
                                 } else {

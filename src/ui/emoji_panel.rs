@@ -500,7 +500,7 @@ impl Render for EmojiPanel {
                                     .border_color(if index == this.selected {
                                         list_theme.accent
                                     } else {
-                                        rgba(0x00000000)
+                                        Rgba::from(Hsla::transparent_black())
                                     })
                                     .when(index == this.selected, |button| {
                                         button.bg(list_theme.accent_soft)

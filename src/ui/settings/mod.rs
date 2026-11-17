@@ -654,7 +654,7 @@ impl Render for SettingsPanel {
                             let underline_bg = if is_active {
                                 theme.accent
                             } else {
-                                rgba(0x00000000)
+                                Rgba::from(Hsla::transparent_black())
                             };
                             let this = this.clone();
 
@@ -984,23 +984,7 @@ impl SettingsPanel {
     /// The layered palette every slider in the settings shares: track < fill <
     /// ticks < knob, derived from the theme accent so it adapts to light/dark.
     pub(crate) fn slider_colors(&self) -> SteppedSliderColors {
-        let p = self.palette;
-        let accent = Rgba::from(p.accent);
-        let text = Rgba::from(p.ink_2);
-        // 滑块压在卡片面上，需要实色：半透明描边叠在「窗口底 + 卡片」上的等效值。
-        let track_off = Rgba::from(p.on_card("stroke-strong"));
-        SteppedSliderColors {
-            accent,
-            fill: mix(track_off, accent, 0.55),
-            track_off,
-            tick_passed: accent,
-            tick_off: mix(track_off, text, 0.35),
-            // 纯白/纯黑只做明度调整（提亮外环、压暗内芯），不随主题翻转。
-            knob_ring: mix(accent, rgb(0xffffff), 0.45),
-            knob_core: mix(accent, rgb(0x000000), 0.22),
-            badge_bg: Rgba::from(p.background),
-            text,
-        }
+        SteppedSliderColors::from_palette(&self.palette)
     }
 
     /// Caller-owned drag state for the slider with `id`, created on first use.
@@ -1198,7 +1182,7 @@ impl SettingsPanel {
             });
         }
 
-        let row_bg_transparent = rgba(0x00000000);
+        let row_bg_transparent = Rgba::from(Hsla::transparent_black());
         let row_text_selected = Rgba::from(p.on_accent);
         let mk_entry =
             |family: String, display: String, preview_family: SharedString| -> AnyElement {
@@ -1382,17 +1366,5 @@ impl SettingsPanel {
         self.recording_paste_shortcut = None;
         self.pending_paste_shortcut = None;
         cx.notify();
-    }
-}
-
-/// Linear blend between two colors; `t` is clamped to 0..=1. Used to derive
-/// the layered slider palette from the theme accent.
-fn mix(from: Rgba, to: Rgba, t: f32) -> Rgba {
-    let t = t.clamp(0.0, 1.0);
-    Rgba {
-        r: from.r + (to.r - from.r) * t,
-        g: from.g + (to.g - from.g) * t,
-        b: from.b + (to.b - from.b) * t,
-        a: from.a + (to.a - from.a) * t,
     }
 }

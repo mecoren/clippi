@@ -160,7 +160,7 @@ impl RootView {
             panel.reload_theme(theme.clone(), cx);
         });
         self.edit_panel.update(cx, |panel, cx| {
-            panel.set_theme(theme.clone(), cx);
+            panel.set_theme(cx);
         });
         self.emoji_panel.update(cx, |_, cx| cx.notify());
         self.sidebar.update(cx, |sidebar, cx| {
@@ -225,7 +225,7 @@ impl RootView {
                 cx,
             )
         });
-        let edit_panel = cx.new(|cx| EditPanel::new(state.clone(), theme.clone(), window, cx));
+        let edit_panel = cx.new(|cx| EditPanel::new(state.clone(), window, cx));
         let sidebar = cx.new(|_cx| Sidebar::new(state.clone(), list_view.clone()));
         let tag_filter_panel = cx.new(|cx| {
             TagFilterPanel::new(
@@ -1017,11 +1017,8 @@ impl Render for RootView {
             self.pending_tag_delete = None;
         }
         let theme = self.theme.clone();
-        let panel_border = if theme.dark {
-            rgb(0x3a3b3c)
-        } else {
-            rgb(0xd0d2de)
-        };
+        // 主窗口外描边：1 物理像素的 OS 风格描边，取描边强档。
+        let panel_border = Rgba::from(Palette::current(cx).stroke_strong);
         // 1 physical-pixel border, DPI-aware — matches OS system border width.
         // px(1.0) is 1 logical px which scales with monitor DPI; dividing by the
         // scale factor keeps the rendered border at device-pixel thickness.
@@ -1499,7 +1496,7 @@ impl Render for RootView {
             // the panel and every overlay stay panel-relative while the shadow
             // paints into the transparent border ring.
             .border(px(panel_margin))
-            .border_color(rgba(0x00000000))
+            .border_color(Rgba::from(Hsla::transparent_black()))
             .font_family(gpui_kit::component::Theme::global(cx).font_family.clone())
             .track_focus(&root_focus)
             .capture_key_down(move |ev: &KeyDownEvent, window, cx| {
@@ -1823,7 +1820,7 @@ impl Render for RootView {
                         .child(render_edit_panel(
                             &edit_name_input,
                             &editing_tag_color,
-                            self.theme.clone(),
+                            Palette::current(cx),
                             edit_tag_scale,
                             {
                                 let tf = tag_filter.clone();
@@ -2029,7 +2026,7 @@ impl Render for RootView {
                                 is_batch,
                                 create_input,
                                 list.read(cx).tag_picker_scroll().clone(),
-                                self.theme.clone(),
+                                Palette::current(cx),
                             )
                                 .on_reorder({
                                     let state = self.state.clone();
@@ -2588,7 +2585,7 @@ impl Render for RootView {
                     let checked = selected.iter().any(|value| value == kind);
                     let state = self.state.clone();
                     let panel = self.settings_panel.clone();
-                    crate::ui::type_filter_config::selectable_type_row(icon, label.text().to_string(), checked, &theme)
+                    crate::ui::type_filter_config::selectable_type_row(icon, label.text().to_string(), checked, &Palette::current(cx))
                         .id(SharedString::from(format!("privacy-type-{kind}")))
                         .h(px(32. * privacy_popup_layout.1))
                         .cursor(CursorStyle::PointingHand)

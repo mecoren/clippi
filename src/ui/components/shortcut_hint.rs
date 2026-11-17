@@ -67,6 +67,8 @@ fn shortcut_foreground(accent: Rgba) -> Rgba {
     };
     let luminance =
         0.2126 * linear(accent.r) + 0.7152 * linear(accent.g) + 0.0722 * linear(accent.b);
+    // 与 `on_accent` 同一意图：按键底恒为强调色，文字按底的实际亮度取黑/白，
+    // 不随主题翻转（深浅强调色都可能被用户选中）。
     if luminance > 0.179 {
         rgb(0x000000)
     } else {

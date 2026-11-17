@@ -36,7 +36,6 @@ pub struct ClippiTheme {
 
     // --- Panels (floating) ---
     pub panel_surface: Rgba,
-    pub panel_input_bg: Rgba,
     pub panel_sep_line: Rgba,
 
     // --- Toast ---
@@ -86,7 +85,6 @@ impl ClippiTheme {
                 a: 1.,
                 ..color("flyout")
             },
-            panel_input_bg: tokens::on_card("control", dark),
             panel_sep_line: color("stroke"),
 
             toast_bg: Rgba {

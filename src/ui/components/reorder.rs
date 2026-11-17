@@ -5,7 +5,7 @@ use std::{cell::Cell, rc::Rc};
 
 use gpui::{prelude::*, *};
 
-use crate::ui::theme::ClippiTheme;
+use crate::ui::design::palette::Palette;
 
 /// Distance from a scroll viewport edge at which a drag starts auto-scrolling.
 const AUTOSCROLL_ZONE: f32 = 24.;
@@ -102,8 +102,8 @@ pub fn drag_source(row: Stateful<Div>, drag: ReorderDrag) -> Stateful<Div> {
 }
 
 /// The same passive six-dot grip is used by the row and its drag preview.
-pub fn drag_grip(theme: &ClippiTheme) -> Div {
-    let color = theme.text_3;
+pub fn drag_grip(p: &Palette) -> Div {
+    let color: Rgba = p.ink_3.into();
     div()
         .w(px(22.))
         .h(px(22.))
@@ -132,13 +132,13 @@ pub fn drop_target(
     row: Stateful<Div>,
     key: ReorderKey,
     horizontal: bool,
-    theme: &ClippiTheme,
+    p: &Palette,
     on_drop: impl Fn(ReorderKey, bool, &mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
     let bounds = Rc::new(Cell::new(Bounds::<Pixels>::default()));
     let highlighted = Rc::new(Cell::new(false));
-    let accent = theme.accent;
-    let hover = theme.accent_overlay();
+    let accent: Rgba = p.accent.into();
+    let hover: Rgba = p.accent.opacity(0.13).into();
     row.relative()
         .can_drop({
             let key = key.clone();

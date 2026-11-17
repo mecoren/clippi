@@ -174,18 +174,9 @@ impl RenderOnce for HoverToolbar {
         };
         let danger: Rgba = p.danger.into();
         let fav_color: Rgba = p.fav.into();
-        let is_dark = p.dark;
         let pill_bg: Rgba = p.on_card("layer-strong").into();
         let pill_border: Rgba = p.stroke_strong.into();
         let hover_bg: Rgba = p.on_card("hover-strong").into();
-        // Keep each shadow tight enough to define the 2px gaps between tabs.
-        // Cast toward the exposed edge for both above-card and below-card tabs.
-        // 手写阴影：gpui 预设的投影比这种"贴边"太散，颜色固定成黑色系。
-        let pill_shadow = if is_dark {
-            rgba(0x00000040)
-        } else {
-            rgba(0x0000001a)
-        };
 
         let is_single = props.selected_count <= 1;
         let is_batch = props.selected_count > 1 && props.is_selected;
@@ -497,13 +488,6 @@ impl RenderOnce for HoverToolbar {
                     .bg(if is_hovered { hover_bg } else { pill_bg })
                     .border(sc(1.))
                     .border_color(if is_hovered { accent } else { pill_border })
-                    .shadow(vec![BoxShadow {
-                        color: pill_shadow.into(),
-                        offset: point(sc(0.), sc(if below_card { 0.5 } else { -0.5 })),
-                        inset: false,
-                        blur_radius: sc(1.),
-                        spread_radius: sc(0.),
-                    }])
                     .cursor(CursorStyle::PointingHand)
                     .on_hover(move |value, _window, cx| {
                         hovered.update(cx, |hovered, cx| {

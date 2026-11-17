@@ -401,7 +401,7 @@ fn render_title_bar(
                         .items_center()
                         .justify_center()
                         .cursor(CursorStyle::PointingHand)
-                        .hover(|style| style.bg(rgba(0xffffff0d)))
+                        .hover(|style| style.bg(theme.btn_hover))
                         .on_mouse_down(MouseButton::Left, move |_ev, window, cx| {
                             cx.stop_propagation();
                             close(window, cx);
@@ -529,7 +529,7 @@ fn render_entry(
                             .items_center()
                             .justify_center()
                             .cursor(CursorStyle::PointingHand)
-                            .hover(|style| style.bg(rgba(0xffffff0d)))
+                            .hover(|style| style.bg(theme.btn_hover))
                             .on_mouse_down(MouseButton::Left, {
                                 move |_ev, window, cx| {
                                     cx.stop_propagation();

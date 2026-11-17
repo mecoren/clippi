@@ -21,8 +21,10 @@ use crate::ui::transition::keyed_transition;
 use super::components::reorder::{
     drag_grip, ease_in_out, row_drag_position, GRABBING_CURSOR, GRAB_CURSOR,
 };
+use super::design::palette::Palette;
+use super::design::size::{Radius, Space};
+use super::design::typography::{self, type_role};
 use super::filter_bar::{filter_type_display, FilterBar};
-use super::theme::ClippiTheme;
 
 /// Row height, row gap, and their sum (the vertical pitch between rows).
 const ROW_HEIGHT: f32 = 28.0;
@@ -152,24 +154,18 @@ impl TypeFilterConfigPanel {
 
 impl Render for TypeFilterConfigPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (config, theme) = {
+        let config = {
             let app_state = self.state.read(cx);
-            (
-                app_state.settings.type_filter_config.clone(),
-                ClippiTheme::from_settings(&app_state.settings, Some(window.appearance())),
-            )
+            app_state.settings.type_filter_config.clone()
         };
 
-        let text_1 = theme.text_1;
-        let text_2 = theme.text_2;
-        let surface = theme.panel_surface;
-        let sep_line = theme.panel_sep_line;
-        let btn_hover = theme.btn_hover;
-        let panel_border = if theme.dark {
-            rgba(0xffffff14)
-        } else {
-            rgba(0x00000012)
-        };
+        let p = Palette::current(cx);
+        let text_1 = Rgba::from(p.ink);
+        let text_2 = Rgba::from(p.ink_2);
+        let surface = Rgba::from(p.flyout);
+        let sep_line = Rgba::from(p.stroke);
+        let btn_hover = Rgba::from(p.on_card("hover"));
+        let panel_border = Rgba::from(p.stroke_strong);
         let this_entity = cx.entity().clone();
 
         let keys: Vec<String> = config.iter().map(|entry| entry.key.clone()).collect();
@@ -345,7 +341,7 @@ impl Render for TypeFilterConfigPanel {
                         let bounds_for_drag = self.bounds.clone();
                         let panel_for_drag = this_entity.clone();
                         let drag_key = key.clone();
-                        let drag = drag_grip(&theme)
+                        let drag = drag_grip(&p)
                             .id(SharedString::from(format!("type-filter-grip-{key}")))
                             .cursor(GRAB_CURSOR)
                             .hover(move |style| style.bg(btn_hover))
@@ -372,7 +368,7 @@ impl Render for TypeFilterConfigPanel {
 
                         let this = this_entity.clone();
                         let click_key = key.clone();
-                        filter_row(&key, visible, &theme)
+                        filter_row(&key, visible, &p)
                             .id(SharedString::from(format!("type-filter-{key}")))
                             .absolute()
                             .top(row_y)
@@ -396,50 +392,57 @@ impl Render for TypeFilterConfigPanel {
 }
 
 /// Passive row visuals shared with the drag preview; interaction stays on the live row.
-fn filter_row(key: &str, visible: bool, theme: &ClippiTheme) -> Div {
+fn filter_row(key: &str, visible: bool, p: &Palette) -> Div {
     let (icon, label) = filter_type_display(key).unwrap_or(("\u{e606}", key.to_string()));
-    selectable_type_row(icon, label, visible, theme)
+    selectable_type_row(icon, label, visible, p)
 }
 
 /// Shared visuals for type choices; callers supply interaction.
-pub(crate) fn selectable_type_row(
-    icon: &str,
-    label: String,
-    visible: bool,
-    theme: &ClippiTheme,
-) -> Div {
+pub(crate) fn selectable_type_row(icon: &str, label: String, visible: bool, p: &Palette) -> Div {
     div()
         .w_full()
         .flex()
         .flex_row()
         .items_center()
         .h(px(ROW_HEIGHT))
-        .px(px(4.))
-        .rounded(px(4.))
+        .px(Space::Xs.scaled())
+        .rounded(Radius::Sm.scaled())
         .child(
             div()
-                .text_size(fs(12.))
+                .text_size(typography::font(type_role::BODY))
                 .font_family("iconfont")
-                .text_color(if visible { theme.accent } else { theme.text_3 })
+                .text_color(if visible {
+                    Rgba::from(p.accent)
+                } else {
+                    Rgba::from(p.ink_3)
+                })
                 .flex_shrink_0()
                 .child(if visible { "\u{e61f}" } else { "\u{e831}" }),
         )
         .when(!icon.is_empty(), |row| {
             row.child(
                 div()
-                    .ml(px(6.))
-                    .text_size(fs(12.))
+                    .ml(Space::Sm.scaled())
+                    .text_size(typography::font(type_role::BODY))
                     .font_family("iconfont")
-                    .text_color(if visible { theme.text_2 } else { theme.text_3 })
+                    .text_color(if visible {
+                        Rgba::from(p.ink_2)
+                    } else {
+                        Rgba::from(p.ink_3)
+                    })
                     .child(icon.to_string()),
             )
         })
         .child(
             div()
-                .ml(px(if icon.is_empty() { 6. } else { 4. }))
-                .text_size(fs(11.))
+                .ml(Space::Sm.scaled())
+                .text_size(typography::font(type_role::BODY))
                 .flex_1()
-                .text_color(if visible { theme.text_1 } else { theme.text_3 })
+                .text_color(if visible {
+                    Rgba::from(p.ink)
+                } else {
+                    Rgba::from(p.ink_3)
+                })
                 .child(label),
         )
 }

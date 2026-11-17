@@ -1,6 +1,5 @@
 //! --- Tag picker panel - assign or remove tags on clipboard items. ---
 
-use crate::ui::font::fs;
 use std::rc::Rc;
 
 type TagToggleHandler = Rc<dyn Fn(i64, TagState, &mut gpui::Window, &mut gpui::App)>;
@@ -20,7 +19,9 @@ use crate::core::types::TagInfo;
 use super::components::reorder::{
     drag_source, drop_target, DragAutoScroll, ReorderDrag, ReorderKey,
 };
-use super::theme::ClippiTheme;
+use super::design::palette::Palette;
+use super::design::size::{Ctrl, Radius, Space};
+use super::design::typography::{self, type_role};
 type ReorderHandler = Rc<dyn Fn(i64, i64, bool, &mut Window, &mut App)>;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -42,7 +43,7 @@ pub struct TagPickerPanel {
     on_create: Option<CreateTagHandler>,
     /// Tag grid scroll offset, driven so a reorder drag can auto-scroll it.
     scroll: DragAutoScroll,
-    theme: ClippiTheme,
+    palette: Palette,
 }
 
 impl TagPickerPanel {
@@ -51,7 +52,7 @@ impl TagPickerPanel {
         is_batch: bool,
         create_input: Entity<InputState>,
         scroll: DragAutoScroll,
-        theme: ClippiTheme,
+        palette: Palette,
     ) -> Self {
         Self {
             tags,
@@ -63,7 +64,7 @@ impl TagPickerPanel {
             on_close: None,
             on_create: None,
             scroll,
-            theme,
+            palette,
         }
     }
 
@@ -111,28 +112,21 @@ impl RenderOnce for TagPickerPanel {
             on_close,
             on_create,
             scroll,
-            theme,
+            palette,
         } = self;
 
-        let is_dark = theme.dark;
-        let surface = theme.panel_surface;
-        let input_bg = theme.panel_input_bg;
-        let text_1 = theme.text_1;
-        let text_2 = theme.text_2;
-        let text_3 = theme.text_3;
-        let accent = theme.accent;
-        let btn_hover = theme.btn_hover;
-        let accent_hover_bg = gpui::Rgba {
-            a: 0x35 as f32 / 255.0,
-            ..accent
-        };
-        let sep_line = theme.panel_sep_line;
-        let panel_border = if is_dark {
-            rgba(0xffffff14)
-        } else {
-            rgba(0x00000012)
-        };
-        let active_bg = theme.accent_overlay();
+        // 浮层选择器：不透明 flyout 底 + stroke_strong 描边，不投影。
+        let surface = Rgba::from(palette.flyout);
+        let input_bg = Rgba::from(palette.on_card("control"));
+        let text_1 = Rgba::from(palette.ink);
+        let text_2 = Rgba::from(palette.ink_2);
+        let text_3 = Rgba::from(palette.ink_3);
+        let accent = Rgba::from(palette.accent);
+        let btn_hover = Rgba::from(palette.on_card("hover"));
+        let accent_hover_bg = Rgba::from(palette.accent.opacity(0.2));
+        let sep_line = Rgba::from(palette.stroke);
+        let panel_border = Rgba::from(palette.stroke_strong);
+        let active_bg = Rgba::from(palette.accent.opacity(0.13));
 
         // --- Filter tags by input text for live search (pinyin-aware) ---
         let filter_text = create_input.read(_cx).value();
@@ -171,7 +165,7 @@ impl RenderOnce for TagPickerPanel {
                     .items_center()
                     .child(
                         div()
-                            .text_size(fs(13.))
+                            .text_size(typography::font(type_role::BASE))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(text_1)
                             .child(if is_batch {
@@ -217,7 +211,7 @@ impl RenderOnce for TagPickerPanel {
                                     .focus_bordered(false)
                                     .w_full()
                                     .h(px(20.))
-                                    .text_size(fs(11.))
+                                    .text_size(typography::font(type_role::BODY))
                                     .text_color(text_1),
                             )
                             .on_key_down({
@@ -267,7 +261,7 @@ impl RenderOnce for TagPickerPanel {
                             .hover(move |style| style.bg(accent_hover_bg))
                             .child(
                                 div()
-                                    .text_size(fs(14.))
+                                    .text_size(typography::font(type_role::BASE))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(accent)
                                     .child(I18nKey::TagFilterAdd.text()),
@@ -300,7 +294,7 @@ impl RenderOnce for TagPickerPanel {
                     div()
                         .px(px(6.))
                         .py(px(12.))
-                        .text_size(fs(11.))
+                        .text_size(typography::font(type_role::BODY))
                         .text_color(text_3)
                         .child(I18nKey::TagPickerNoTags.text()),
                 )
@@ -331,7 +325,6 @@ impl RenderOnce for TagPickerPanel {
                                         .children(rows.into_iter().map(|row| {
                                             let on_toggle = on_toggle.clone();
                                             let on_reorder = on_reorder.clone();
-                                            let theme = theme.clone();
                                             div().flex().flex_row().gap(px(4.)).children(
                                                 row.into_iter().map(move |(tag, state)| {
                                                     let cell_colors = TagCellColors {
@@ -383,7 +376,7 @@ impl RenderOnce for TagPickerPanel {
                                                         drag_source(row, drag),
                                                         ReorderKey::Tag(target_id),
                                                         true,
-                                                        &theme,
+                                                        &palette,
                                                         move |source, after, window, cx| {
                                                             let ReorderKey::Tag(source) = source;
                                                             if let Some(handler) = &on_reorder {
@@ -425,14 +418,18 @@ fn icon_button(
         .hover(move |style| style.bg(hover_bg))
         .when_some(tooltip, |button, tip| {
             button.tooltip(move |window, cx| {
-                Tooltip::element(move |_window, _cx| div().text_size(fs(10.)).child(tip))
-                    .build(window, cx)
+                Tooltip::element(move |_window, _cx| {
+                    div()
+                        .text_size(typography::font(type_role::CAPTION))
+                        .child(tip)
+                })
+                .build(window, cx)
             })
         })
         .child(
             div()
                 .font_family("iconfont")
-                .text_size(fs(11.))
+                .text_size(typography::font(type_role::BODY))
                 .text_color(color)
                 .child(icon),
         );
@@ -461,28 +458,28 @@ fn tag_cell(tag: TagInfo, state: TagState, colors: &TagCellColors) -> Div {
     let state_dot = if active {
         colors.accent
     } else {
-        rgba(0x00000000)
+        Rgba::from(Hsla::transparent_black())
     };
 
     div()
         .w(px(140.))
-        .h(px(30.))
-        .rounded(px(5.))
+        .h(Ctrl::Btn.scaled())
+        .rounded(Radius::Md.scaled())
         .bg(if active {
             colors.active_bg
         } else {
             colors.input_bg
         })
-        .px(px(6.))
+        .px(Space::Sm.scaled())
         .flex()
         .flex_row()
         .items_center()
-        .gap(px(5.))
+        .gap(Space::Xs.scaled())
         .child(div().w(px(8.)).h(px(8.)).rounded_full().bg(tag_color))
         .child(
             div()
                 .flex_1()
-                .text_size(fs(11.))
+                .text_size(typography::font(type_role::BODY))
                 .font_weight(if active {
                     FontWeight::SEMIBOLD
                 } else {
