@@ -6,9 +6,29 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
-const APP_DIR_NAME: &str = "Clippi";
+const APP_DIR_NAME: &str = "cn.wait.clippi";
+/// Data directory of dev builds. Separate from the release directory so a
+/// locally built binary (`cargo run`, `cargo build --release`) never reads or
+/// writes the installed app's config, history, images or log.
+const APP_DIR_NAME_DEV: &str = "cn.wait.clippi.dev";
+/// Data directory names used by earlier releases, most recent first. Their
+/// contents are copied into the current directory after a rename so an upgrade
+/// does not look like a fresh install.
+const LEGACY_APP_DIR_NAMES: &[&str] = &["Clippi"];
 const CONFIG_FILE: &str = "clippi.toml";
 const DB_FILE: &str = "clippi.db";
+
+/// Name of the per-app data directory, before the portable-mode check.
+///
+/// The channel is decided at build time (`core::channel`), not by
+/// `debug_assertions`: a local `--release` build must stay on the dev directory.
+fn app_dir_name() -> &'static str {
+    if crate::core::channel::is_release() {
+        APP_DIR_NAME
+    } else {
+        APP_DIR_NAME_DEV
+    }
+}
 
 /// Convert Windows canonical drive/UNC paths to ordinary user-facing paths.
 /// Leave device and volume namespaces intact rather than changing their meaning.
@@ -67,7 +87,7 @@ pub fn is_portable_mode() -> bool {
 fn app_data_dir() -> PathBuf {
     dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(APP_DIR_NAME)
+        .join(app_dir_name())
 }
 
 /// Config file path — always in the base directory (exe_dir if portable,
@@ -100,8 +120,9 @@ pub fn portable_db_path() -> PathBuf {
     exe_dir().join(DB_FILE)
 }
 
-/// Returns the system data directory (`%LOCALAPPDATA%/Clippi/` on Windows,
-/// `~/Library/Application Support/Clippi/` on macOS).
+/// Returns the system data directory (`%APPDATA%/cn.wait.clippi/` on Windows,
+/// `~/Library/Application Support/cn.wait.clippi/` on macOS; `cn.wait.clippi.dev`
+/// for builds that are not from the release pipeline, see `core::channel`).
 pub fn system_data_dir() -> PathBuf {
     app_data_dir()
 }
@@ -305,6 +326,41 @@ fn ensure_app_data_dir() -> std::io::Result<()> {
     Ok(())
 }
 
+/// Directories holding data written under an older directory name, existing
+/// ones only, most recent first.
+///
+/// Always empty for a dev build: the dev directory must stay clean of the
+/// user's real history, which is the whole point of the separation.
+fn legacy_app_dirs() -> Vec<PathBuf> {
+    if !crate::core::channel::is_release() {
+        return Vec::new();
+    }
+    let Some(parent) = app_data_dir().parent().map(Path::to_path_buf) else {
+        return Vec::new();
+    };
+    LEGACY_APP_DIR_NAMES
+        .iter()
+        .map(|name| parent.join(name))
+        .filter(|dir| dir.is_dir())
+        .collect()
+}
+
+/// Copy data left in a pre-rename app directory into the current one.
+///
+/// The data directory moved from `Clippi` to `cn.wait.clippi`; without this an
+/// existing user would upgrade into an empty history. Only missing files are
+/// copied (`migrate_legacy_files_from`), so nothing is ever overwritten.
+fn migrate_renamed_app_dir() {
+    for legacy in legacy_app_dirs() {
+        log::info!(
+            "migrating data from previous app dir {} to {}",
+            legacy.display(),
+            app_data_dir().display()
+        );
+        migrate_legacy_files_from(&legacy, &app_data_dir());
+    }
+}
+
 /// One-time migration from legacy CWD/exe-relative paths to platform data dir.
 /// Non-fatal: logs warnings on failure.
 pub fn migrate_legacy_files() {
@@ -319,6 +375,10 @@ pub fn migrate_legacy_files() {
         log::error!("failed to create data directory: {e}");
         return;
     }
+
+    // --- Pre-rename data directory — the most recent source, so it is copied ---
+    // --- before the older exe-relative layout below can claim the same files. ---
+    migrate_renamed_app_dir();
 
     // --- Find legacy files in exe's parent directory ---
     let Some(legacy_dir) = std::env::current_exe()
@@ -372,8 +432,9 @@ fn migrate_legacy_files_from(legacy_dir: &Path, data_dir: &Path) {
 
 /// In portable mode, migrate existing data from the system data directory
 /// to the exe directory. This handles the case where a user previously ran
-/// Clippi as a non-portable install (data in %LOCALAPPDATA%/Clippi/) and
-/// then upgrades to a portable install (exe in a writable directory).
+/// Clippi as a non-portable install (data in the platform data dir, see
+/// `system_data_dir`) and then upgrades to a portable install (exe in a
+/// writable directory).
 ///
 /// Only migrates if:
 /// - Portable mode is active (exe dir writable)
@@ -387,7 +448,18 @@ pub fn migrate_portable_data() {
         return;
     }
 
-    let system_db = app_data_dir().join(DB_FILE);
+    // Source: the current system directory, or — after the rename — a pre-rename
+    // one that still holds the database.
+    let mut source = app_data_dir();
+    if !source.join(DB_FILE).exists() {
+        if let Some(legacy) = legacy_app_dirs()
+            .into_iter()
+            .find(|dir| dir.join(DB_FILE).exists())
+        {
+            source = legacy;
+        }
+    }
+    let system_db = source.join(DB_FILE);
     let portable_db = exe_dir().join(DB_FILE);
 
     // Only migrate if system has data and portable doesn't
@@ -402,7 +474,7 @@ pub fn migrate_portable_data() {
 
     log::info!(
         "Portable: migrating data from {} to {}",
-        app_data_dir().display(),
+        source.display(),
         exe_dir().display()
     );
 
@@ -417,7 +489,7 @@ pub fn migrate_portable_data() {
     }
 
     // Copy config (if exists and not already present)
-    let system_config = app_data_dir().join(CONFIG_FILE);
+    let system_config = source.join(CONFIG_FILE);
     let portable_config = exe_dir().join(CONFIG_FILE);
     if system_config.exists() && !portable_config.exists() {
         if let Err(e) = fs::copy(&system_config, &portable_config) {
@@ -426,7 +498,7 @@ pub fn migrate_portable_data() {
     }
 
     // Copy log file (if exists)
-    let system_log = app_data_dir().join("clippi.log");
+    let system_log = source.join("clippi.log");
     let portable_log = exe_dir().join("clippi.log");
     if system_log.exists() && !portable_log.exists() {
         if let Err(e) = fs::copy(&system_log, &portable_log) {
@@ -435,7 +507,7 @@ pub fn migrate_portable_data() {
     }
 
     // --- Copy images directory (recursive) ---
-    let system_images = app_data_dir().join("images");
+    let system_images = source.join("images");
     let portable_images = exe_dir().join("images");
     if system_images.exists() && system_images.is_dir() {
         copy_dir_recursive(&system_images, &portable_images);

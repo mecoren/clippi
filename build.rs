@@ -14,6 +14,7 @@ fn main() {
         }
     }
     embed_build_identity();
+    embed_channel();
 
     #[cfg(target_os = "windows")]
     {
@@ -72,4 +73,28 @@ fn embed_build_identity() {
 
     println!("cargo:rustc-env=CLIPPI_BUILD_ID={identity}");
     println!("cargo:rustc-env=CLIPPI_BUILD_EPOCH={epoch}");
+}
+
+/// Embed the build channel (`release` / `dev`) as `CLIPPI_CHANNEL`.
+///
+/// Only the release pipeline produces a `release` binary: `dist build` runs on
+/// GitHub Actions, which sets `GITHUB_ACTIONS=true`, and `CLIPPI_RELEASE=1` is
+/// the manual escape hatch for a release built by hand. Everything else — `cargo
+/// run`, `cargo build`, `cargo build --release` — is `dev`, which is what keeps
+/// a locally built binary out of the installed app's data directory and port.
+/// Defaulting to `dev` means a forgotten flag can never publish a binary that
+/// writes into the wrong directory; the CI signal covers the pipeline itself.
+fn embed_channel() {
+    let ci = std::env::var("GITHUB_ACTIONS")
+        .map(|value| value == "true")
+        .unwrap_or(false);
+    let explicit = std::env::var("CLIPPI_RELEASE")
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    println!("cargo:rerun-if-env-changed=GITHUB_ACTIONS");
+    println!("cargo:rerun-if-env-changed=CLIPPI_RELEASE");
+    println!(
+        "cargo:rustc-env=CLIPPI_CHANNEL={}",
+        if ci || explicit { "release" } else { "dev" }
+    );
 }

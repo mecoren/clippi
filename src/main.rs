@@ -45,12 +45,28 @@ fn is_restart() -> bool {
     std::env::args().any(|arg| arg == "--restart")
 }
 
+/// Single-instance ports, one per build channel.
+///
+/// The dev channel gets its own port so a locally built binary can run next to
+/// the installed release app instead of exiting at startup because the release
+/// already holds 19876.
+const SINGLE_INSTANCE_PORT_RELEASE: u16 = 19876;
+const SINGLE_INSTANCE_PORT_DEV: u16 = 19877;
+
+fn single_instance_port() -> u16 {
+    if core::channel::is_release() {
+        SINGLE_INSTANCE_PORT_RELEASE
+    } else {
+        SINGLE_INSTANCE_PORT_DEV
+    }
+}
+
 fn ensure_single_instance() -> bool {
     // Bind a TCP port and leak the listener so the port stays held for the
     // entire process lifetime.  Without the leak the listener is dropped
     // immediately after is_ok(), the OS reclaims the port, and the next
     // instance can bind it — defeating the single-instance guard.
-    match std::net::TcpListener::bind("127.0.0.1:19876") {
+    match std::net::TcpListener::bind(("127.0.0.1", single_instance_port())) {
         Ok(listener) => {
             Box::leak(Box::new(listener));
             true
@@ -273,8 +289,9 @@ fn main() {
     // can then be tied to an exact binary (locally rebuilt debug vs shipped
     // release) and to the local time the run started.
     log::info!(
-        "startup: clippi {} build={} built={} started={} pid={} exe={}",
+        "startup: clippi {} channel={} build={} built={} started={} pid={} exe={}",
         env!("CARGO_PKG_VERSION"),
+        core::channel::name(),
         option_env!("CLIPPI_BUILD_ID").unwrap_or("unknown"),
         build_time_local(),
         chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f %:z"),
@@ -287,7 +304,10 @@ fn main() {
     // --restart: 跳过单实例检测（旧进程 TCP 端口尚未被 OS 回收）
     // Below init_logging() so a rejected launch still leaves a line in the log.
     if !is_restart() && !ensure_single_instance() {
-        log::warn!("Another instance already holds the single-instance port; exiting");
+        log::warn!(
+            "Another instance already holds the single-instance port {}; exiting",
+            single_instance_port()
+        );
         return;
     }
 
@@ -439,7 +459,9 @@ fn main() {
                 WindowBackgroundAppearance::Transparent
             },
             titlebar: Some(TitlebarOptions {
-                title: Some("Clippi".into()),
+                // `Clippi (dev)` for a local build, so an installed release and a
+                // dev build are told apart in the taskbar and Alt+Tab.
+                title: Some(core::channel::display_name().into()),
                 appears_transparent: true,
                 ..Default::default()
             }),
@@ -625,7 +647,7 @@ fn main() {
                 let quick_options = WindowOptions {
                     window_background: WindowBackgroundAppearance::Transparent,
                     titlebar: Some(TitlebarOptions {
-                        title: Some("Clippi Quick Paste".into()),
+                        title: Some(format!("{} Quick Paste", core::channel::display_name()).into()),
                         appears_transparent: true,
                         ..Default::default()
                     }),

@@ -28,6 +28,22 @@ fn titlebar_button(id: &'static str, theme: &ClippiTheme) -> Stateful<Div> {
         .hover(|style| style.bg(theme.btn_hover))
 }
 
+/// In-app titlebar name: `Clippi`, or `Clippi (dev)` for a build that is not
+/// from the release pipeline, so a local build is recognisable next to an
+/// installed release.
+///
+/// The i18n value itself stays unprefixed — it doubles as the source-app name
+/// stored for entries created in the editor (`platform::source::own_app_info`),
+/// which must not change with the channel.
+fn titlebar_app_name() -> String {
+    let name = I18nKey::TitlebarAppName.text();
+    if crate::core::channel::is_release() {
+        name.to_string()
+    } else {
+        format!("{name} (dev)")
+    }
+}
+
 fn titlebar_logo_image() -> Arc<Image> {
     static LOGO: OnceLock<Arc<Image>> = OnceLock::new();
     LOGO.get_or_init(|| {
@@ -221,7 +237,7 @@ impl Render for Titlebar {
                             .text_size(fs(12.))
                             .font_weight(FontWeight::BOLD)
                             .text_color(text_2)
-                            .child(I18nKey::TitlebarAppName.text()),
+                            .child(titlebar_app_name()),
                     ),
             )
             // --- Spacer ---

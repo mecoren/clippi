@@ -2,6 +2,7 @@
 
 pub mod backup;
 pub mod cache_cleanup;
+pub mod channel;
 pub mod color;
 pub mod config_sync;
 pub mod data_operation;

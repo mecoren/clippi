@@ -45,7 +45,7 @@ impl TrayManager {
         let menu = Menu::new();
 
         // --- Version label (disabled, gray) ---
-        let version_text = format!("Clippi v{}", env!("CARGO_PKG_VERSION"));
+        let version_text = version_label();
         let version_item = MenuItem::new(&version_text, false, None);
 
         // --- Separator between version and functional items ---
@@ -80,7 +80,7 @@ impl TrayManager {
         let tray = TrayIconBuilder::new()
             .with_icon(icon)
             .with_menu(Box::new(menu))
-            .with_tooltip("Clippi")
+            .with_tooltip(crate::core::channel::display_name())
             .build()
             .unwrap();
 
@@ -131,7 +131,7 @@ impl TrayManager {
 
     /// Toggle the red-dot indicator on the version label when an update is available.
     pub fn set_update_available(&mut self, available: bool) {
-        let base = format!("Clippi v{}", env!("CARGO_PKG_VERSION"));
+        let base = version_label();
         let text = if available {
             format!("\u{25cf}  {}", base) // ● (U+25CF) + space
         } else {
@@ -150,6 +150,16 @@ impl TrayManager {
         self._items[2].set_text(I18nKey::TrayRestart.text());
         self._items[3].set_text(I18nKey::TrayQuit.text());
     }
+}
+
+/// Tray version label — `Clippi v0.5.6`, or `Clippi (dev) v0.5.6` for a build
+/// that is not from the release pipeline.
+fn version_label() -> String {
+    format!(
+        "{} v{}",
+        crate::core::channel::display_name(),
+        env!("CARGO_PKG_VERSION")
+    )
 }
 
 fn create_icon() -> Icon {

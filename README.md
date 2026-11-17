@@ -49,6 +49,8 @@ cd clippi
 cargo run --release
 ```
 
+> 数据目录按构建渠道隔离：发布流水线产出的正式版使用 `cn.wait.clippi`（Windows 为 `%APPDATA%\cn.wait.clippi`，macOS 为 `~/Library/Application Support/cn.wait.clippi`）；本地构建（`cargo run`、`cargo build`、`cargo build --release`）使用 `cn.wait.clippi.dev` 与独立单实例端口（开发版 19877，正式版 19876），因此不会与已安装版本抢数据或抢端口，开发版的窗口标题与托盘提示也带 `(dev)` 标记。需要本地验证正式版行为时，设 `CLIPPI_RELEASE=1` 后重新构建。
+
 ## 贡献墙
 
 感谢每一位贡献者！

@@ -224,9 +224,15 @@ FunctionEnd
 
 Section /o "un.清除应用数据" SectionUnData
   ; /o = unchecked by default — user must explicitly opt in to delete data
-  ; Remove app data at %LOCALAPPDATA%\Clippi (database, config, images, logs)
+  ; The app resolves its data dir through dirs::data_dir(), i.e. the Roaming
+  ; profile ($APPDATA) — not $LOCALAPPDATA. Remove the current directory name,
+  ; the dev build's directory, and the pre-rename one so an upgrade does not
+  ; leave history behind.
   SetShellVarContext current
-  RMDir /r "$LOCALAPPDATA\${APP_NAME}"
+  RMDir /r "$APPDATA\cn.wait.clippi"
+  RMDir /r "$APPDATA\cn.wait.clippi.dev"
+  RMDir /r "$APPDATA\Clippi"
+  RMDir /r "$LOCALAPPDATA\Clippi"
 SectionEnd
 
 !insertmacro MUI_UNFUNCTION_DESCRIPTION_BEGIN

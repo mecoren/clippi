@@ -49,6 +49,8 @@ cd clippi
 cargo run --release
 ```
 
+> Data is separated by build channel: releases from the pipeline use `cn.wait.clippi` (`%APPDATA%\cn.wait.clippi` on Windows, `~/Library/Application Support/cn.wait.clippi` on macOS), while local builds (`cargo run`, `cargo build`, `cargo build --release`) use `cn.wait.clippi.dev` and their own single-instance port (19877; releases use 19876), so a local build never competes with an installed release for data or port, and its window title and tray tooltip carry a `(dev)` marker. To exercise release behaviour locally, rebuild with `CLIPPI_RELEASE=1`.
+
 ## Contributor wall
 
 Thanks to everyone who contributes!
