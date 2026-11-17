@@ -165,7 +165,7 @@ impl Render for TypeFilterConfigPanel {
         let surface = theme.panel_surface;
         let sep_line = theme.panel_sep_line;
         let btn_hover = theme.btn_hover;
-        let panel_border = if theme.bg == rgb(0x191a1b) {
+        let panel_border = if theme.dark {
             rgba(0xffffff14)
         } else {
             rgba(0x00000012)

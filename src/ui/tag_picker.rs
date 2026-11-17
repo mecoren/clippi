@@ -114,7 +114,7 @@ impl RenderOnce for TagPickerPanel {
             theme,
         } = self;
 
-        let is_dark = theme.bg == rgb(0x191a1b);
+        let is_dark = theme.dark;
         let surface = theme.panel_surface;
         let input_bg = theme.panel_input_bg;
         let text_1 = theme.text_1;

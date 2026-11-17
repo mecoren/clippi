@@ -7,6 +7,7 @@ pub mod clipboard_card;
 pub mod clipboard_list;
 pub mod components;
 pub mod context_menu;
+pub mod design;
 pub mod edit_panel;
 pub mod emoji_panel;
 pub mod filter_bar;

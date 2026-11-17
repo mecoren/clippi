@@ -172,7 +172,7 @@ impl RenderOnce for HoverToolbar {
         // Filled glyphs look heavier than body text at the same color. Soften
         // light-theme icons without losing the dark-theme contrast boost.
         let accent = theme.accent;
-        let icon_color = if theme.bg == rgb(0x191a1b) {
+        let icon_color = if theme.dark {
             theme.text_1
         } else {
             Rgba {
@@ -184,7 +184,7 @@ impl RenderOnce for HoverToolbar {
         };
         let danger = theme.danger;
         let fav_color = theme.fav_color;
-        let is_dark = theme.bg == rgb(0x191a1b);
+        let is_dark = theme.dark;
         let pill_bg = if is_dark {
             rgb(0x232425)
         } else {

@@ -1121,7 +1121,7 @@ impl SettingsPanel {
     /// ticks < knob, derived from the theme accent so it adapts to light/dark.
     pub(crate) fn slider_colors(&self) -> SteppedSliderColors {
         let theme = &self.theme;
-        let track_off = if theme.bg == rgb(0x191a1b) {
+        let track_off = if theme.dark {
             rgb(0x3a3b3c)
         } else {
             rgb(0xd0d2de)
@@ -1350,7 +1350,7 @@ impl SettingsPanel {
         let text_1 = theme.text_1;
         let text_2 = theme.text_2;
         let text_3 = theme.text_3;
-        let hover_bg = if theme.bg == rgb(0x191a1b) {
+        let hover_bg = if theme.dark {
             rgba(0xffffff10)
         } else {
             rgba(0x0000000a)

@@ -121,7 +121,7 @@ impl Sidebar {
         list_view: Entity<ClipboardListView>,
         theme: &ClippiTheme,
     ) -> Self {
-        let dark_mode = theme.bg == rgb(0x191a1b);
+        let dark_mode = theme.dark;
         Self {
             tooltip_hover: TooltipHover::default(),
             tooltip_task: None,
@@ -259,7 +259,7 @@ impl Sidebar {
 
     /// Update theme (called when user changes theme in settings).
     pub fn set_theme(&mut self, theme: &ClippiTheme, cx: &mut Context<Self>) {
-        self.dark_mode = theme.bg == rgb(0x191a1b);
+        self.dark_mode = theme.dark;
         cx.notify();
     }
 }

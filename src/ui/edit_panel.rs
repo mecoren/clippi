@@ -300,7 +300,7 @@ impl EditPanel {
         let text_2 = theme.text_2;
         let text_3 = theme.text_3;
         let accent = theme.accent;
-        let hover_bg = if theme.bg == rgb(0x191a1b) {
+        let hover_bg = if theme.dark {
             rgba(0xffffff10)
         } else {
             rgba(0x0000000a)
@@ -513,7 +513,7 @@ impl Render for EditPanel {
         let text_1 = theme.text_1;
         let text_2 = theme.text_2;
         let accent = theme.accent;
-        let hover_bg = if bg == rgb(0x191a1b) {
+        let hover_bg = if theme.dark {
             rgba(0xffffff10)
         } else {
             rgba(0x0000000a)

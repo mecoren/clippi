@@ -1259,7 +1259,7 @@ impl Render for QuickPasteView {
         let type_slot_width = (type_bar_avail - text_gap_total).max(0.0) / visible_count;
         let icon_only = type_slot_width < 50.0; // TYPE_FILTER_TEXT_MIN_SLOT_WIDTH
         let filter_gap = if icon_only { 3.0 } else { 4.0 };
-        let inactive_bg = if theme.bg == rgb(0x191a1b) {
+        let inactive_bg = if theme.dark {
             rgba(0xffffff0a)
         } else {
             rgba(0x00000008)

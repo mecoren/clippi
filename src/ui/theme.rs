@@ -1,9 +1,10 @@
-//! Theme system for Clippi — color tokens matching the original Slint design.
-//!
-//! --- All colors are sourced from `ui/app.slint` and sub-components. ---
-//! --- Tokens adapt between dark and light mode. ---
+//! 产品主题：`ClippiTheme` 是页面层仍在使用的旧结构，颜色已全部改由
+//! `design::tokens`（`assets/theme.json`）派生。逐屏改写（M2+）期间两者
+//! 并存：新代码走 `design::Palette`，旧代码继续读这里的字段。
 
-use gpui::{rgb, rgba, Rgba, WindowAppearance};
+use gpui::{rgb, Rgba, WindowAppearance};
+
+use super::design::{motion, tokens};
 
 /// Semantic color palette for the Clippi UI.
 /// Colors match the original Slint design pixel-for-pixel.
@@ -44,68 +45,63 @@ pub struct ClippiTheme {
 
     // --- Toast ---
     pub toast_bg: Rgba,
+
+    /// 当前是否为暗色模式（旧代码曾用 `bg == rgb(0x191a1b)` 判断，令牌换值后会失效）。
+    pub dark: bool,
 }
 
 impl ClippiTheme {
     pub fn dark() -> Self {
-        Self {
-            bg: rgb(0x191a1b),
-            surface: rgb(0x232425),
-            surface_press: rgb(0x3a3b3c),
-            titlebar_bg: rgb(0x191a1b),
-
-            text_1: rgb(0xeaebec),
-            text_2: rgb(0x919496),
-            text_3: rgb(0x5f6264),
-
-            accent: rgb(0x7ecba3),
-            accent_soft: rgb(0x1a2e24),
-
-            fav_color: rgb(0xd8a155),
-            danger: rgb(0xff5f57),
-            divider: rgb(0x2b2c2d),
-            btn_hover: rgb(0x2b2c2d),
-            transfer_pin_color: rgb(0x3B82F6),
-
-            tag_bg: rgb(0x2c2e2f),
-            tag_text: rgb(0xe4e9e6),
-
-            panel_surface: rgb(0x2c2d2e),
-            panel_input_bg: rgb(0x1e1f20),
-            panel_sep_line: rgba(0xffffff0d),
-
-            toast_bg: rgba(0x3a3b3de8),
-        }
+        Self::from_tokens(true)
     }
 
     pub fn light() -> Self {
+        Self::from_tokens(false)
+    }
+
+    /// 全部颜色来自 `assets/theme.json`；语义映射见
+    /// `docs/ui-redesign/design.md` §2。半透明令牌在旧组件上实色化
+    /// （`on_card`），逐屏改写时再换真半透明层。
+    fn from_tokens(dark: bool) -> Self {
+        let color = |key: &str| tokens::color(key, dark);
+        let accent = color("accent");
+        let bg = color("window-bg");
+        let accent_soft = motion::mix(bg.into(), accent.into(), 0.15);
         Self {
-            bg: rgb(0xf2f3f8),
-            surface: rgb(0xffffff),
-            surface_press: rgb(0xebedf5),
-            titlebar_bg: rgb(0xf2f3f8),
+            bg,
+            surface: tokens::on_card("layer", dark),
+            surface_press: tokens::on_card("press", dark),
+            titlebar_bg: bg,
 
-            text_1: rgb(0x1a1c2e),
-            text_2: rgb(0x7c809a),
-            text_3: rgb(0xb4b9ca),
+            text_1: color("ink"),
+            text_2: color("ink-2"),
+            text_3: color("ink-3"),
 
-            accent: rgb(0x6ab890),
-            accent_soft: rgb(0xe8f5ee),
+            accent,
+            accent_soft: accent_soft.into(),
 
-            fav_color: rgb(0xd8a155),
-            danger: rgb(0xff5f57),
-            divider: rgb(0xe6e8f0),
-            btn_hover: rgb(0xf0f1f8),
-            transfer_pin_color: rgb(0x3B82F6),
+            fav_color: color("fav"),
+            danger: color("danger"),
+            divider: color("stroke"),
+            btn_hover: tokens::on_card("hover", dark),
+            transfer_pin_color: color("pin"),
 
-            tag_bg: rgb(0xe6e8f0),
-            tag_text: rgb(0x767e7a),
+            tag_bg: color("tag-bg"),
+            tag_text: color("tag-ink"),
 
-            panel_surface: rgb(0xffffff),
-            panel_input_bg: rgb(0xf5f6fc),
-            panel_sep_line: rgba(0x00000010),
+            panel_surface: Rgba {
+                a: 1.,
+                ..color("flyout")
+            },
+            panel_input_bg: tokens::on_card("control", dark),
+            panel_sep_line: color("stroke"),
 
-            toast_bg: rgba(0xfffffff0),
+            toast_bg: Rgba {
+                a: 1.,
+                ..color("tip")
+            },
+
+            dark,
         }
     }
 
@@ -117,11 +113,7 @@ impl ClippiTheme {
         if settings.theme_color == "system" {
             if let Some(color) = *SYSTEM_ACCENT.lock().expect("system accent cache poisoned") {
                 theme.accent = color;
-                let weight = if theme.bg == rgb(0x191a1b) {
-                    0.16
-                } else {
-                    0.12
-                };
+                let weight = if theme.dark { 0.16 } else { 0.12 };
                 theme.accent_soft = Rgba {
                     r: theme.bg.r * (1.0 - weight) + color.r * weight,
                     g: theme.bg.g * (1.0 - weight) + color.g * weight,
@@ -131,19 +123,6 @@ impl ClippiTheme {
             }
         }
         theme
-    }
-
-    pub fn sync_component_accent(&self, cx: &mut gpui::App) {
-        // `Theme::update` keeps the legacy fields, the semantic tokens and the
-        // Base-layer projection (scrollbar, resize handles) in step; plain
-        // `global_mut` field writes desynchronize them in gpui-kit 0.9.
-        gpui_kit::component::Theme::update(cx, |global| {
-            global.primary = self.accent.into();
-            global.primary_hover = self.accent.into();
-            global.primary_active = self.accent.into();
-            global.selection = self.accent_overlay().into();
-            global.ring = self.accent.into();
-        });
     }
 
     pub fn from_setting(theme: &str, appearance: Option<WindowAppearance>) -> Self {
@@ -168,7 +147,7 @@ impl ClippiTheme {
     /// Accent color used behind search hits. Stronger than the generic
     /// overlay so short highlighted terms remain visible in dense previews.
     pub fn accent_highlight(&self) -> Rgba {
-        if self.bg == rgb(0x191a1b) {
+        if self.dark {
             Rgba {
                 a: 0.4,
                 ..self.accent
@@ -182,7 +161,7 @@ impl ClippiTheme {
     }
 
     pub fn accent_highlight_text(&self) -> Rgba {
-        if self.bg == rgb(0x191a1b) {
+        if self.dark {
             rgb(0xffffff)
         } else {
             rgb(0x000000)
@@ -226,8 +205,16 @@ mod tests {
 
     #[test]
     fn overlays_follow_accent_and_preserve_default_colors() {
-        assert_eq!(ClippiTheme::dark().accent_overlay(), rgba(0x7ecba322));
-        assert_eq!(ClippiTheme::light().accent_highlight(), rgba(0x6ab8904d));
+        // 令牌经 Hsla 往返有 ±1 量化误差，这里锁语义而非逐位色值。
+        let dark = ClippiTheme::dark();
+        let overlay = dark.accent_overlay();
+        assert!((overlay.a - 0x22 as f32 / 255.0).abs() < 1e-6);
+        assert_eq!(
+            (overlay.r, overlay.g, overlay.b),
+            (dark.accent.r, dark.accent.g, dark.accent.b)
+        );
+        let light = ClippiTheme::light();
+        assert!((light.accent_highlight().a - 0x4d as f32 / 255.0).abs() < 1e-6);
         for mut theme in [ClippiTheme::light(), ClippiTheme::dark()] {
             theme.accent = rgb(0x0067c0);
             let overlay = theme.accent_overlay();

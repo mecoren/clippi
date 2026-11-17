@@ -152,7 +152,7 @@ pub(crate) fn filter_chip(
     active: bool,
     theme: &ClippiTheme,
 ) -> Stateful<Div> {
-    let inactive = if theme.bg == rgb(0x191a1b) {
+    let inactive = if theme.dark {
         rgba(0xffffff0a)
     } else {
         rgba(0x00000008)
@@ -432,12 +432,12 @@ impl Render for FilterBar {
             chip_gap,
         );
 
-        let inactive_button_bg = if theme.bg == rgb(0x191a1b) {
+        let inactive_button_bg = if theme.dark {
             rgba(0xffffff0a)
         } else {
             rgba(0x00000008)
         };
-        let toolbar_divider = if theme.bg == rgb(0x191a1b) {
+        let toolbar_divider = if theme.dark {
             rgba(0xffffff18)
         } else {
             rgba(0x00000014)

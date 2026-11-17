@@ -270,7 +270,7 @@ impl AddBackendPanel {
         let accent = self.theme.accent;
         let text_1 = self.theme.text_1;
         let text_3 = self.theme.text_3;
-        let card_bg = if self.theme.bg == rgb(0x191a1b) {
+        let card_bg = if self.theme.dark {
             rgb(0x2a2b2c)
         } else {
             rgb(0xf0f1f5)
@@ -338,7 +338,7 @@ impl AddBackendPanel {
         let divider = self.theme.divider;
         let text_2 = self.theme.text_2;
         let text_1 = self.theme.text_1;
-        let card_bg = if self.theme.bg == rgb(0x191a1b) {
+        let card_bg = if self.theme.dark {
             rgb(0x2a2b2c)
         } else {
             rgb(0xf0f1f5)
@@ -511,7 +511,7 @@ impl AddBackendPanel {
         let divider = self.theme.divider;
         let text_2 = self.theme.text_2;
         let _text_1 = self.theme.text_1;
-        let _card_bg = if self.theme.bg == rgb(0x191a1b) {
+        let _card_bg = if self.theme.dark {
             rgb(0x2a2b2c)
         } else {
             rgb(0xf0f1f5)
@@ -874,7 +874,7 @@ fn input_box(input: &Entity<InputState>, theme: &ClippiTheme) -> AnyElement {
     div()
         .h(px(30.))
         .rounded(px(6.))
-        .bg(if theme.bg == rgb(0x191a1b) {
+        .bg(if theme.dark {
             rgb(0x191a1b)
         } else {
             rgb(0xf2f3f8)

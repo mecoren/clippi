@@ -174,7 +174,7 @@ pub(crate) fn scroll_filter_bar(
                 .w(px(1.))
                 .h(px(14.))
                 .flex_shrink_0()
-                .bg(if theme.bg == rgb(0x191a1b) {
+                .bg(if theme.dark {
                     rgba(0xffffff18)
                 } else {
                     rgba(0x00000014)

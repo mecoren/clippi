@@ -134,28 +134,14 @@ impl RootView {
             ClippiTheme::from_settings(&self.state.read(cx).settings, Some(self.window_appearance));
         let theme = self.theme.clone();
 
-        // --- Sync gpui_component theme so that Input, Scrollbar ---
-        // --- and other gpui_component widgets follow our theme. ---
-        let is_dark = theme.bg == rgb(0x191a1b);
-        gpui_kit::component::Theme::change(
-            if is_dark {
-                gpui_kit::component::ThemeMode::Dark
-            } else {
-                gpui_kit::component::ThemeMode::Light
-            },
-            None,
-            cx,
-        );
-        // --- Must restore transparent background after Theme::change ---
-        // --- resets it — otherwise the window loses transparency. ---
-        // --- `Theme::update` keeps the Base projection in step. ---
-        gpui_kit::component::Theme::update(cx, |theme| {
-            theme.background = Hsla::transparent_black();
-        });
-        // --- Theme::change also resets font_size/font_family to ---
-        // --- defaults; re-push the user's font scale and family. ---
-        super::font::apply_to_global_theme(cx);
-        theme.sync_component_accent(cx);
+        // --- 令牌表 → gpui-kit 全局主题：输入框、滚动条、提示层、菜单 ---
+        // --- 随色板统一；透明窗口底、字号 rem 与字体族一并在 apply 内恢复。 ---
+        let mode = if theme.dark {
+            gpui_kit::component::ThemeMode::Dark
+        } else {
+            gpui_kit::component::ThemeMode::Light
+        };
+        super::design::palette::apply(mode, Some(theme.accent), cx);
 
         self.titlebar.update(cx, |titlebar, cx| {
             titlebar.set_theme(theme.clone(), cx);
@@ -199,7 +185,15 @@ impl RootView {
         let items = app_state.visible_items();
         let window_appearance = window.appearance();
         let theme = ClippiTheme::from_settings(&app_state.settings, Some(window_appearance));
-        theme.sync_component_accent(cx);
+        super::design::palette::apply(
+            if theme.dark {
+                gpui_kit::component::ThemeMode::Dark
+            } else {
+                gpui_kit::component::ThemeMode::Light
+            },
+            Some(theme.accent),
+            cx,
+        );
         let list_view = cx.new(|cx| {
             ClipboardListView::new(
                 items,
@@ -1022,7 +1016,7 @@ impl Render for RootView {
             self.pending_tag_delete = None;
         }
         let theme = self.theme.clone();
-        let panel_border = if theme.bg == rgb(0x191a1b) {
+        let panel_border = if theme.dark {
             rgb(0x3a3b3c)
         } else {
             rgb(0xd0d2de)
