@@ -16,6 +16,45 @@ const OSS_RELEASES_BASE: &str =
 const OSS_MANIFEST_URL: &str =
     "https://rains-ailurus-cn.oss-cn-shanghai.aliyuncs.com/clippi/releases/latest.json";
 
+/// Whether the upstream OSS mirror is queried at all.
+///
+/// The mirror belongs to the upstream project and is publicly readable, so a
+/// fork that kept it enabled would be offered the upstream build as an
+/// "update" and would download an installer for the wrong project. This fork
+/// publishes to GitHub Releases only, so `Auto` falls back to GitHub and the
+/// `oss` channel reports itself unavailable.
+const OSS_MIRROR_ENABLED: bool = false;
+
+/// GitHub `owner/repo` this build releases from, parsed from `Cargo.toml`'s
+/// `repository` field — the same value cargo-dist uses to choose the release
+/// host, so the update check can never point at another project's releases.
+///
+/// `None` (no repository, or not a GitHub URL) disables the check instead of
+/// querying the wrong repository.
+pub fn repo_slug() -> Option<(&'static str, &'static str)> {
+    parse_repo_slug(env!("CARGO_PKG_REPOSITORY"))
+}
+
+fn parse_repo_slug(url: &'static str) -> Option<(&'static str, &'static str)> {
+    let rest = url
+        .strip_prefix("https://github.com/")
+        .or_else(|| url.strip_prefix("http://github.com/"))
+        .or_else(|| url.strip_prefix("git@github.com:"))?
+        .trim_end_matches('/');
+    let rest = rest.strip_suffix(".git").unwrap_or(rest);
+    let (owner, repo) = rest.split_once('/')?;
+    let repo = repo.split('/').next()?;
+    if owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+    Some((owner, repo))
+}
+
+/// Releases page of this build's repository (the "open on GitHub" link).
+pub fn releases_page_url() -> Option<String> {
+    repo_slug().map(|(owner, repo)| format!("https://github.com/{owner}/{repo}/releases"))
+}
+
 /// Manifest schema understood by this client. Bump together with the publisher.
 const OSS_MANIFEST_SCHEMA: u64 = 1;
 
@@ -304,6 +343,12 @@ impl UpdateChecker {
 
     /// Official OSS manifest check.
     fn check_oss(&self) -> Result<Option<UpdateInfo>, UpdateCheckError> {
+        if !OSS_MIRROR_ENABLED {
+            return Err(UpdateCheckError::new(
+                UpdateErrorKind::ChannelUnavailable,
+                "the OSS mirror is disabled in this build",
+            ));
+        }
         let user_agent = format!("Clippi/{}", self.current_version);
         let http = ureq::AgentBuilder::new()
             .timeout_connect(std::time::Duration::from_secs(10))
@@ -820,6 +865,44 @@ pub fn open_releases_page(url: &str) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn repo_slug_is_parsed_from_the_package_repository() {
+        assert_eq!(
+            parse_repo_slug("https://github.com/mecoren/clippi"),
+            Some(("mecoren", "clippi"))
+        );
+        assert_eq!(
+            parse_repo_slug("https://github.com/mecoren/clippi.git"),
+            Some(("mecoren", "clippi"))
+        );
+        assert_eq!(
+            parse_repo_slug("https://github.com/mecoren/clippi/"),
+            Some(("mecoren", "clippi"))
+        );
+        assert_eq!(
+            parse_repo_slug("git@github.com:mecoren/clippi.git"),
+            Some(("mecoren", "clippi"))
+        );
+        // Anything that is not a GitHub repository must not silently resolve to
+        // a different host or a truncated slug.
+        assert_eq!(parse_repo_slug("https://example.com/mecoren/clippi"), None);
+        assert_eq!(parse_repo_slug("https://github.com/mecoren"), None);
+        assert_eq!(parse_repo_slug(""), None);
+    }
+
+    #[test]
+    fn update_check_and_releases_link_target_this_repository() {
+        // The release workflow publishes to the repository named in Cargo.toml,
+        // so the checker and the "open releases" link must resolve that value
+        // rather than announce another project's build.
+        let (owner, repo) = repo_slug().expect("Cargo.toml repository must be a GitHub URL");
+        assert_eq!(
+            releases_page_url().unwrap(),
+            format!("https://github.com/{owner}/{repo}/releases")
+        );
+        assert_eq!(repo, "clippi");
+    }
 
     #[test]
     fn release_asset_patterns_match_packaging_names() {

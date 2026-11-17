@@ -6595,8 +6595,17 @@ impl WindowManager {
         let pending_phase = self.pending_update_phase.clone();
         let running = self.update_check_running.clone();
         std::thread::spawn(move || {
-            let checker =
-                update::UpdateChecker::new(env!("CARGO_PKG_VERSION"), "Ruszero01", "clippi");
+            // The repository comes from Cargo.toml, so this build can only ever
+            // see its own releases.
+            let Some((owner, repo)) = update::repo_slug() else {
+                log::warn!("[wm] update check skipped: Cargo.toml repository is not a GitHub URL");
+                if let Ok(mut phase) = pending_phase.lock() {
+                    *phase = update::UpdatePhase::UpToDate;
+                }
+                running.store(false, Ordering::Release);
+                return;
+            };
+            let checker = update::UpdateChecker::new(env!("CARGO_PKG_VERSION"), owner, repo);
             log::info!("[wm] update check started (channel: {channel:?})");
             let result = checker.check_full(channel);
             match result {

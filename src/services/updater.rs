@@ -15,7 +15,10 @@ pub fn download_latest_and_prepare(
     on_resolved: impl FnOnce(UpdateInfo),
 ) -> Result<(), String> {
     phase_callback(UpdatePhase::Checking);
-    let checker = UpdateChecker::new(env!("CARGO_PKG_VERSION"), "Ruszero01", "clippi");
+    let Some((owner, repo)) = super::update::repo_slug() else {
+        return Err("update unavailable: Cargo.toml repository is not a GitHub URL".into());
+    };
+    let checker = UpdateChecker::new(env!("CARGO_PKG_VERSION"), owner, repo);
     let latest = resolve_download_info(
         || {
             checker

@@ -59,7 +59,13 @@ impl SettingsPanel {
                     .text_size(fs(13.))
                     .font_weight(FontWeight::BOLD)
                     .text_color(text_1)
-                    .child(format!("Clippi v{}", current_version)),
+                    // `Clippi (dev) v0.5.6` for a local build — the same marker
+                    // the titlebar and tray use.
+                    .child(format!(
+                        "{} v{}",
+                        crate::core::channel::display_name(),
+                        current_version
+                    )),
             )
             // Status text (may wrap, below version)
             .child(
@@ -150,11 +156,13 @@ impl SettingsPanel {
                     .group("gh-icon")
                     .cursor(CursorStyle::PointingHand)
                     .on_mouse_down(MouseButton::Left, |_ev, _window, _cx| {
-                        std::thread::spawn(|| {
-                            crate::services::update::open_releases_page(
-                                "https://github.com/Ruszero01/clippi/releases",
-                            );
-                        });
+                        // This build's own repository — `Cargo.toml`'s `repository`,
+                        // the same value the update check queries.
+                        if let Some(url) = crate::services::update::releases_page_url() {
+                            std::thread::spawn(move || {
+                                crate::services::update::open_releases_page(&url);
+                            });
+                        }
                     })
                     // Gray icon (default)
                     .child(
