@@ -88,7 +88,9 @@ impl Palette {
             ink: theme.colors.foreground,
             ink_2: theme.colors.muted_foreground,
             ink_3: color("ink-3"),
-            background: theme.colors.background,
+            // 直读令牌：全局主题里的 `background` 被置为透明（窗口底由各视图
+            // 自绘，DWM 圆角才能透出），直接继承会让快捷窗一类的自绘窗口没有底。
+            background: color("window-bg"),
             layer: color("layer"),
             layer_strong: color("layer-strong"),
             flyout: color("flyout"),
@@ -124,6 +126,23 @@ impl Palette {
     /// 强调色 15% 底（选中卡片/激活标签）。
     pub fn accent_soft(&self) -> Hsla {
         motion::mix(self.layer, self.accent, 0.15)
+    }
+
+    /// 搜索命中块的底：强调色自身的不透明度。亮色模式压得更淡，否则浅底上
+    /// 命中文字会糊；暗色模式反之。数值与卡片列表沿用同一口径
+    /// （`theme.rs::accent_highlight`），两处高亮不会各自漂移。
+    pub fn highlight(&self) -> Hsla {
+        self.accent
+            .opacity(if self.dark { 0.40 } else { 77. / 255. })
+    }
+
+    /// 命中文字：底色恒为强调色，所以按明暗取黑/白，不跟 `on_accent` 翻转。
+    pub fn on_highlight(&self) -> Hsla {
+        if self.dark {
+            Hsla::white()
+        } else {
+            Hsla::black()
+        }
     }
 
     /// 半透明控件面叠在卡片上的不透明等效色，避免透明窗口上多层叠加发暗。

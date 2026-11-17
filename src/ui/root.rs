@@ -164,7 +164,7 @@ impl RootView {
         });
         self.emoji_panel.update(cx, |_, cx| cx.notify());
         self.sidebar.update(cx, |sidebar, cx| {
-            sidebar.set_theme(&theme, cx);
+            sidebar.set_theme(cx);
         });
         self.focus_recovery_pending = true;
         cx.notify();
@@ -226,7 +226,7 @@ impl RootView {
             )
         });
         let edit_panel = cx.new(|cx| EditPanel::new(state.clone(), theme.clone(), window, cx));
-        let sidebar = cx.new(|_cx| Sidebar::new(state.clone(), list_view.clone(), &theme));
+        let sidebar = cx.new(|_cx| Sidebar::new(state.clone(), list_view.clone()));
         let tag_filter_panel = cx.new(|cx| {
             TagFilterPanel::new(
                 state.clone(),

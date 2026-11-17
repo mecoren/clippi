@@ -1,14 +1,17 @@
 //! Quick paste popup — compact, non-focus clipboard candidate list.
 
-use crate::ui::font::fs;
 use std::time::Duration;
 
 use gpui::prelude::*;
 use gpui::*;
 use gpui::{InteractiveElement, StatefulInteractiveElement};
 
+use super::design::palette::Palette;
+use super::design::size::{Ctrl, IconSize, Radius, Space};
+use super::design::typography::{self, type_role};
 use super::rich_preview;
 use super::search_highlight;
+use super::widgets::{self, solid};
 use crate::core::color::detect_color;
 use crate::core::secret::sensitive_preview_to_text_with_types;
 use crate::core::types::{
@@ -21,9 +24,7 @@ use crate::ui::clipboard_card::image_preview_path;
 use crate::ui::filter_bar::{
     filter_type_display, source_app_chip_width, source_app_filter_bar, visible_filter_types,
 };
-use crate::ui::theme::ClippiTheme;
 use crate::ui::transition::keyed_transition;
-use gpui_kit::component::tooltip::Tooltip;
 
 const VISIBLE_ROWS: usize = 5;
 const ROW_HEIGHT: f32 = 44.0;
@@ -42,7 +43,8 @@ const FAV_BUTTON_SIZE: f32 = 20.0;
 const FAV_BUTTON_GAP: f32 = 6.0;
 
 pub const QUICK_WINDOW_CORNER_RADIUS: f32 = 8.0;
-const HORIZONTAL_PADDING: f32 = 10.0;
+/// 左右内边距 = `Space::LG`，与筛选条、底栏、标签行共用同一档。
+const HORIZONTAL_PADDING: f32 = 12.0;
 const LIST_INSET: f32 = 4.0;
 /// Bottom hint bar. Tall enough to hold the search field on the right.
 const HINT_BAR_HEIGHT: f32 = 34.0;
@@ -783,6 +785,7 @@ impl QuickPasteView {
     }
 
     fn row_data(&self, cx: &Context<Self>, available_indices: &[(usize, i64)]) -> Vec<RowData> {
+        let p = Palette::current(cx);
         let state = self.state.read(cx);
         let auto_fetch_title = state.settings.auto_fetch_url_title;
         let items = state.quick_items();
@@ -849,9 +852,9 @@ impl QuickPasteView {
                     let foreign = !path_is_native(&item.full_text);
                     let invalid = !foreign && !crate::core::types::path_exists(&item.full_text);
                     if invalid {
-                        Some(rgb(0xef4444)) // danger
+                        Some(p.danger.into())
                     } else if foreign {
-                        Some(rgb(0xeab308)) // path_warn
+                        Some(p.warn.into())
                     } else {
                         None
                     }
@@ -1113,15 +1116,23 @@ impl QuickPasteView {
 
         Some(px(tooltip_y))
     }
-
-    fn theme(&self, appearance: WindowAppearance, cx: &Context<Self>) -> ClippiTheme {
-        ClippiTheme::from_settings(&self.state.read(cx).settings, Some(appearance))
-    }
 }
 
 impl Render for QuickPasteView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = self.theme(window.appearance(), cx);
+        // 取色统一走 `Palette`；窗口内的渲染辅助函数仍以 `Rgba` 为接口，
+        // 这里转一次，下游保持原样（与卡片列表同一手法）。
+        let p = Palette::current(cx);
+        let ink: Rgba = p.ink.into();
+        let ink_2: Rgba = p.ink_2.into();
+        let ink_3: Rgba = p.ink_3.into();
+        let accent: Rgba = p.accent.into();
+        let on_accent: Rgba = p.on_accent.into();
+        let fav: Rgba = p.fav.into();
+        let danger: Rgba = p.danger.into();
+        let pin: Rgba = p.pin.into();
+        let highlight_bg: Rgba = p.highlight().into();
+        let highlight_text: Rgba = p.on_highlight().into();
         let view_entity = cx.entity();
 
         // 搜索框内容与空状态文案。提示文本、输入内容与光标分属不同层级：
@@ -1140,8 +1151,8 @@ impl Render for QuickPasteView {
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .text_ellipsis()
-                    .text_size(fs(11.0))
-                    .text_color(theme.text_3)
+                    .text_size(typography::font(type_role::BODY))
+                    .text_color(ink_3)
                     .child("搜索")
                     .into_any_element()
             })
@@ -1151,8 +1162,8 @@ impl Render for QuickPasteView {
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .text_ellipsis()
-                    .text_size(fs(11.0))
-                    .text_color(theme.text_1)
+                    .text_size(typography::font(type_role::BODY))
+                    .text_color(ink)
                     .child(query_text)
                     .into_any_element(),
             )
@@ -1164,7 +1175,7 @@ impl Render for QuickPasteView {
                     .w(px(1.0))
                     .h(px(11.0))
                     .flex_shrink_0()
-                    .bg(theme.accent)
+                    .bg(accent)
                     .into_any_element()
             });
         // ── 搜索词过滤后有效 `(源下标, 稳定 ID)` 快照 ──
@@ -1258,12 +1269,7 @@ impl Render for QuickPasteView {
         let text_gap_total = 4.0 * (visible_count - 1.0).max(0.0); // TYPE_FILTER_TEXT_GAP
         let type_slot_width = (type_bar_avail - text_gap_total).max(0.0) / visible_count;
         let icon_only = type_slot_width < 50.0; // TYPE_FILTER_TEXT_MIN_SLOT_WIDTH
-        let filter_gap = if icon_only { 3.0 } else { 4.0 };
-        let inactive_bg = if theme.dark {
-            rgba(0xffffff0a)
-        } else {
-            rgba(0x00000008)
-        };
+        let filter_gap = 4.0; // Space::XS，仅用于宽度估算
 
         let window_h = calc_quick_window_height(has_tag_row, has_type_bar, has_source_bar);
         let source_bar = has_source_bar.then(|| {
@@ -1272,7 +1278,7 @@ impl Render for QuickPasteView {
             source_app_filter_bar(
                 self.state.read(cx),
                 &filters,
-                &theme,
+                &p,
                 &self.source_scroll,
                 view_entity.entity_id(),
                 super::components::scroll_filter_bar::ScrollFilterLayout {
@@ -1309,7 +1315,7 @@ impl Render for QuickPasteView {
                         .overflow_hidden()
                 },
             )
-            .bg(theme.bg)
+            .bg(p.background)
             .flex()
             .flex_col()
             .on_scroll(cx.listener(|this, ev: &ScrollEvent, _window, cx| {
@@ -1364,60 +1370,49 @@ impl Render for QuickPasteView {
                                 .flex()
                                 .items_center()
                                 .gap(px(filter_gap))
-                                .children(visible_type_entries.iter().map(|entry| {
-                                    let active = filters.is_type_active(entry.key);
-                                    let (icon, label) = filter_type_display(entry.key)
-                                        .unwrap_or(("\u{e606}", "".into()));
-                                    let key = entry.key;
-                                    let t = theme.clone();
-                                    let app_state = self.state.clone();
-                                    let filter_text = if active { rgb(0xffffff) } else { t.text_2 };
-                                    div()
-                                        .h(px(22.0))
-                                        .when(icon_only, |b| {
-                                            b.flex_1().min_w(px(0.0)).justify_center()
-                                        })
-                                        .when(!icon_only, |b| {
-                                            b.flex_1()
-                                                .min_w(px(0.0))
-                                                .justify_center()
-                                                .px(px(5.0))
-                                                .gap(px(2.0))
-                                        })
-                                        .rounded(px(5.0))
-                                        .flex()
-                                        .flex_row()
-                                        .items_center()
-                                        .bg(if active { t.accent } else { inactive_bg })
-                                        .cursor(CursorStyle::PointingHand)
-                                        .on_mouse_down(MouseButton::Left, {
-                                            let s = app_state.clone();
-                                            let k = key;
-                                            let v = view_entity.clone();
-                                            move |_, _window, cx| {
-                                                s.update(cx, |s, _cx| {
-                                                    s.quick_toggle_type_filter(k);
-                                                });
-                                                v.update(cx, |view, cx| view.reset_scroll(cx));
-                                            }
-                                        })
-                                        .child(
-                                            div()
-                                                .text_size(fs(12.0))
-                                                .font_family("iconfont")
-                                                .text_color(filter_text)
-                                                .child(icon),
-                                        )
-                                        .when(!icon_only, |b| {
-                                            b.child(
-                                                div()
-                                                    .text_size(fs(11.0))
-                                                    .text_color(filter_text)
-                                                    .child(label),
-                                            )
-                                        })
-                                        .into_any_element()
-                                })),
+                                .children(visible_type_entries.iter().enumerate().map(
+                                    |(index, entry)| {
+                                        let active = filters.is_type_active(entry.key);
+                                        let (icon, label) = filter_type_display(entry.key)
+                                            .unwrap_or(("\u{e606}", "".into()));
+                                        let key = entry.key;
+                                        let app_state = self.state.clone();
+                                        let filter_text = if active { p.accent } else { p.ink_2 };
+                                        widgets::chip(&p, ("quick-type", index), active)
+                                            .justify_center()
+                                            .when(icon_only, |b| b.min_w(px(0.0)))
+                                            .when(!icon_only, |b| {
+                                                b.px(Space::Xs.scaled()).gap(Space::Xxs.scaled())
+                                            })
+                                            .on_mouse_down(MouseButton::Left, {
+                                                let s = app_state.clone();
+                                                let k = key;
+                                                let v = view_entity.clone();
+                                                move |_, _window, cx| {
+                                                    s.update(cx, |s, _cx| {
+                                                        s.quick_toggle_type_filter(k);
+                                                    });
+                                                    v.update(cx, |view, cx| view.reset_scroll(cx));
+                                                }
+                                            })
+                                            .child(widgets::icon(
+                                                icon,
+                                                IconSize::Sm.scaled(),
+                                                filter_text,
+                                            ))
+                                            .when(!icon_only, |b| {
+                                                b.child(
+                                                    div()
+                                                        .text_size(typography::font(
+                                                            type_role::BODY,
+                                                        ))
+                                                        .text_color(filter_text)
+                                                        .child(label),
+                                                )
+                                            })
+                                            .into_any_element()
+                                    },
+                                )),
                         )
                     })
                     // Spacer to push fav button to the right when no type filters are shown.
@@ -1425,12 +1420,15 @@ impl Render for QuickPasteView {
                     // Favorites filter button (always visible, fixed width, right-aligned)
                     .child(
                         div()
+                            .id("quick-fav")
                             .w(px(FAV_BUTTON_SIZE))
                             .h(px(FAV_BUTTON_SIZE))
+                            .rounded(Radius::Sm.scaled())
                             .flex()
                             .items_center()
                             .justify_center()
                             .cursor(CursorStyle::PointingHand)
+                            .hover(move |style| style.bg(p.hover))
                             .on_mouse_down(MouseButton::Left, {
                                 let s = self.state.clone();
                                 let v = view_entity.clone();
@@ -1441,21 +1439,15 @@ impl Render for QuickPasteView {
                                     v.update(cx, |view, cx| view.reset_scroll(cx));
                                 }
                             })
-                            .child(
-                                div()
-                                    .text_size(fs(14.0))
-                                    .font_family("iconfont")
-                                    .text_color(if fav_active {
-                                        theme.fav_color
-                                    } else {
-                                        theme.text_2
-                                    })
-                                    .child("\u{e630}"),
-                            ),
+                            .child(widgets::icon(
+                                "\u{e630}",
+                                IconSize::Md.scaled(),
+                                if fav_active { p.fav } else { p.ink_2 },
+                            )),
                     ),
             )
             .when(has_type_bar, |parent| {
-                parent.child(div().h(px(1.0)).w_full().bg(theme.divider))
+                parent.child(div().h(px(1.0)).w_full().bg(p.stroke))
             })
             .when_some(source_bar, |parent, bar| {
                 parent
@@ -1466,7 +1458,7 @@ impl Render for QuickPasteView {
                             .items_center()
                             .child(bar),
                     )
-                    .child(div().h(px(1.)).w_full().bg(theme.divider))
+                    .child(div().h(px(1.)).w_full().bg(p.stroke))
             })
             // ── Pinned tag row ──
             .when(has_tag_row, |parent| {
@@ -1479,7 +1471,7 @@ impl Render for QuickPasteView {
                         .gap(px(4.0))
                         .children(pinned_tags.iter().map(|(id, name, color_hex)| {
                             let active = filters.tag_ids.contains(id);
-                            let tag_color = parse_hex_for_tag(color_hex);
+                            let tag_color = parse_hex_for_tag(color_hex, pin);
                             let tag_id = *id;
                             let indicator_target: f32 = if active { 1.0 } else { 0.0 };
                             let indicator_progress = keyed_transition(
@@ -1498,32 +1490,28 @@ impl Render for QuickPasteView {
                             let tag_name_for_tip = name.clone();
                             div()
                                 .id(("quick-tag", tag_id as u64))
-                                .h(px(20.0))
-                                .px(px(6.0))
-                                .rounded(px(4.0))
+                                .h(Ctrl::Chip.px())
+                                .px(Space::Sm.scaled())
+                                .rounded(Radius::Sm.px())
                                 .relative()
                                 .flex()
                                 .items_center()
+                                .gap(Space::Xs.scaled())
                                 .when(tag_compact, |d| d.flex_1().min_w(px(0.0)))
                                 .when(!tag_compact, |d| d.max_w(px(120.0)))
                                 .overflow_hidden()
-                                .text_size(fs(10.0))
-                                .font_weight(FontWeight::MEDIUM)
-                                .bg(if active {
-                                    theme.accent_overlay()
-                                } else {
-                                    tag_color
-                                })
-                                .text_color(if active { tag_color } else { rgb(0xffffff) })
+                                .text_size(typography::font(type_role::CAPTION))
+                                .font_weight(typography::LABEL_WEIGHT)
+                                // 标签色是用户自定义的任意色，直接当底色就必须配
+                                // 固定白字，浅色标签会看不清；改成中性胶囊 + 左侧色点，
+                                // 颜色身份还在，文字对比度交给令牌。
+                                .bg(if active { p.accent_soft() } else { p.tag_bg })
+                                .text_color(if active { p.accent } else { p.tag_ink })
                                 .cursor(CursorStyle::PointingHand)
                                 .when(tag_compact, move |d| {
                                     let tip = tag_name_for_tip;
                                     d.tooltip(move |window, cx| {
-                                        let tip = tip.clone();
-                                        Tooltip::element(move |_window, _cx| {
-                                            div().text_size(fs(10.)).child(tip.clone())
-                                        })
-                                        .build(window, cx)
+                                        widgets::tooltip(tip.clone(), window, cx)
                                     })
                                 })
                                 .on_mouse_down(MouseButton::Left, {
@@ -1543,11 +1531,18 @@ impl Render for QuickPasteView {
                                             .left(relative(indicator_offset))
                                             .bottom(px(0.0))
                                             .w(relative(indicator_progress))
-                                            .h(px(4.0))
-                                            .rounded_b(px(4.0))
-                                            .bg(theme.accent),
+                                            .h(Space::Xs.scaled())
+                                            .rounded_b(Radius::Sm.scaled())
+                                            .bg(accent),
                                     )
                                 })
+                                .child(
+                                    div()
+                                        .size(px(6.0))
+                                        .flex_shrink_0()
+                                        .rounded_full()
+                                        .bg(tag_color),
+                                )
                                 .child(
                                     div()
                                         .overflow_hidden()
@@ -1560,7 +1555,7 @@ impl Render for QuickPasteView {
                 )
             })
             .when(has_tag_row, |parent| {
-                parent.child(div().h(px(1.0)).w_full().bg(theme.divider))
+                parent.child(div().h(px(1.0)).w_full().bg(p.stroke))
             })
             // ── List viewport ──
             // Outer container has overflow_hidden + rounded(10px) so all
@@ -1593,23 +1588,19 @@ impl Render for QuickPasteView {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .text_size(fs(13.0))
-                                .text_color(theme.text_2)
+                                .text_size(typography::font(type_role::BASE))
+                                .text_color(ink_2)
                                 .child(empty_text),
                         )
                     })
                     .children({
-                        let t = theme.clone();
                         let selected_index = self.selected_index;
                         let first_visible = self.first_visible;
                         let image_cache = self.image_cache.clone();
                         let view_entity = cx.entity();
                         // 搜索词与高亮配色：分词用主列表那套 `split_keyword_terms`，
-                        // 配色用同一组主题令牌（`accent_highlight` /
-                        // `accent_highlight_text`，主列表卡片也取这两个）。
+                        // 配色取同两个令牌（主列表卡片也取这两个）。
                         let terms = crate::core::search::split_keyword_terms(&self.query);
-                        let highlight_bg = theme.accent_highlight();
-                        let highlight_text = theme.accent_highlight_text();
                         self.row_data(cx, &self.display_indices)
                             .into_iter()
                             .map(
@@ -1632,7 +1623,6 @@ impl Render for QuickPasteView {
                                     // 过滤后逻辑下标：选中态、hover 与鼠标交互共用同一坐标系。
                                     let index = first_visible + slot;
                                     let selected = index == selected_index;
-                                    let t = t.clone();
                                     let ve = view_entity.clone();
 
                                     let row_terms = terms.clone();
@@ -1660,10 +1650,10 @@ impl Render for QuickPasteView {
                                         quick_line_cell(
                                             note,
                                             &row_terms,
-                                            t.text_2,
+                                            ink_2,
                                             highlight_bg,
                                             highlight_text,
-                                            12.0,
+                                            type_role::BODY,
                                             QUICK_HIGHLIGHT_LEADING_CHARS,
                                         )
                                         .into_any_element()
@@ -1685,7 +1675,7 @@ impl Render for QuickPasteView {
                                             .into_any_element()
                                     } else if let Some(subtitle) = preview_subtitle {
                                         // Rich label + dimmed subtitle (URL / Path / File)
-                                        let label_color = path_color.unwrap_or(t.text_1);
+                                        let label_color = path_color.unwrap_or(ink);
                                         // 标签与副标题各自过一遍高亮渲染器：命中点只可能
                                         // 落在其中一个里，命中的那个会自己把命中点拉到可见
                                         // 范围内，另一个原样显示。
@@ -1695,7 +1685,7 @@ impl Render for QuickPasteView {
                                             label_color,
                                             highlight_bg,
                                             highlight_text,
-                                            13.0,
+                                            type_role::BASE,
                                             QUICK_HIGHLIGHT_LEADING_CHARS,
                                         )
                                         // Size the label to its text instead of sharing
@@ -1705,10 +1695,10 @@ impl Render for QuickPasteView {
                                         let subtitle = quick_line_cell(
                                             subtitle,
                                             &row_terms,
-                                            t.text_3,
+                                            ink_3,
                                             highlight_bg,
                                             highlight_text,
-                                            13.0,
+                                            type_role::BASE,
                                             QUICK_HIGHLIGHT_SUBTITLE_LEADING_CHARS,
                                         );
                                         div()
@@ -1721,8 +1711,8 @@ impl Render for QuickPasteView {
                                             .child(
                                                 div()
                                                     .flex_shrink_0()
-                                                    .text_size(fs(13.0))
-                                                    .text_color(t.text_3)
+                                                    .text_size(typography::font(type_role::BASE))
+                                                    .text_color(ink_3)
                                                     .whitespace_nowrap()
                                                     .child(" - "),
                                             )
@@ -1750,8 +1740,8 @@ impl Render for QuickPasteView {
                                             .whitespace_nowrap()
                                             .children(spans.into_iter().map(|span| {
                                                 let mut d = div()
-                                                    .text_size(fs(13.0))
-                                                    .text_color(span.color.unwrap_or(t.text_1))
+                                                    .text_size(typography::font(type_role::BASE))
+                                                    .text_color(span.color.unwrap_or(ink))
                                                     .font_weight(
                                                         span.font_weight.unwrap_or_default(),
                                                     );
@@ -1769,10 +1759,10 @@ impl Render for QuickPasteView {
                                         quick_line_cell(
                                             preview,
                                             &row_terms,
-                                            t.text_1,
+                                            ink,
                                             highlight_bg,
                                             highlight_text,
-                                            13.0,
+                                            type_role::BASE,
                                             QUICK_HIGHLIGHT_LEADING_CHARS,
                                         )
                                         .into_any_element()
@@ -1783,14 +1773,14 @@ impl Render for QuickPasteView {
                                         .h(px(ROW_HEIGHT))
                                         .flex_shrink_0()
                                         .px(px(HORIZONTAL_PADDING - LIST_INSET))
-                                        .rounded(px(6.0))
+                                        .rounded(Radius::Md.scaled())
                                         .flex()
                                         .items_center()
-                                        .gap(px(8.0))
+                                        .gap(Space::Md.scaled())
                                         .bg(if selected {
-                                            t.accent_overlay()
+                                            p.accent_soft()
                                         } else {
-                                            rgba(0x00000000)
+                                            p.background.opacity(0.)
                                         })
                                         .when(is_favorite, |row| {
                                             row.child(
@@ -1800,8 +1790,8 @@ impl Render for QuickPasteView {
                                                     .top(px(4.0))
                                                     .bottom(px(4.0))
                                                     .w(px(3.0))
-                                                    .rounded(px(2.0))
-                                                    .bg(t.fav_color),
+                                                    .rounded(Radius::Sm.scaled())
+                                                    .bg(fav),
                                             )
                                         })
                                         .on_mouse_move({
@@ -1869,75 +1859,63 @@ impl Render for QuickPasteView {
                                         // Slot number badge
                                         .child(
                                             div()
-                                                .w(px(22.0))
-                                                .h(px(22.0))
-                                                .rounded(px(5.0))
+                                                .w(Ctrl::Chip.px())
+                                                .h(Ctrl::Chip.px())
+                                                .rounded(Radius::Sm.px())
                                                 .flex()
                                                 .items_center()
                                                 .justify_center()
                                                 .bg(if selected {
-                                                    t.accent
+                                                    p.accent
                                                 } else {
-                                                    rgba(0x00000000)
+                                                    p.background.opacity(0.)
                                                 })
                                                 .text_color(if selected {
-                                                    rgb(0xffffff)
+                                                    on_accent
                                                 } else {
-                                                    t.text_2
+                                                    ink_2
                                                 })
-                                                .text_size(fs(11.0))
+                                                .text_size(typography::font(type_role::BODY))
                                                 .font_weight(FontWeight::BOLD)
                                                 .child((slot + 1).to_string()),
                                         )
                                         // Type icon / color swatch
                                         .child(if let Some(swatch) = color_swatch {
-                                            let swatch_border = color_border_for_swatch(swatch);
                                             div()
-                                                .w(px(16.0))
-                                                .h(px(16.0))
-                                                .rounded(px(3.0))
+                                                .size(IconSize::Md.scaled())
+                                                .rounded(Radius::Sm.scaled())
                                                 .bg(swatch)
-                                                .border(px(1.0))
-                                                .border_color(swatch_border)
+                                                .border_1()
+                                                .border_color(p.stroke_strong)
                                                 .into_any_element()
                                         } else if let Some(ref fav_path) = favicon_path {
                                             // Favicon image for link-type items
                                             gpui::img(std::path::Path::new(fav_path))
                                                 .image_cache(&image_cache)
-                                                .w(px(16.0))
-                                                .h(px(16.0))
-                                                .rounded(px(3.0))
+                                                .size(IconSize::Md.scaled())
+                                                .rounded(Radius::Sm.scaled())
                                                 .into_any_element()
                                         } else if let Some(ref ficon_path) = file_icon_path {
                                             // File extension icon
                                             gpui::img(std::path::Path::new(ficon_path))
                                                 .image_cache(&image_cache)
-                                                .w(px(16.0))
-                                                .h(px(16.0))
-                                                .rounded(px(3.0))
+                                                .size(IconSize::Md.scaled())
+                                                .rounded(Radius::Sm.scaled())
                                                 .into_any_element()
                                         } else {
-                                            div()
-                                                .w(px(16.0))
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .text_size(fs(12.0))
-                                                .font_family("iconfont")
-                                                .text_color(if selected {
-                                                    t.accent
-                                                } else {
-                                                    t.text_2
-                                                })
-                                                .child(icon)
-                                                .into_any_element()
+                                            widgets::icon(
+                                                icon,
+                                                IconSize::Sm.scaled(),
+                                                if selected { p.accent } else { p.ink_2 },
+                                            )
+                                            .into_any_element()
                                         })
                                         .child(content_cell)
                                         // Relative time
                                         .child(
                                             div()
-                                                .text_size(fs(10.0))
-                                                .text_color(t.text_3)
+                                                .text_size(typography::font(type_role::CAPTION))
+                                                .text_color(ink_3)
                                                 .whitespace_nowrap()
                                                 .child(time),
                                         )
@@ -1962,27 +1940,26 @@ impl Render for QuickPasteView {
                 let Some(tip_y) = tooltip_y else {
                     return parent;
                 };
-                let t = theme.clone();
                 parent.child(
                     div()
                         .absolute()
                         .top(tip_y)
                         .right(px(8.0))
-                        .bg(t.surface)
-                        .border(px(1.0))
-                        .border_color(t.divider)
-                        .rounded(px(6.0))
-                        .px(px(TOOLTIP_PADDING))
-                        .py(px(TOOLTIP_PADDING))
+                        .bg(solid(p.flyout))
+                        .border_1()
+                        .border_color(p.stroke_strong)
+                        .rounded(Radius::Lg.scaled())
+                        .px(Space::Sm.scaled())
+                        .py(Space::Sm.scaled())
                         .flex()
                         .flex_col()
                         .children(items.iter().map(move |(label, mode, selected)| {
                             let selected = *selected;
                             let text_color = match mode.as_str() {
-                                "favorite" => t.fav_color,
-                                "delete" => t.danger,
-                                _ if selected => t.accent,
-                                _ => t.text_1,
+                                "favorite" => fav,
+                                "delete" => danger,
+                                _ if selected => accent,
+                                _ => ink,
                             };
                             div()
                                 .flex()
@@ -1992,24 +1969,24 @@ impl Render for QuickPasteView {
                                         div()
                                             .h(px(1.0))
                                             .my(px((TOOLTIP_SEPARATOR_HEIGHT - 1.0) / 2.0))
-                                            .bg(t.divider),
+                                            .bg(p.stroke),
                                     )
                                 })
                                 .child(
                                     div()
-                                        .h(px(TOOLTIP_ITEM_HEIGHT))
-                                        .px(px(8.0))
-                                        .rounded(px(4.0))
+                                        .h(Ctrl::Input.px())
+                                        .px(Space::Md.scaled())
+                                        .rounded(Radius::Sm.px())
                                         .flex()
                                         .items_center()
-                                        .gap(px(6.0))
+                                        .gap(Space::Sm.scaled())
                                         .bg(if selected {
-                                            t.accent_overlay()
+                                            p.accent_soft()
                                         } else {
-                                            rgba(0x00000000)
+                                            p.background.opacity(0.)
                                         })
                                         .text_color(text_color)
-                                        .text_size(fs(12.0))
+                                        .text_size(typography::font(type_role::BODY))
                                         .child(
                                             div()
                                                 .w(px(14.0))
@@ -2031,11 +2008,11 @@ impl Render for QuickPasteView {
                     .px(px(HORIZONTAL_PADDING))
                     .flex()
                     .items_center()
-                    .gap(px(10.0))
-                    .text_size(fs(10.0))
-                    .text_color(theme.text_3)
+                    .gap(Space::Md.scaled())
+                    .text_size(typography::font(type_role::CAPTION))
+                    .text_color(ink_3)
                     .border_t(px(1.0))
-                    .border_color(theme.divider)
+                    .border_color(p.stroke)
                     // The hint group yields space first so the search field keeps
                     // its full width even when a held modifier lengthens a label.
                     .child(
@@ -2044,22 +2021,15 @@ impl Render for QuickPasteView {
                             .min_w(px(0.0))
                             .flex()
                             .items_center()
-                            .gap(px(6.0))
+                            .gap(Space::Sm.scaled())
                             .overflow_hidden()
-                            .child(
-                                div()
-                                    .font_family("iconfont")
-                                    .text_size(fs(12.0))
-                                    .child("\u{e66b}"),
-                            )
+                            .child(widgets::icon("\u{e66b}", IconSize::Sm.scaled(), p.ink_3))
                             .child(div().whitespace_nowrap().child("Enter 粘贴"))
                             .child(
                                 div()
                                     .whitespace_nowrap()
                                     .when(self.shift_held, |s| {
-                                        s.text_size(fs(10.0))
-                                            .font_weight(FontWeight::BOLD)
-                                            .text_color(theme.accent)
+                                        s.font_weight(typography::LABEL_WEIGHT).text_color(accent)
                                     })
                                     .child(if self.shift_held {
                                         "Shift 纯文本粘贴"
@@ -2071,9 +2041,7 @@ impl Render for QuickPasteView {
                                 div()
                                     .whitespace_nowrap()
                                     .when(self.ctrl_held, |s| {
-                                        s.text_size(fs(10.0))
-                                            .font_weight(FontWeight::BOLD)
-                                            .text_color(theme.accent)
+                                        s.font_weight(typography::LABEL_WEIGHT).text_color(accent)
                                     })
                                     .child(format!("{} 高级功能", advanced_modifier_label())),
                             ),
@@ -2089,15 +2057,15 @@ impl Render for QuickPasteView {
                             .flex_shrink_0()
                             .flex()
                             .items_center()
-                            .gap(px(5.0))
-                            .px(px(6.0))
-                            .rounded(px(5.0))
-                            .bg(theme.panel_input_bg)
+                            .gap(Space::Xxs.scaled())
+                            .px(Space::Sm.scaled())
+                            .rounded(Radius::Md.scaled())
+                            .bg(p.control_face)
                             .border(px(1.0))
                             .border_color(if self.query_focused {
-                                theme.accent
+                                p.accent
                             } else {
-                                theme.divider
+                                p.stroke
                             })
                             .cursor(CursorStyle::IBeam)
                             .on_mouse_down(MouseButton::Left, {
@@ -2106,21 +2074,14 @@ impl Render for QuickPasteView {
                                     view.update(cx, |view, cx| view.activate_search(cx));
                                 }
                             })
-                            .child(
-                                div()
-                                    .flex_shrink_0()
-                                    .font_family("iconfont")
-                                    .text_size(fs(11.0))
-                                    .text_color(theme.text_3)
-                                    .child("\u{e688}"),
-                            )
+                            .child(widgets::icon("\u{e688}", IconSize::Sm.scaled(), p.ink_3))
                             .child(
                                 div()
                                     .flex_1()
                                     .min_w(px(0.0))
                                     .flex()
                                     .items_center()
-                                    .gap(px(2.0))
+                                    .gap(Space::Xxs.scaled())
                                     .overflow_hidden()
                                     .children(query_text_layer)
                                     .children(caret_layer),
@@ -2286,7 +2247,7 @@ fn quick_line_cell(
     let cell = div()
         .flex_1()
         .overflow_hidden()
-        .text_size(fs(font_size))
+        .text_size(typography::font(font_size))
         .text_color(text_color)
         .whitespace_nowrap();
     if terms.is_empty() {
@@ -2324,26 +2285,11 @@ fn shows_note_preview(
     !(note.is_empty() || show_original_on_hover && selected || (content_matches && !note_matches))
 }
 
-fn parse_hex_for_tag(hex: &str) -> Rgba {
+fn parse_hex_for_tag(hex: &str, fallback: Rgba) -> Rgba {
     use crate::core::types::parse_hex_color;
     parse_hex_color(hex)
         .map(|(r, g, b)| rgb(((r as u32) << 16) | ((g as u32) << 8) | b as u32))
-        .unwrap_or(rgb(0x3b82f6))
-}
-
-/// Pick a border color that contrasts with the swatch's perceived brightness.
-/// Light colors get a dark border, dark colors get a light border — so the
-/// swatch is always visible regardless of theme or color value.
-fn color_border_for_swatch(swatch: Rgba) -> Rgba {
-    // ITU-R BT.601 perceived brightness (gpui Rgba uses 0.0–1.0 floats)
-    let lum = 0.299 * swatch.r + 0.587 * swatch.g + 0.114 * swatch.b;
-    if lum > 0.55 {
-        // Light swatch → dark semi-transparent border
-        rgba(0x00000030)
-    } else {
-        // Dark swatch → light semi-transparent border
-        rgba(0xffffff30)
-    }
+        .unwrap_or(fallback)
 }
 
 #[cfg(test)]

@@ -7,7 +7,6 @@
 //! --- - unchecked, unpinned tags slide slightly right and fade out; ---
 //! --- - left click toggles a visible tag filter, right click toggles pin. ---
 
-use crate::ui::font::fs;
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -21,7 +20,9 @@ use crate::state::app::AppState;
 
 use super::clipboard_list::ClipboardListView;
 use super::components::reorder::{ease_in_out, row_drag_position};
-use super::theme::ClippiTheme;
+use super::design::palette::Palette;
+use super::design::size::{Radius, Space};
+use super::design::typography::{self, type_role};
 use crate::ui::transition::keyed_transition;
 
 /// Sidebar top offset (must match `top(px(65.))` in root.rs).
@@ -29,6 +30,8 @@ use crate::ui::transition::keyed_transition;
 const SIDEBAR_TOP_OFFSET: f32 = 65.0;
 /// Height of a single sidebar row (22px row + 2px gap).
 const ROW_HEIGHT: f32 = 24.0;
+/// Tag chip width; the window is this wide plus the shadow margin.
+const SIDEBAR_WIDTH: f32 = 56.0;
 /// Bottom padding to keep the last row from touching the window edge.
 const SIDEBAR_BOTTOM_PADDING: f32 = 8.0;
 /// Transparent margin around the strip inside its native window, sized for the
@@ -109,19 +112,13 @@ pub struct Sidebar {
     rendered_tag_ids: Vec<i64>,
     unchecked_unpinned_since: HashMap<i64, Instant>,
     transition_generations: HashMap<i64, u64>,
-    dark_mode: bool,
     drag: Option<SidebarDrag>,
     settling: Option<(i64, f32, Instant)>,
     bounds: Rc<Cell<Bounds<Pixels>>>,
 }
 
 impl Sidebar {
-    pub fn new(
-        state: Entity<AppState>,
-        list_view: Entity<ClipboardListView>,
-        theme: &ClippiTheme,
-    ) -> Self {
-        let dark_mode = theme.dark;
+    pub fn new(state: Entity<AppState>, list_view: Entity<ClipboardListView>) -> Self {
         Self {
             tooltip_hover: TooltipHover::default(),
             tooltip_task: None,
@@ -132,7 +129,6 @@ impl Sidebar {
             rendered_tag_ids: Vec::new(),
             unchecked_unpinned_since: HashMap::new(),
             transition_generations: HashMap::new(),
-            dark_mode,
             drag: None,
             settling: None,
             bounds: Rc::new(Cell::new(Bounds::default())),
@@ -257,9 +253,8 @@ impl Sidebar {
         cx.notify();
     }
 
-    /// Update theme (called when user changes theme in settings).
-    pub fn set_theme(&mut self, theme: &ClippiTheme, cx: &mut Context<Self>) {
-        self.dark_mode = theme.dark;
+    /// 主题变化（设置页切换浅/暗）：取色每帧走 `Palette`，这里只需重绘。
+    pub fn set_theme(&mut self, cx: &mut Context<Self>) {
         cx.notify();
     }
 }
@@ -398,31 +393,22 @@ impl Render for Sidebar {
         let sidebar_for_exit = cx.entity();
         let sidebar_for_up = cx.entity();
         let sidebar_for_press = cx.entity();
-        let dark = self.dark_mode;
-        let text_1 = if dark { rgb(0xeaebec) } else { rgb(0x1a1c2e) };
-        let row_bg_default = if dark { rgb(0x2a2b2e) } else { rgb(0xf5f6fa) };
-        let row_bg_hover = if dark { rgb(0x353638) } else { rgb(0xeceef4) };
-        // Each tag is its own chip: a hairline stroke plus a soft shadow so it
-        // reads as a separate surface against the desktop behind the strip. The
-        // shadow is deep enough to ground the chip on a light desktop without
-        // reading as a halo.
-        let row_border = if dark {
-            rgba(0xffffff22)
-        } else {
-            rgba(0x0000001c)
-        };
-        let row_shadow = if dark {
-            rgba(0x0000004d)
-        } else {
-            rgba(0x00000026)
-        };
+        // 取色统一走 `Palette`：本窗口浮在桌面上，行用半透明 `layer` 面 +
+        // 一圈描边分层，不再投影（投影只在对话框保留）。
+        let p = Palette::current(cx);
+        // 这一列浮在桌面/其它窗口之上，行底必须不透底：取 `layer-strong`
+        // 叠在窗口底上的不透明等效色，暗色下才不会变成一块几乎透明。
+        let text_1 = p.ink;
+        let row_bg_default = p.on_card("layer-strong");
+        let row_bg_hover = p.on_card("hover-strong");
+        let row_border = p.stroke_strong;
         let state_for_click = self.state.clone();
         let sidebar_for_notify = cx.entity().clone();
         let duration = Duration::from_millis(250);
 
         div()
             .relative()
-            .w(px(56.))
+            .w(px(SIDEBAR_WIDTH))
             .h(px(
                 rows_height + if hidden_count > 0 { ROW_HEIGHT } else { 0. }
             ))
@@ -430,7 +416,7 @@ impl Render for Sidebar {
             // the rows on the right, where they meet the main panel's stroke.
             .ml(px(TAG_MARGIN))
             .mt(px(TAG_MARGIN))
-            .bg(rgba(0x00000000))
+            .bg(p.background.opacity(0.))
             .child(
                 canvas(
                     move |bounds, _, _| sidebar_bounds.set(bounds),
@@ -487,7 +473,7 @@ impl Render for Sidebar {
                 let initial_opacity = if entering { 0.0 } else { target_opacity };
                 let initial_text_opacity = if entering { 0.3 } else { target_text_opacity };
                 let initial_bar_height = if entering { px(6.0) } else { target_bar_height };
-                let bar_color = parse_tag_color(&tag.color);
+                let bar_color = parse_tag_color(&tag.color, p.accent.into());
                 let label = tag.name;
                 let tag_id = tag.id;
                 let transition_generation =
@@ -566,32 +552,34 @@ impl Render for Sidebar {
                 let tooltip_label = label.clone();
                 let tooltip_move_label = label.clone();
                 let row_visual = std::rc::Rc::new(move || {
+                    // 行高与 `ROW_HEIGHT` 是同一套固定布局（窗口尺寸、拖拽位移都
+                    // 按它算），所以这里用不随字号缩放的像素值，避免大字号下压行。
                     div()
-                        .w(px(56.))
-                        .h(px(22.))
+                        .w(px(SIDEBAR_WIDTH))
+                        .h(px(ROW_HEIGHT - 2.))
                         .opacity(opacity)
-                        .rounded(px(4.))
+                        .rounded(Radius::Sm.px())
                         .bg(row_bg_default)
-                        .shadow(vec![BoxShadow {
-                            color: row_shadow.into(),
-                            offset: point(px(0.), px(1.)),
-                            inset: false,
-                            blur_radius: px(4.),
-                            spread_radius: px(0.),
-                        }])
                         .flex()
                         .flex_row()
                         .items_center()
-                        .gap(px(5.))
-                        .child(div().w(px(3.)).h(bar_height).rounded(px(2.)).bg(bar_color))
+                        .gap(Space::Xs.px())
                         .child(
                             div()
-                                .w(px(43.))
-                                .h(px(22.))
+                                .w(px(3.))
+                                .h(bar_height)
+                                .rounded(Radius::Sm.px())
+                                .bg(bar_color),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w(px(0.))
+                                .h_full()
                                 .flex()
                                 .items_center()
-                                .text_size(fs(11.))
-                                .font_weight(FontWeight::MEDIUM)
+                                .text_size(typography::font(type_role::BODY))
+                                .font_weight(typography::LABEL_WEIGHT)
                                 .text_color(text_1)
                                 .opacity(text_opacity)
                                 .overflow_hidden()
@@ -604,8 +592,8 @@ impl Render for Sidebar {
                             div()
                                 .absolute()
                                 .inset_0()
-                                .rounded(px(4.))
-                                .border(px(1.))
+                                .rounded(Radius::Sm.px())
+                                .border_1()
                                 .border_color(row_border),
                         )
                 });
@@ -682,17 +670,6 @@ impl Render for Sidebar {
                 }
             }))
             .when(hidden_count > 0, move |parent| {
-                let pill_bg = if dark {
-                    rgba(0x232425e8)
-                } else {
-                    rgba(0xffffffe8)
-                };
-                let pill_border = if dark {
-                    rgba(0xffffff20)
-                } else {
-                    rgba(0x00000014)
-                };
-                let text_2 = if dark { rgb(0x919496) } else { rgb(0x7c809a) };
                 // The surface is exactly one row wide, so the pill's open right
                 // side ends on the main panel's stroke like the tag rows do.
                 parent.child(
@@ -705,15 +682,15 @@ impl Render for Sidebar {
                         .child(
                             div()
                                 .h(px(18.))
-                                .rounded_l(px(9.))
-                                .bg(pill_bg)
-                                .border(px(1.))
-                                .border_color(pill_border)
-                                .px(px(5.))
+                                .rounded_l(Radius::Pill.px())
+                                .bg(p.on_card("layer-strong"))
+                                .border_1()
+                                .border_color(p.stroke_strong)
+                                .px(Space::Xs.scaled())
                                 .flex()
                                 .items_center()
-                                .text_size(fs(9.))
-                                .text_color(text_2)
+                                .text_size(typography::font(type_role::CAPTION))
+                                .text_color(p.ink_2)
                                 .cursor(CursorStyle::PointingHand)
                                 .child(format!("+{hidden_count}")),
                         ),
@@ -722,8 +699,9 @@ impl Render for Sidebar {
     }
 }
 
-/// Parse a hex color string like "#EF4444" into an Rgba.
-fn parse_tag_color(hex: &str) -> Rgba {
+/// Parse a hex color string like "#EF4444" into an Rgba；颜色缺失时回落到
+/// 调用方给的强调色，不再硬编码一档品牌绿。
+fn parse_tag_color(hex: &str, fallback: Rgba) -> Rgba {
     let s = hex.trim_start_matches('#');
     if s.len() == 6 {
         let r = u32::from_str_radix(&s[0..2], 16).unwrap_or(0x7e);
@@ -731,7 +709,7 @@ fn parse_tag_color(hex: &str) -> Rgba {
         let b = u32::from_str_radix(&s[4..6], 16).unwrap_or(0xa3);
         rgba((r << 24) | (g << 16) | (b << 8) | 0xff)
     } else {
-        rgb(0x7ecba3)
+        fallback
     }
 }
 

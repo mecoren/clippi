@@ -1,8 +1,8 @@
 //! Shared fixed-width horizontal filter strip for picker categories and source apps.
 use crate::core::i18n_keys::I18nKey;
+use crate::ui::design::palette::Palette;
 use crate::ui::filter_bar::{filter_action_slot, filter_chip, filter_toolbar};
 use crate::ui::font::fs;
-use crate::ui::theme::ClippiTheme;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_kit::component::tooltip::Tooltip;
@@ -17,18 +17,15 @@ pub(crate) fn scroll_edges(scroll: &ScrollHandle) -> (bool, bool) {
 pub(crate) fn scroll_filter_chip(
     id: impl Into<ElementId>,
     active: bool,
-    theme: &ClippiTheme,
+    p: &Palette,
     width: f32,
 ) -> Stateful<Div> {
-    filter_chip(id, active, theme)
+    filter_chip(id, active, p)
         .border_1()
         .border_color(if active {
-            Rgba {
-                a: 0.45,
-                ..theme.accent
-            }
+            p.accent.opacity(0.45)
         } else {
-            rgba(0x00000000)
+            Hsla::transparent_black()
         })
         .flex_none()
         .flex_basis(px(width))
@@ -52,12 +49,13 @@ pub(crate) struct ScrollFilterLayout<'a> {
 /// Shared icon scroller with a pinned first choice, cell snapping, and a reversing endpoint button.
 pub(crate) fn scroll_filter_bar(
     id: &'static str,
-    theme: &ClippiTheme,
+    p: &Palette,
     scroll: &ScrollHandle,
     owner: EntityId,
     mut choices: Vec<Stateful<Div>>,
     layout: ScrollFilterLayout<'_>,
 ) -> Div {
+    let p = *p;
     let pinned = if choices.is_empty() {
         None
     } else {
@@ -78,7 +76,7 @@ pub(crate) fn scroll_filter_bar(
         } else {
             I18nKey::SourceAppScrollEnd.text()
         };
-        filter_chip((id, if left { 0usize } else { 1usize }), false, theme)
+        filter_chip((id, if left { 0usize } else { 1usize }), false, &p)
             .flex_none()
             // flex_none does not reset the zero basis inherited from filter_chip.
             .flex_basis(px(width))
@@ -91,7 +89,7 @@ pub(crate) fn scroll_filter_bar(
                 CursorStyle::Arrow
             })
             .when(enabled, |button| {
-                button.hover(|style| style.bg(theme.btn_hover))
+                button.hover(move |style| style.bg(p.hover))
             })
             .tooltip(move |window, cx| {
                 Tooltip::element(move |_, _| div().text_size(fs(10.)).child(tooltip))
@@ -113,7 +111,7 @@ pub(crate) fn scroll_filter_bar(
                         "picker-icons/chevron-right.svg"
                     })
                     .size(fs(12.))
-                    .text_color(theme.text_2),
+                    .text_color(p.ink_2),
             )
     };
     let wheel_scroll = scroll.clone();
@@ -174,11 +172,7 @@ pub(crate) fn scroll_filter_bar(
                 .w(px(1.))
                 .h(px(14.))
                 .flex_shrink_0()
-                .bg(if theme.dark {
-                    rgba(0xffffff18)
-                } else {
-                    rgba(0x00000014)
-                }),
+                .bg(p.stroke_strong),
         )
         .child(filter_action_slot().child(arrow(left, if left { edges.0 } else { edges.1 }, 24.)))
         .child(

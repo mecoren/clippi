@@ -5,6 +5,7 @@ use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
 use gpui_kit::component::tooltip::Tooltip;
 
+use super::design::palette::Palette;
 use super::filter_bar::{filter_chip, filter_toolbar};
 use super::font::fs;
 use super::theme::ClippiTheme;
@@ -315,6 +316,7 @@ impl Render for EmojiPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme =
             ClippiTheme::from_settings(&self.state.read(cx).settings, Some(window.appearance()));
+        let p = Palette::current(cx);
         let columns = ((f32::from(window.viewport_size().width) - 54.)
             / if self.kind == 1 { 125. } else { 40. })
         .floor()
@@ -343,7 +345,7 @@ impl Render for EmojiPanel {
         .enumerate()
         {
             tabs = tabs.child(
-                filter_chip(("emoji-kind", index), self.kind == index, &theme)
+                filter_chip(("emoji-kind", index), self.kind == index, &p)
                     .text_size(fs(11.))
                     .font_weight(if self.kind == index {
                         FontWeight::BOLD
@@ -377,7 +379,7 @@ impl Render for EmojiPanel {
             let mut button = super::components::scroll_filter_bar::scroll_filter_chip(
                 ("emoji-cat", index),
                 self.category == index,
-                &theme,
+                &p,
                 32.,
             )
             .text_size(fs(12.))
@@ -404,7 +406,7 @@ impl Render for EmojiPanel {
         }
         let category_bar = super::components::scroll_filter_bar::scroll_filter_bar(
             "emoji-categories",
-            &theme,
+            &p,
             &self.category_scroll,
             cx.entity().entity_id(),
             choices_ui,

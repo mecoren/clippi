@@ -150,11 +150,7 @@ pub(crate) fn filter_action_slot() -> Div {
 }
 
 /// Keep picker choices visually identical to the existing clipboard type chips.
-pub(crate) fn filter_chip(
-    id: impl Into<ElementId>,
-    active: bool,
-    theme: &ClippiTheme,
-) -> Stateful<Div> {
+pub(crate) fn filter_chip(id: impl Into<ElementId>, active: bool, p: &Palette) -> Stateful<Div> {
     div()
         .id(id)
         .h(Ctrl::Chip.scaled())
@@ -162,11 +158,7 @@ pub(crate) fn filter_chip(
         .min_w(px(0.))
         .flex_shrink_0()
         .rounded(Radius::Md.scaled())
-        .bg(if active {
-            theme.accent_overlay()
-        } else {
-            theme.btn_hover
-        })
+        .bg(if active { p.accent_soft() } else { p.hover })
         .flex()
         .flex_row()
         .items_center()
@@ -190,7 +182,7 @@ pub(crate) fn source_app_chip_width(width: f32, visible_types: usize, gap: f32) 
 pub(crate) fn source_app_filter_bar(
     snapshot: &AppState,
     filters: &crate::core::filters::ClipboardFilters,
-    theme: &ClippiTheme,
+    p: &Palette,
     scroll: &ScrollHandle,
     owner: EntityId,
     layout: super::components::scroll_filter_bar::ScrollFilterLayout<'_>,
@@ -221,18 +213,14 @@ pub(crate) fn source_app_filter_bar(
             svg()
                 .path("picker-icons/layout-grid.svg")
                 .size(IconSize::Sm.scaled())
-                .text_color(if active { theme.accent } else { theme.text_2 })
+                .text_color(if active { p.accent } else { p.ink_2 })
                 .into_any_element()
         } else {
             // Apps without an icon keep the same fixed target size.
             widgets::icon(
                 "\u{e616}",
                 IconSize::Sm.scaled(),
-                if active {
-                    theme.accent.into()
-                } else {
-                    theme.text_2.into()
-                },
+                if active { p.accent } else { p.ink_2 },
             )
             .into_any_element()
         };
@@ -243,12 +231,12 @@ pub(crate) fn source_app_filter_bar(
             super::components::scroll_filter_bar::scroll_filter_chip(
                 ("source-app", index),
                 active,
-                theme,
+                p,
                 chip_width,
             )
             .overflow_hidden()
             .text_size(typography::font(type_role::BODY))
-            .text_color(if active { theme.accent } else { theme.text_2 })
+            .text_color(if active { p.accent } else { p.ink_2 })
             .tooltip(move |window, cx| widgets::tooltip(tooltip.clone(), window, cx))
             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                 cx.stop_propagation();
@@ -262,7 +250,7 @@ pub(crate) fn source_app_filter_bar(
     }
     super::components::scroll_filter_bar::scroll_filter_bar(
         "source-apps",
-        theme,
+        p,
         scroll,
         owner,
         choices_ui,
@@ -340,10 +328,11 @@ impl FilterBar {
     fn source_bar(&self, chip_width: f32, chip_gap: f32, cx: &mut Context<Self>) -> Div {
         let state = self.state.clone();
         let list = self.list_view.clone();
+        let p = Palette::current(cx);
         source_app_filter_bar(
             self.state.read(cx),
             &self.state.read(cx).filters,
-            &self.theme,
+            &p,
             &self.source_scroll,
             cx.entity().entity_id(),
             super::components::scroll_filter_bar::ScrollFilterLayout {
@@ -498,30 +487,29 @@ impl Render for FilterBar {
                                             )
                                         });
 
-                                    let button =
-                                        filter_chip(("filter-type", index), is_active, theme)
-                                            .border_1()
-                                            .border_color(if is_active {
-                                                p.accent.opacity(0.45)
-                                            } else {
-                                                p.accent.opacity(0.)
+                                    let button = filter_chip(("filter-type", index), is_active, &p)
+                                        .border_1()
+                                        .border_color(if is_active {
+                                            p.accent.opacity(0.45)
+                                        } else {
+                                            p.accent.opacity(0.)
+                                        })
+                                        .overflow_hidden()
+                                        .when(icon_only, move |button| {
+                                            button.tooltip(move |window, cx| {
+                                                widgets::tooltip(label, window, cx)
                                             })
-                                            .overflow_hidden()
-                                            .when(icon_only, move |button| {
-                                                button.tooltip(move |window, cx| {
-                                                    widgets::tooltip(label, window, cx)
-                                                })
-                                            })
-                                            .on_mouse_down(
-                                                MouseButton::Left,
-                                                move |_ev, _window, cx| {
-                                                    Self::apply_type_filter(
-                                                        &state, &list_view, key, cx,
-                                                    );
-                                                    this.update(cx, |_bar, cx| cx.notify());
-                                                },
-                                            )
-                                            .child(content);
+                                        })
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            move |_ev, _window, cx| {
+                                                Self::apply_type_filter(
+                                                    &state, &list_view, key, cx,
+                                                );
+                                                this.update(cx, |_bar, cx| cx.notify());
+                                            },
+                                        )
+                                        .child(content);
                                     external_shortcut(
                                         SharedString::from(format!(
                                             "filter-shortcut-external-{key}-{alt_hint_generation}"
