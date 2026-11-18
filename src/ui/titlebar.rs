@@ -277,16 +277,11 @@ impl Render for Titlebar {
                                                 cx.emit(TitlebarEvent::ToggleEmoji)
                                             });
                                         })
-                                        .child(
-                                            svg()
-                                                .path("picker-icons/smile.svg")
-                                                .size(IconSize::Md.scaled())
-                                                .text_color(if emoji_active {
-                                                    accent
-                                                } else {
-                                                    text_2
-                                                }),
-                                        ),
+                                        .child(widgets::icon(
+                                            "FaceSmileIcon",
+                                            IconSize::Md.scaled(),
+                                            if emoji_active { accent } else { text_2 },
+                                        )),
                                 )
                                 .when(
                                     self.emoji_shortcut_available && emoji_hint_progress > 0.001,

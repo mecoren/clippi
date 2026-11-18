@@ -15,16 +15,16 @@ use crate::core::{kaomoji, symbols};
 use crate::state::app::AppState;
 
 const EMOJI_CATEGORIES: &[(&str, &str, &str)] = &[
-    ("最近使用", "Recent", "clock"),
-    ("笑脸与情感", "Smileys & emotion", "smile"),
-    ("人物与手势", "People & body", "hand"),
-    ("动物与自然", "Animals & nature", "leaf"),
-    ("食物与饮料", "Food & drink", "apple"),
-    ("旅行与地点", "Travel & places", "plane"),
-    ("活动", "Activities", "trophy"),
-    ("物品", "Objects", "lightbulb"),
-    ("符号", "Symbols", "hash"),
-    ("旗帜", "Flags", "flag"),
+    ("最近使用", "Recent", "ClockIcon"),
+    ("笑脸与情感", "Smileys & emotion", "FaceSmileIcon"),
+    ("人物与手势", "People & body", "HandIcon"),
+    ("动物与自然", "Animals & nature", "LeafIcon"),
+    ("食物与饮料", "Food & drink", "AppleIcon"),
+    ("旅行与地点", "Travel & places", "PlaneIcon"),
+    ("活动", "Activities", "TrophyIcon"),
+    ("物品", "Objects", "LightbulbIcon"),
+    ("符号", "Symbols", "HashIcon"),
+    ("旗帜", "Flags", "FlagIcon"),
 ];
 
 // The recent row can be shorter than the regular grid and has a heading below it.
@@ -392,12 +392,7 @@ impl Render for EmojiPanel {
                 cx.listener(move |this, _, window, cx| this.choose_category(index, window, cx)),
             );
             if self.kind == 0 || index == 0 {
-                button = button.child(
-                    svg()
-                        .path(format!("picker-icons/{icon}.svg"))
-                        .size(fs(12.))
-                        .text_color(color),
-                );
+                button = button.child(widgets::icon(icon, fs(12.), Hsla::from(color)));
             } else {
                 button = button.child(icon);
             }

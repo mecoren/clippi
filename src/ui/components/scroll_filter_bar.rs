@@ -100,16 +100,15 @@ pub(crate) fn scroll_filter_bar(
                     cx.notify(owner);
                 }
             })
-            .child(
-                svg()
-                    .path(if left {
-                        "picker-icons/chevron-left.svg"
-                    } else {
-                        "picker-icons/chevron-right.svg"
-                    })
-                    .size(fs(12.))
-                    .text_color(p.ink_2),
-            )
+            .child(widgets::icon(
+                if left {
+                    "ChevronLeftIcon"
+                } else {
+                    "ChevronRightIcon"
+                },
+                fs(12.),
+                p.ink_2,
+            ))
     };
     let wheel_scroll = scroll.clone();
     let stride = layout.chip_width + layout.chip_gap;

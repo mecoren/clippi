@@ -1,9 +1,10 @@
-//! Embedded UI assets: picker category SVGs, product icons, and the
-//! component library's default icon set.
+//! Embedded UI assets: product icons and the component library's default
+//! icon set.
 //!
 //! Product icons come from the Lucide catalog bundled with `gpui-kit-assets`:
 //! only the ones named in the table below are embedded, so an icon that is
-//! registered cannot be missing from the binary.
+//! registered cannot be missing from the binary. Emoji category and paging
+//! icons are registered here too, so the tree carries no second SVG set.
 
 use gpui::{AssetSource, Result, SharedString};
 use gpui_kit::assets::IconName;
@@ -52,6 +53,20 @@ product_icons! {
     "OcrIcon" => ScanText,
     "CloudIcon" => Cloud,
     "GithubIcon" => Github,
+    // Emoji 面板分类与分页（emoji 分类在 Lucide 里没有独立图形，用语义最接近的）
+    "LayoutGridIcon" => LayoutGrid,
+    "FaceSmileIcon" => FaceSlightlySmiling,
+    "ClockIcon" => Clock,
+    "HandIcon" => Hand,
+    "LeafIcon" => Leaf,
+    "AppleIcon" => Apple,
+    "PlaneIcon" => Plane,
+    "TrophyIcon" => Trophy,
+    "LightbulbIcon" => Lightbulb,
+    "HashIcon" => Hash,
+    "FlagIcon" => Flag,
+    "ChevronLeftIcon" => ChevronLeft,
+    "ChevronRightIcon" => ChevronRight,
 
     // 动作
     "CopyIcon" => Copy,
@@ -92,70 +107,11 @@ product_icons! {
     "HelpIcon" => CircleQuestionMark,
 }
 
-/// Emoji 分类图标：保留本地 SVG（Lucide 没有对应的分类图形）。
-const PICKER_ICONS: &[(&str, &[u8])] = &[
-    (
-        "picker-icons/chevron-left.svg",
-        include_bytes!("../../assets/picker-icons/chevron-left.svg"),
-    ),
-    (
-        "picker-icons/chevron-right.svg",
-        include_bytes!("../../assets/picker-icons/chevron-right.svg"),
-    ),
-    (
-        "picker-icons/layout-grid.svg",
-        include_bytes!("../../assets/picker-icons/layout-grid.svg"),
-    ),
-    (
-        "picker-icons/smile.svg",
-        include_bytes!("../../assets/picker-icons/smile.svg"),
-    ),
-    (
-        "picker-icons/clock.svg",
-        include_bytes!("../../assets/picker-icons/clock.svg"),
-    ),
-    (
-        "picker-icons/hand.svg",
-        include_bytes!("../../assets/picker-icons/hand.svg"),
-    ),
-    (
-        "picker-icons/leaf.svg",
-        include_bytes!("../../assets/picker-icons/leaf.svg"),
-    ),
-    (
-        "picker-icons/apple.svg",
-        include_bytes!("../../assets/picker-icons/apple.svg"),
-    ),
-    (
-        "picker-icons/plane.svg",
-        include_bytes!("../../assets/picker-icons/plane.svg"),
-    ),
-    (
-        "picker-icons/trophy.svg",
-        include_bytes!("../../assets/picker-icons/trophy.svg"),
-    ),
-    (
-        "picker-icons/lightbulb.svg",
-        include_bytes!("../../assets/picker-icons/lightbulb.svg"),
-    ),
-    (
-        "picker-icons/hash.svg",
-        include_bytes!("../../assets/picker-icons/hash.svg"),
-    ),
-    (
-        "picker-icons/flag.svg",
-        include_bytes!("../../assets/picker-icons/flag.svg"),
-    ),
-];
-
-/// 全仓唯一资产源：本地 picker SVG → 产品图标 → gpui-kit 组件自带的默认图标。
+/// 全仓唯一资产源：产品图标 → gpui-kit 组件自带的默认图标。
 pub struct Assets;
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
-        if let Some((_, bytes)) = PICKER_ICONS.iter().find(|(name, _)| *name == path) {
-            return Ok(Some(Cow::Borrowed(*bytes)));
-        }
         if let Some(bytes) = ProductIcons.load(path)? {
             return Ok(Some(bytes));
         }
@@ -163,13 +119,7 @@ impl AssetSource for Assets {
     }
 
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {
-        let mut paths: Vec<SharedString> = PICKER_ICONS
-            .iter()
-            .map(|(name, _)| *name)
-            .filter(|name| name.starts_with(path))
-            .map(SharedString::from)
-            .collect();
-        paths.extend(ProductIcons.list(path)?);
+        let mut paths = ProductIcons.list(path)?;
         paths.extend(gpui_kit::assets::Assets.list(path)?);
         paths.sort();
         paths.dedup();
@@ -208,15 +158,26 @@ mod tests {
         assert!(svg(&icon_path("NoSuchIcon")).contains("<circle"));
     }
 
+    /// Emoji 分类与分页图标来自登记表，不再有本地 `picker-icons/` 副本。
     #[test]
-    fn picker_icons_stay_available() {
-        assert!(Assets
-            .load("picker-icons/smile.svg")
-            .expect("asset source")
-            .is_some());
-        assert!(Assets
-            .list("picker-icons/")
-            .expect("listing")
-            .contains(&"picker-icons/smile.svg".into()));
+    fn emoji_category_icons_come_from_the_table() {
+        for name in [
+            "LayoutGridIcon",
+            "FaceSmileIcon",
+            "ClockIcon",
+            "HandIcon",
+            "LeafIcon",
+            "AppleIcon",
+            "PlaneIcon",
+            "TrophyIcon",
+            "LightbulbIcon",
+            "HashIcon",
+            "FlagIcon",
+            "ChevronLeftIcon",
+            "ChevronRightIcon",
+        ] {
+            assert_ne!(icon_name(name), IconName::Circle, "{name}");
+            assert!(svg(&icon_path(name)).contains("<svg"), "{name}");
+        }
     }
 }

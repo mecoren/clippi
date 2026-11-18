@@ -212,11 +212,12 @@ pub(crate) fn source_app_filter_bar(
                 .size(IconSize::Md.scaled())
                 .into_any_element()
         } else if name.is_none() {
-            svg()
-                .path("picker-icons/layout-grid.svg")
-                .size(IconSize::Sm.scaled())
-                .text_color(if active { p.accent } else { p.ink_2 })
-                .into_any_element()
+            widgets::icon(
+                "LayoutGridIcon",
+                IconSize::Sm.scaled(),
+                if active { p.accent } else { p.ink_2 },
+            )
+            .into_any_element()
         } else {
             // Apps without an icon keep the same fixed target size.
             widgets::icon(
