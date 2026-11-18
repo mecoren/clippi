@@ -29,3 +29,6 @@ CLAUDE.md
 PLAN.md
 docs/POST.md
 .env
+
+# UI 基准截图与 manifest：本机采集、不入库（需要时重跑 scripts/capture_ui_baseline.ps1）
+docs/ui-redesign/baseline/

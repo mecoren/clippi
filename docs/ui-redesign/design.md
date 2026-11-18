@@ -63,7 +63,8 @@ src/ui/
 
 ## 2. 令牌规范：`assets/theme.json`
 
-结构对齐 Argus `resources/theme.json`，按 Clippi 的产品形态（窄面板、卡片列表、品牌绿）取值：
+结构对齐 Argus `resources/theme.json`；颜色、字体栈与动效**逐值对齐 Argus**，
+只有 `layout` 段按 Clippi 的产品形态（340 窄面板、卡片列表）取值：
 
 ```json
 {
@@ -89,10 +90,11 @@ src/ui/
   },
   "fonts": {
     "sans": ["Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI"],
-    "mono": ["Cascadia Mono", "Consolas"],
+    "display": ["Segoe UI Variable Display", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI"],
+    "mono": ["Cascadia Mono", "Cascadia Code", "Consolas"],
     "tooltip": ["Segoe UI", "Microsoft YaHei UI"],
     "fallback": ["Microsoft YaHei UI", "Yu Gothic UI", "Meiryo", "Segoe UI Symbol"],
-    "traditionalChinese": ["Microsoft JhengHei UI", "Microsoft JhengHei", "Microsoft YaHei UI"]
+    "traditionalChinese": ["Microsoft JhengHei UI", "Microsoft JhengHei", "Microsoft YaHei UI", "Yu Gothic UI", "Segoe UI Symbol"]
   },
   "motion": {
     "t-fast": "167ms",
@@ -103,60 +105,60 @@ src/ui/
     "ease-enter": "cubic-bezier(0.33, 1, 0.68, 1)"
   },
   "light": {
-    "window-bg": "#f3f4f6",
-    "ink": "#1d1f22",
-    "ink-2": "#5c6167",
-    "ink-3": "#7d828a",
-    "layer": "rgb(255 255 255 / 0.6)",
-    "layer-strong": "rgb(255 255 255 / 0.85)",
+    "window-bg": "#f3f3f3",
+    "ink": "#1b1c22",
+    "ink-2": "#5b5f6d",
+    "ink-3": "#8e92a0",
+    "layer": "rgb(255 255 255 / 0.5)",
+    "layer-strong": "rgb(255 255 255 / 0.78)",
     "hover": "rgb(0 0 0 / 0.04)",
     "hover-strong": "rgb(0 0 0 / 0.06)",
     "press": "rgb(0 0 0 / 0.07)",
-    "stroke": "rgb(0 0 0 / 0.08)",
+    "stroke": "rgb(0 0 0 / 0.075)",
     "stroke-strong": "rgb(0 0 0 / 0.14)",
-    "control": "rgb(255 255 255 / 0.75)",
-    "control-hover": "rgb(250 250 250 / 0.6)",
+    "control": "rgb(255 255 255 / 0.72)",
+    "control-hover": "rgb(250 250 250 / 0.55)",
     "control-checked": "#ffffff",
-    "flyout": "rgb(251 251 253 / 0.95)",
+    "flyout": "rgb(250 250 252 / 0.9)",
     "scrim": "rgb(0 0 0 / 0.28)",
-    "accent": "#287a55",
+    "accent": "#0067c0",
     "on-accent": "#ffffff",
     "fav": "#b07a2e",
     "danger": "#c42b1c",
     "on-danger": "#ffffff",
-    "pin": "#1668dc",
+    "pin": "#8764b8",
     "tag-bg": "rgb(0 0 0 / 0.05)",
-    "tag-ink": "#5c6167",
+    "tag-ink": "#5b5f6d",
     "tip": "rgb(252 252 253 / 0.96)",
     "scroll-thumb": "rgb(0 0 0 / 0.22)",
     "scroll-thumb-hover": "rgb(0 0 0 / 0.38)"
   },
   "dark": {
-    "window-bg": "#1f2021",
-    "ink": "#eef0f0",
-    "ink-2": "#a6aaad",
-    "ink-3": "#75797d",
-    "layer": "rgb(255 255 255 / 0.045)",
-    "layer-strong": "rgb(255 255 255 / 0.07)",
-    "hover": "rgb(255 255 255 / 0.05)",
+    "window-bg": "#202020",
+    "ink": "#f1f2f6",
+    "ink-2": "#a9adbb",
+    "ink-3": "#6f7384",
+    "layer": "rgb(255 255 255 / 0.035)",
+    "layer-strong": "rgb(255 255 255 / 0.06)",
+    "hover": "rgb(255 255 255 / 0.045)",
     "hover-strong": "rgb(255 255 255 / 0.08)",
     "press": "rgb(255 255 255 / 0.03)",
-    "stroke": "rgb(255 255 255 / 0.08)",
-    "stroke-strong": "rgb(255 255 255 / 0.13)",
+    "stroke": "rgb(255 255 255 / 0.07)",
+    "stroke-strong": "rgb(255 255 255 / 0.12)",
     "control": "rgb(255 255 255 / 0.06)",
-    "control-hover": "rgb(255 255 255 / 0.09)",
-    "control-checked": "rgb(255 255 255 / 0.13)",
-    "flyout": "rgb(38 39 41 / 0.95)",
+    "control-hover": "rgb(255 255 255 / 0.085)",
+    "control-checked": "rgb(255 255 255 / 0.12)",
+    "flyout": "rgb(40 41 48 / 0.92)",
     "scrim": "rgb(0 0 0 / 0.45)",
-    "accent": "#7ecba3",
-    "on-accent": "#10241a",
+    "accent": "#4cc2ff",
+    "on-accent": "#00213b",
     "fav": "#d9a55d",
     "danger": "#ff6a5c",
     "on-danger": "#2a0400",
-    "pin": "#5b9bff",
+    "pin": "#c3a6f0",
     "tag-bg": "rgb(255 255 255 / 0.07)",
-    "tag-ink": "#a6aaad",
-    "tip": "rgb(44 45 47 / 0.96)",
+    "tag-ink": "#a9adbb",
+    "tip": "rgb(44 45 52 / 0.96)",
     "scroll-thumb": "rgb(255 255 255 / 0.2)",
     "scroll-thumb-hover": "rgb(255 255 255 / 0.34)"
   }
@@ -168,10 +170,12 @@ src/ui/
 | 令牌 | 依据 |
 |---|---|
 | `layer / layer-strong / stroke / control` 全部半透明 | Argus 的分层方式：亮度差而不是实色堆叠（`theme.json:58-65`）；为 Mica（P3）预留 |
-| 亮色 `accent #287a55` / 暗色 `#7ecba3` | 沿用 Argus "同色相、亮色加深"模式（其 `#0067c0`/`#4cc2ff`）。`#6ab890` 白底 2.2:1 不达标；M9 复核 `#2e8f66` 反白仍只有 4.01:1，再压深到 `#287a55`（反白 5.24:1、作正文 4.76:1） |
-| 亮色 `ink-3 #7d828a` / 暗色 `#75797d` | M9 实测原值在卡片上 2.78:1 / 3.08:1，辅助文字 3:1 不达标，各提一档到 3.7:1 / 3.4:1 |
-| `on-accent` 暗色用深绿 | 暗色 accent 是浅绿，反白文字应为深色（Argus `on-accent #00213b` 同理） |
+| `accent #0067c0` / `#4cc2ff` | 与 Argus `resources/theme.json` 逐值一致（Windows 11 默认强调色）。此前是品牌绿 `#287a55`/`#7ecba3`，按"UI 与 Argus 一模一样"的取舍改为蓝色，品牌绿不再使用 |
+| `ink-3 #8e92a0` / `#6f7384` | 与 Argus 逐值一致。亮色实测 2.80（窗口底）/ 2.95（卡片）/ 2.99（浮层），低于 WCAG 大字 3:1；`palette.rs` 的门禁因此下探到 2.78（`INK_3_MIN`），只防继续变浅，正文与图标仍是 4.5 / 3.0 |
+| `on-accent` 暗色用深蓝 | 暗色 accent 是浅蓝，反白文字应为深色（Argus `#00213b` 同值） |
+| 投影只给对话框 | 对齐 Argus `--shadow-flyout`：`widgets::flyout_shadow` 两层同轴；菜单、提示、卡片、列表一律无投影 |
 | `fav` 亮色加深为 `#b07a2e` | 现两模式共用 `#d8a155`，白底对比不足 |
+| `pin` 改为紫 `#8764b8` / `#c3a6f0` | 原 `#1668dc` 与对齐 Argus 后的 accent 蓝 `#0067c0` 撞色：中置条目竖条与选中卡片描边都成蓝色，读不出"置顶"。改紫后两语义在色相上分开，亮色对窗口底 4.2:1（图标需 ≥3） |
 | 半径 4/6/8/10 | 控件 4（Argus 按钮）、卡片组 6（Argus 设置卡）、浮层 8（Argus 菜单/对话框）、剪贴板卡片 10（保留现有身份，最大层级） |
 | `fontSize 13 / lineHeight 1.4` | Argus 同值；GPUI 默认 1.618 行高会让换行文本偏高 |
 
@@ -314,12 +318,18 @@ pub fn ease_in(t)    -> f32;  // bezier(0.7, 0.0, 1.0, 0.5)   退场
 pub fn ease_move(t)  -> f32;  // bezier(0.33, 0.0, 0.1, 1)    位移（滑块、抽屉）
 pub fn ease_enter(t) -> f32;  // bezier(0.33, 1.0, 0.68, 1)   页面滑入
 pub fn ease_in_out(t)-> f32;  // 现有 toggle/reorder 用的三次式，唯一保留的自写曲线
+pub fn ease_in_out_quad(t) -> f32;  // 对称二次：拖拽换位/落位（reorder 转发到此）
+pub fn ease_out_cubic(t)   -> f32;  // 1-(1-t)³：短提示淡入、快窗指示器
+pub fn ease_out_damped(t)  -> f32;  // 1-(1-t)⁵：滚动滑行"到位即停"
 pub fn mix(from: Hsla, to: Hsla, t: f32) -> Hsla;             // 预乘 sRGB 插值（Argus theme.rs:546）
+pub fn mix_rgba(from: Rgba, to: Rgba, t: f32) -> Rgba;        // 线性插值（滚动渐隐等纯色过渡）
 
-pub const FAST: Duration = 167ms;
-pub const SLOW: Duration = 250ms;
-pub fn transition(cx) -> gpui_kit::base::motion::Transition;  // FAST + ease_move，含 reduce_motion→0
+pub fn fast() -> Duration;  // t-fast 167ms
+pub fn slow() -> Duration;  // t-slow 250ms
+pub fn transition(cx) -> gpui_kit::base::motion::Transition;  // fast + ease_move，含 reduce_motion→0
 ```
+
+曲线与混色只在 `design/motion.rs` 定义（AC-9）：`reorder::ease_in_out`、`quick_paste` 的指示器曲线、`search_box` 的 mix 都转发到这里。`keyed_transition` 内部同样在 `reduce_motion` 时把时长归零，因此所有经它驱动的动效自动满足 AC-6。
 
 组件级动效清单（时长/曲线/触发）：
 
@@ -410,6 +420,13 @@ pub fn transition(cx) -> gpui_kit::base::motion::Transition;  // FAST + ease_mov
 | `empty_state(icon, title, desc, action)` | 居中列：20px 图标 `ink_3` + 标题 13 MEDIUM + 描述 12 `ink_2` + 主按钮 |
 | `scrollbar(handle, dark)` | thumb 3px→悬停 5px、`scroll_thumb(_hover)` 令牌；滚轮滑行（可选移植 Argus scrollbar.rs:601 `wheel_glide`） |
 | `spinner(size, color)` | 0.22 透明轨道 + accent 弧，800ms 旋转（Argus widgets.rs:1167） |
+| `state_pill(text, PillTone)` | 26 高胶囊：`layer_strong` 面 + `stroke` 描边，前置 8px 语义圆点；`Busy` 换成 10px spinner。同步/后端状态用它，页面不再散装色点（Argus widgets.rs:1218） |
+| `select(...)` / `select_compact(...)` + `select_list(...)` | 32 高下拉按钮：宽度按最长选项定、右侧 chevron、开合时 `control_hover` 面；`compact` 18 高、无描边。浮层走 `select_list`（`flyout` + `stroke_strong` + 8px 圆角、**无阴影**、32 高行、选中打勾）。键盘：↑/↓/Enter 展开、Esc 收起（Argus widgets.rs:1257/1274） |
+| `btn_small_glyph(id, text, glyph, size, Tone)` | 小号按钮 + 自定义边长图标；无文案时保留 8px 内边距，不按方形图标钮收窄（Argus widgets.rs:943） |
+| `inert / inert_dimmed`（`ButtonExt`） | 禁用两态：`inert` 只拦截输入、外观不变；`inert_dimmed` 再压 0.5 透明度。页面不再各自写 `.opacity(0.5)`（Argus widgets.rs:628） |
+| `wrapping_tooltip(text, max)` | 成句提示：先用文本系统量自然宽度，超过 `max` 才在 `max` 处换行（Argus widgets.rs:579） |
+| `tooltip_with_shortcut(text, keys)` | 提示右侧补一排键帽（FR-COMP-05 的 `tooltip_key` 落点） |
+| `PageEntrance`（`enter / hold / page_entering`） | 页面进场：250ms `ease_enter` 滑入 + 淡入，`reduce_motion` 下直接落定；设置页 Tab 切换用它（Argus widgets.rs:1693/1748/1757） |
 
 ## 10. 逐屏设计
 
@@ -527,7 +544,7 @@ gpui_kit::application()
 |---|---|
 | 颜色/圆角/间距/字号 lint | `scripts/ui_design_lint.py`（rg 驱动，规则 = requirements.md AC-1~AC-9），CI 与 pre-push 钩子 |
 | 截图对照 | 每阶段基线目录 + 比对脚本（像素 diff ≤ 0.1% 视为通过；DPI × 主题矩阵） |
-| 性能 | 主列表 1000 条滚动帧率对比脚本；`cargo build --release` 体积阈值 |
+| 性能 | 主列表 1000 条滚动帧率对比：`CLIPPI_FRAME_TRACE=<文件>` 启动，`frame_trace` 每 120 帧落一行 `n/avg/p95/max`，滚动 4 s 后取中位数对比；`cargo build --release` 体积阈值 |
 | 单测 | 现有 ui 单测全保留；新增：palette 缓存命中、token 解析、segments 锚点、motion 曲线端点值 |
 
 ## 13. Argus 对照速查

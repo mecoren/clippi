@@ -64,7 +64,7 @@ Clippi 当前 UI 由 Slint 版逐像素移植而来，功能完整但观感"简�
 - **FR-TOK-03 (P0)** `ClippiTheme` 重构为语义结构（见 design.md §4），新增 `is_dark`、`hover`、`hover_strong`、`press`、`stroke`、`stroke_strong`、`control_face`、`control_hover`、`control_checked`、`on_accent`、`on_danger`、`faint`、`scroll_thumb(_hover)`、`tip`、`flyout`、`scrim`。
 - **FR-TOK-04 (P0)** 删除全部 26 处 `bg == rgb(0x191a1b)` 判断。
 - **FR-TOK-05 (P0)** 清理 289 处硬编码颜色，目标：`src/ui/design/` 之外颜色字面量出现次数为 0（`transparent` 除外）。
-- **FR-TOK-06 (P1)** 品牌绿保留为默认强调色；亮色模式提供对比度达标的深绿变体（AA 4.5:1）；`theme_color = "system"` 时沿用现有系统强调色读取逻辑。
+- **FR-TOK-06 (P1，2026-11-18 修订)** 默认强调色改为与 Argus 同值的 `#0067c0` / `#4cc2ff`（原为品牌绿 `#287a55` / `#7ecba3`，按"UI 与 Argus 一模一样"的取舍废弃）；`theme_color = "system"` 时沿用现有系统强调色读取逻辑。因 `ink-3` 同步对齐 Argus `#8e92a0`，亮色辅助文字实测 2.80~2.99:1，`FR-A11Y-03` 的门禁对 `ink-3` 单独下探到 2.78（正文 4.5、图标 3.0 不放宽）。同一轮把 `pin` 由 `#1668dc` / `#5b9bff` 改为紫 `#8764b8` / `#c3a6f0`：原值与新 accent 同为蓝色，中置条目竖条与选中卡片描边无法区分。
 
 ### 4.2 FR-STATE 交互状态
 
@@ -117,6 +117,8 @@ Clippi 当前 UI 由 Slint 版逐像素移植而来，功能完整但观感"简�
 | FR-COMP-11 (P1) | `keycaps` | 快捷键键帽（Argus `widgets.rs:1130`），统一现有 `shortcut_hint` |
 | FR-COMP-12 (P2) | `toast` | 保留现有实现，换令牌 + 进出动效走 motion 模块 |
 | FR-COMP-13 (P2) | `state_pill / spinner` | 状态胶囊与加载环（Argus `widgets.rs:1167/1218`） |
+
+补充（2026-11-18 收尾）：`widgets.rs` 已补齐 `state_pill`、`select / select_compact / select_list`、`btn_small_glyph`、`inert / inert_dimmed`、`wrapping_tooltip`、`tooltip_with_shortcut` 与页面进场 `PageEntrance`（`enter / hold / page_entering`），`toolbar_icon_btn` 收口卡片工具条的三个小动作；页面层不再自写这些形状。
 
 ### 4.7 FR-SCREEN 界面重绘
 
@@ -190,6 +192,16 @@ Clippi 当前 UI 由 Slint 版逐像素移植而来，功能完整但观感"简�
 | AC-10 | `cargo test` 全绿；`cargo build --release` 体积增幅 ≤ 15%（gpui-kit 引入 Lucide 资产所致） |
 | AC-11 | 三窗口（主面板 / 快捷窗 / 侧栏）在浅/暗 × 100%/125%/150% DPI 下截图对照通过 |
 | AC-12 | 主列表滚动帧率不低于改造前（同机对比，滚动 1000 条） |
+
+### 5.1 验收状态（2026-11-18）
+
+| 项 | 状态 | 依据 |
+|---|---|---|
+| AC-1 ~ AC-9 | 通过 | 颜色字面量仅剩 `rich_preview`（用户 HTML 自带样式）与 `#[cfg(test)]`；`rounded` 只剩 4/6/8/10 与 `Radius::*`；间距 ⊆ {2,4,6,8,12,16,24}；`text_size` ⊆ {10,12,13,16}；动效时长走 `motion::fast()`/`slow()`，`keyed_transition` 内部按 `reduce_motion` 归零；缓动与混色定义只在 `design/motion.rs` |
+| AC-10 编译项 | 通过 | `cargo fmt` / `cargo clippy --all-targets` 零告警；`cargo test` 1044 通过 |
+| AC-10 体积项 | 通过 | `[profile.release]` 同参数下：改造前 33,125,888 B → 改造后 33,120,768 B，**-0.015%**（阈值 +15%）。两次构建都带 AC-12 的帧采样钩子，口径一致 |
+| AC-11 | 部分完成 | 100% 下主窗/快捷窗/侧栏 × 浅/暗已采，产物在 `docs/ui-redesign/baseline/`，**只留本地、已 gitignore 不入库**（基准图是二进制大文件，需要时重跑采集脚本）。125%/150% 需改 Windows 显示缩放（系统级设置，无法由脚本切换），未采 |
+| AC-12 | 通过 | 1000 条自造数据、400 次滚轮（4 s）、主窗置前台：改造前 129.2 fps（p95 10.4 ms）/ 改造后 129.1 fps（p95 10.3 ms），三轮中位数差 0.1 fps。量测钩子见 `src/ui/frame_trace.rs`（`CLIPPI_FRAME_TRACE=<文件>` 才生效） |
 
 ## 6. 里程碑
 
