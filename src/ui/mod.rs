@@ -12,6 +12,7 @@ pub mod edit_panel;
 pub mod emoji_panel;
 pub mod filter_bar;
 pub mod font;
+pub mod frame_trace;
 pub mod hover_toolbar;
 pub mod i18n;
 pub mod quick_paste;

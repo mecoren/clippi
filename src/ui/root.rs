@@ -967,6 +967,8 @@ impl RootView {
 
 impl Render for RootView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // AC-12：设置 `CLIPPI_FRAME_TRACE` 时记录帧间隔，默认零开销。
+        super::frame_trace::tick(window, cx);
         // Keep the gpui-component rem base and font-family cascade in sync on
         // every render. The component `Root` only applies them on its own
         // renders, which are independent of this view's invalidations, so a
