@@ -8,9 +8,9 @@ use gpui::{px, Pixels};
 /// 圆角档位（`layout` 令牌）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Radius {
-    /// 4：小控件、keycaps、缩略图
+    /// 4：按钮、输入框（与 Argus 同值）、keycaps、缩略图
     Sm,
-    /// 6：按钮、输入框、设置分组卡
+    /// 6：设置分组卡、分段控件轨道、筛选项
     Md,
     /// 8：菜单、对话框、浮层面板
     Lg,

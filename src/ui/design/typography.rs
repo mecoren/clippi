@@ -58,9 +58,12 @@ pub fn tabular() -> FontFeatures {
 /// DirectWrite 检测（`platform::system_font`），macOS 交给 CoreText。
 pub fn installed_family(kind: &str, _cx: &App) -> SharedString {
     static SANS: OnceLock<SharedString> = OnceLock::new();
+    static DISPLAY: OnceLock<SharedString> = OnceLock::new();
     static MONO: OnceLock<SharedString> = OnceLock::new();
     static TOOLTIP: OnceLock<SharedString> = OnceLock::new();
     let cell = match kind {
+        // 与 Argus `fonts.display` 同名同序：大号标题（26 px 档）用它。
+        "display" => &DISPLAY,
         "mono" => &MONO,
         "tooltip" => &TOOLTIP,
         _ => &SANS,
