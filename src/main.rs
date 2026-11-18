@@ -85,7 +85,13 @@ fn init_logging() {
             let _ = std::fs::rename(&log_path, &old);
         }
     }
-    if let Ok(file) = std::fs::File::create(&log_path) {
+    // 追加而不是截断：重复启动（含单实例失败后退出）不再清掉本次之前的记录。
+    // 超过 1 MB 时上面已把它轮转为 `clippi.log.old`。
+    if let Ok(file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
         // Local time in the log: the previous timestamps were UTC, which made
         // "when did this happen" impossible to line up with the wall clock next
         // to it (a 20:51 launch appeared as 12:51 in clippi.log).
