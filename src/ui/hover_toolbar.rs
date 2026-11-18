@@ -20,7 +20,6 @@ use crate::core::types::{ContentType, RichData};
 use super::design::motion;
 use super::design::palette::Palette;
 use super::design::size::Radius;
-use crate::ui::transition::keyed_transition;
 
 /// Properties that determine which toolbar buttons to show.
 pub struct HoverToolbarProps {
@@ -176,7 +175,6 @@ impl RenderOnce for HoverToolbar {
         let fav_color: Rgba = p.fav.into();
         let pill_bg: Rgba = p.on_card("layer-strong").into();
         let pill_border: Rgba = p.stroke_strong.into();
-        let hover_bg: Rgba = p.on_card("hover-strong").into();
 
         let is_single = props.selected_count <= 1;
         let is_batch = props.selected_count > 1 && props.is_selected;
@@ -462,17 +460,6 @@ impl RenderOnce for HoverToolbar {
                 let hovered = window.use_keyed_state(control.clone(), cx, |_, _| false);
                 let motion_control = control.clone();
                 let is_hovered = *hovered.read(cx);
-                let extend = keyed_transition(
-                    window,
-                    cx,
-                    SharedString::from(format!("toolbar-button-extend-{item_id}-{action_id}")),
-                    motion::fast(),
-                    0.0_f32,
-                    motion::ease_out,
-                    if is_hovered { 1.0 } else { 0.0 },
-                );
-
-                let extension = 6.0 * extend;
 
                 div()
                     .id(action_id)
@@ -480,16 +467,17 @@ impl RenderOnce for HoverToolbar {
                     .tab_stop(true)
                     .aria_label(tooltip.clone())
                     .w(sc(20.))
-                    .h(sc(20. + extension))
+                    // 尺寸恒定：悬停只做图标动效，按钮外框不再伸缩。
+                    .h(sc(20.))
                     .flex_shrink_0()
                     .flex()
                     .items_center()
                     .justify_center()
                     .when(!below_card, |el| el.rounded_t(sc(4.)))
                     .when(below_card, |el| el.rounded_b(sc(4.)))
-                    .bg(if is_hovered { hover_bg } else { pill_bg })
+                    .bg(pill_bg)
                     .border(sc(1.))
-                    .border_color(if is_hovered { accent } else { pill_border })
+                    .border_color(pill_border)
                     .cursor(CursorStyle::PointingHand)
                     .on_hover(move |value, _window, cx| {
                         if *value && !cx.reduce_motion() {
