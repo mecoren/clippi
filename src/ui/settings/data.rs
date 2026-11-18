@@ -5,7 +5,6 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_kit::component::tooltip::Tooltip;
 
 use crate::core::i18n_keys::I18nKey;
 use crate::core::settings::migrate_database;
@@ -988,16 +987,14 @@ impl SettingsPanel {
                                         .text_color(text_3)
                                         .cursor(CursorStyle::Arrow)
                                         .tooltip(|window, cx| {
-                                            Tooltip::element(move |_window, _cx| {
-                                                div()
-                                                    .flex()
-                                                    .flex_col()
-                                                    .gap(px(2.))
-                                                    .text_size(fs(10.))
-                                                    .child(I18nKey::DescCleanupStaleItems.text())
-                                                    .child(I18nKey::DescRetentionExempt.text())
-                                            })
-                                            .build(window, cx)
+                                            widgets::tooltip_lines(
+                                                [
+                                                    I18nKey::DescCleanupStaleItems.text(),
+                                                    I18nKey::DescRetentionExempt.text(),
+                                                ],
+                                                window,
+                                                cx,
+                                            )
                                         })
                                         .on_mouse_down(MouseButton::Left, |_ev, _window, cx| {
                                             cx.stop_propagation()

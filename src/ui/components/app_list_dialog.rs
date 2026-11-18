@@ -11,7 +11,6 @@ use gpui::*;
 
 use crate::ui::widgets;
 use gpui_kit::component::scroll::{Scrollbar, ScrollbarAxis};
-use gpui_kit::component::tooltip::Tooltip;
 
 use crate::core::i18n_keys::I18nKey;
 use crate::ui::theme::ClippiTheme;
@@ -368,21 +367,7 @@ fn render_title_bar(
                             .cursor(CursorStyle::PointingHand)
                             .hover(move |style| style.bg(btn_hover).text_color(accent))
                             .tooltip(move |window, cx| {
-                                let tooltip_lines = tooltip_lines.clone();
-                                Tooltip::element(move |_window, _cx| {
-                                    div()
-                                        .flex()
-                                        .flex_col()
-                                        .gap(px(3.))
-                                        .text_size(fs(10.))
-                                        .children(
-                                            tooltip_lines
-                                                .clone()
-                                                .into_iter()
-                                                .map(|line| div().whitespace_nowrap().child(line)),
-                                        )
-                                })
-                                .build(window, cx)
+                                widgets::tooltip_lines(tooltip_lines.clone(), window, cx)
                             })
                             .child(widgets::icon_hover(
                                 "HelpIcon",

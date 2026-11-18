@@ -3,12 +3,12 @@ use gpui::prelude::*;
 use gpui::*;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
-use gpui_kit::component::tooltip::Tooltip;
 
 use super::design::palette::Palette;
 use super::filter_bar::{filter_chip, filter_toolbar};
 use super::font::fs;
 use super::theme::ClippiTheme;
+use super::widgets;
 use crate::core::emoji::{self, EmojiEntry};
 use crate::core::i18n_keys::I18nKey;
 use crate::core::{kaomoji, symbols};
@@ -384,10 +384,7 @@ impl Render for EmojiPanel {
             )
             .text_size(fs(12.))
             .text_color(color)
-            .tooltip(move |window, cx| {
-                Tooltip::element(move |_, _| div().text_size(fs(10.)).child(label))
-                    .build(window, cx)
-            })
+            .tooltip(move |window, cx| widgets::tooltip(label, window, cx))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _, window, cx| this.choose_category(index, window, cx)),
@@ -507,11 +504,7 @@ impl Render for EmojiPanel {
                                     })
                                     .hover(|style| style.bg(list_theme.btn_hover))
                                     .tooltip(move |window, cx| {
-                                        let name = name.clone();
-                                        Tooltip::element(move |_, _| {
-                                            div().text_size(fs(11.)).child(name.clone())
-                                        })
-                                        .build(window, cx)
+                                        widgets::tooltip(name.clone(), window, cx)
                                     })
                                     .on_hover(cx.listener(move |this, hovered, _, cx| {
                                         if *hovered && this.selected != index {

@@ -6,7 +6,6 @@ use std::time::Duration;
 use gpui::prelude::*;
 use gpui::*;
 use gpui_kit::component::scroll::ScrollableElement;
-use gpui_kit::component::tooltip::Tooltip;
 
 use crate::ui::transition::keyed_transition;
 
@@ -504,10 +503,7 @@ impl SettingsPanel {
                                     .cursor(if buttons_disabled { CursorStyle::Arrow } else { CursorStyle::PointingHand })
                                     .opacity(if buttons_disabled { 0.45 } else { 1.0 })
                                     .tooltip(|window, cx| {
-                                        Tooltip::element(move |_window, _cx| {
-                                            div().text_size(fs(10.)).child(I18nKey::ConfigSyncUpload.text())
-                                        })
-                                        .build(window, cx)
+                                        widgets::tooltip(I18nKey::ConfigSyncUpload.text(), window, cx)
                                     })
                                     .child(I18nKey::ConfigSyncUpload.text())
                                     .on_mouse_down(MouseButton::Left, move |_ev, _window, cx| {
@@ -544,10 +540,7 @@ impl SettingsPanel {
                                     .cursor(if buttons_disabled { CursorStyle::Arrow } else { CursorStyle::PointingHand })
                                     .opacity(if buttons_disabled { 0.45 } else { 1.0 })
                                     .tooltip(|window, cx| {
-                                        Tooltip::element(move |_window, _cx| {
-                                            div().text_size(fs(10.)).child(I18nKey::ConfigSyncApply.text())
-                                        })
-                                        .build(window, cx)
+                                        widgets::tooltip(I18nKey::ConfigSyncApply.text(), window, cx)
                                     })
                                     .child(I18nKey::ConfigSyncApply.text())
                                     .on_mouse_down(MouseButton::Left, move |_ev, _window, cx| {
@@ -1168,10 +1161,7 @@ fn icon_button(
         .justify_center()
         .cursor(CursorStyle::PointingHand)
         .hover(move |style| style.bg(hover_bg))
-        .tooltip(move |window, cx| {
-            Tooltip::element(move |_window, _cx| div().text_size(fs(10.)).child(tooltip))
-                .build(window, cx)
-        })
+        .tooltip(move |window, cx| widgets::tooltip(tooltip, window, cx))
         .on_mouse_down(MouseButton::Left, move |_ev, window, cx| {
             on_click(window, cx);
         })
@@ -1199,10 +1189,7 @@ fn disabled_icon_button(
         .items_center()
         .justify_center()
         .cursor(CursorStyle::Arrow)
-        .tooltip(move |window, cx| {
-            Tooltip::element(move |_window, _cx| div().text_size(fs(10.)).child(tooltip))
-                .build(window, cx)
-        })
+        .tooltip(move |window, cx| widgets::tooltip(tooltip, window, cx))
         .child(widgets::icon(icon, fs(12.), Hsla::from(color)))
 }
 

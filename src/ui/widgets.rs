@@ -852,16 +852,50 @@ pub fn scrollbar(handle: &ScrollHandle) -> Scrollbar {
     Scrollbar::vertical(handle).mode(ScrollbarMode::Scrolling)
 }
 
-/// 悬停提示：系统 tooltip 字体、12 px、无阴影（阴影在 Mica 合成下会起
-/// 光晕），带 CJK 回退链。
-pub fn tooltip(text: impl Into<SharedString>, window: &mut Window, cx: &mut App) -> AnyView {
-    let mut tooltip = gpui_kit::component::tooltip::Tooltip::new(text.into())
+/// 悬停提示的公共外观：系统 tooltip 字体、12 px、无阴影（阴影在 Mica 合成
+/// 下会起光晕），带 CJK 回退链。
+fn tooltip_face(
+    mut tooltip: gpui_kit::component::tooltip::Tooltip,
+    cx: &mut App,
+) -> gpui_kit::component::tooltip::Tooltip {
+    tooltip = tooltip
         .shadow_none()
         .font_family(typography::tooltip_family(cx))
         .text_size(typography::font(type_role::BODY))
         .line_height(relative(4. / 3.));
     tooltip.text_style().font_fallbacks = Some(typography::fallbacks(cx));
-    tooltip.build(window, cx)
+    tooltip
+}
+
+/// 单行悬停提示。全仓唯一的提示入口，页面不得直接构造
+/// `gpui_kit::component::tooltip::Tooltip`。
+pub fn tooltip(text: impl Into<SharedString>, window: &mut Window, cx: &mut App) -> AnyView {
+    let tooltip = gpui_kit::component::tooltip::Tooltip::new(text.into());
+    tooltip_face(tooltip, cx).build(window, cx)
+}
+
+/// 多行悬停提示：每项一条、行距 4 px，用于帮助说明与成对描述。多行需要
+/// 自定义内容，是本文件唯一使用 `Tooltip::element` 的地方。
+pub fn tooltip_lines<I, S>(lines: I, window: &mut Window, cx: &mut App) -> AnyView
+where
+    I: IntoIterator<Item = S>,
+    S: Into<SharedString>,
+{
+    let lines: Vec<SharedString> = lines.into_iter().map(Into::into).collect();
+    let tooltip = gpui_kit::component::tooltip::Tooltip::element(move |_, _| {
+        div()
+            .flex()
+            .flex_col()
+            .gap(Space::Xs.scaled())
+            .text_size(typography::font(type_role::BODY))
+            .children(
+                lines
+                    .clone()
+                    .into_iter()
+                    .map(|line| div().whitespace_nowrap().child(line)),
+            )
+    });
+    tooltip_face(tooltip, cx).build(window, cx)
 }
 
 #[cfg(test)]

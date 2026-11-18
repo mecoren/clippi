@@ -13,7 +13,6 @@ use gpui::prelude::*;
 use gpui::*;
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::scroll::{ScrollableElement, ScrollbarAxis};
-use gpui_kit::component::tooltip::Tooltip;
 
 use crate::core::i18n_keys::I18nKey;
 use crate::core::types::{tag_preset_colors, TagInfo};
@@ -793,14 +792,7 @@ fn icon_btn(
         .cursor(CursorStyle::PointingHand)
         .hover(move |style| style.bg(hover_bg))
         .when_some(tooltip, |button, tip| {
-            button.tooltip(move |window, cx| {
-                Tooltip::element(move |_window, _cx| {
-                    div()
-                        .text_size(typography::font(type_role::CAPTION))
-                        .child(tip)
-                })
-                .build(window, cx)
-            })
+            button.tooltip(move |window, cx| widgets::tooltip(tip, window, cx))
         })
         .child(widgets::icon(
             icon,

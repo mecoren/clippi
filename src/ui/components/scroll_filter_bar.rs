@@ -3,9 +3,9 @@ use crate::core::i18n_keys::I18nKey;
 use crate::ui::design::palette::Palette;
 use crate::ui::filter_bar::{filter_action_slot, filter_chip, filter_toolbar};
 use crate::ui::font::fs;
+use crate::ui::widgets;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_kit::component::tooltip::Tooltip;
 
 pub(crate) fn scroll_edges(scroll: &ScrollHandle) -> (bool, bool) {
     let offset = f32::from(scroll.offset().x);
@@ -91,10 +91,7 @@ pub(crate) fn scroll_filter_bar(
             .when(enabled, |button| {
                 button.hover(move |style| style.bg(p.hover))
             })
-            .tooltip(move |window, cx| {
-                Tooltip::element(move |_, _| div().text_size(fs(10.)).child(tooltip))
-                    .build(window, cx)
-            })
+            .tooltip(move |window, cx| widgets::tooltip(tooltip, window, cx))
             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                 cx.stop_propagation();
                 if enabled {

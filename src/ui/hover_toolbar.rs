@@ -14,7 +14,6 @@ use gpui::prelude::*;
 use gpui::*;
 
 use super::widgets;
-use gpui_kit::component::tooltip::Tooltip;
 
 use crate::core::i18n_keys::I18nKey;
 use crate::core::types::{ContentType, RichData};
@@ -497,13 +496,7 @@ impl RenderOnce for HoverToolbar {
                             cx.notify();
                         });
                     })
-                    .tooltip(move |window, cx| {
-                        let label = tooltip.clone();
-                        Tooltip::element(move |_window, _cx| {
-                            div().text_size(sc(10.)).child(label.clone())
-                        })
-                        .build(window, cx)
-                    })
+                    .tooltip(move |window, cx| widgets::tooltip(tooltip.clone(), window, cx))
                     .child({
                         let icon = icon.clone();
                         let color = if is_delete {
