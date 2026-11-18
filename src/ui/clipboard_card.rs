@@ -1674,19 +1674,7 @@ impl RenderOnce for ClipboardCard {
                     // 强调色面只铺一层，不改变卡片自身的透明面。
                     div().absolute().inset_0().bg(hover_face.opacity(lit_t)),
                 )
-            })
-            .child(
-                // 强调线贴在卡片左缘，两端各让出一个圆角半径，避免在卡片
-                // 圆角处露出直角。
-                div()
-                    .absolute()
-                    .top(Radius::Card.scaled())
-                    .bottom(Radius::Card.scaled())
-                    .left_0()
-                    .w(sc(2.))
-                    .rounded(sc(1.))
-                    .bg(accent),
-            );
+            });
 
         // --- Wire click handler ---
         let base = if let Some(handler) = on_click {
