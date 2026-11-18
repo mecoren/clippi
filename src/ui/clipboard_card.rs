@@ -1622,75 +1622,71 @@ impl RenderOnce for ClipboardCard {
         let color_swatch = swatch_color(full_text, accent);
 
         // 卡片不用阴影：靠 1 px 描边 + `layer` 面与窗口底做亮度差分层
-        // （Argus 的 Fluent 分层）。选中态 = 强调色 15% 底 + 左侧 3 px 竖条
-        // （FR-STATE-03），描边保持常态，不再整圈换成强调色。
-        let card_face: Rgba = if selected {
-            p.accent_soft().into()
-        } else {
-            surface
-        };
-        // 悬停过渡（167 ms）：只给指针下的卡片请求帧。gpui 0.3.12 的 Div 没有
-        // transform，抬升感用「悬停色叠加 + 描边提亮 + 顶部 1 px 高光」表达，
-        // 不改列表行高与滚动位置。
-        let hover_t = gpui_kit::base::motion::transition(
+        // （Argus 的 Fluent 分层）。强调色的面不铺在卡片本体上，而是作为
+        // 叠层淡入，选中与悬停共用同一套过渡。
+        let card_face: Rgba = surface;
+        // 悬停/选中过渡（167 ms，Argus 链接卡片同款）：面淡入强调色 12%、
+        // 描边提亮到强调色 55%、顶部 2 px 强调线由 32 px 拉长到 96 px，
+        // 指针下的卡片整体上抬 2 px。gpui 0.3.12 的 Div 没有 transform，
+        // 上抬用 relative inset 表达，不改列表行高与滚动位置。
+        let lit = selected || is_hovered;
+        let lit_t = gpui_kit::base::motion::transition(
             (
-                ElementId::Name(SharedString::from(format!("card-hover-{}", item.id))),
+                ElementId::Name(SharedString::from(format!("card-lit-{}", item.id))),
                 "t",
             ),
-            if is_hovered && !selected {
-                1.0_f32
-            } else {
-                0.0
-            },
+            if lit { 1.0_f32 } else { 0.0 },
             motion::transition(cx),
             window,
             cx,
         );
+        let rise_t = gpui_kit::base::motion::transition(
+            (
+                ElementId::Name(SharedString::from(format!("card-rise-{}", item.id))),
+                "t",
+            ),
+            if is_hovered { 1.0_f32 } else { 0.0 },
+            motion::transition(cx),
+            window,
+            cx,
+        );
+        let hover_face: Rgba = motion::mix_rgba(surface, accent, 0.12);
 
         let base = div()
             .relative()
             .w_full()
             .h_full()
             .overflow_hidden()
+            .top(sc(-2.) * rise_t)
             .capture_any_mouse_up(|_ev, _window, cx| {
                 cx.stop_propagation();
             })
             .bg(card_face)
             .border(sc(1.))
-            .border_color(motion::mix(p.stroke, p.stroke_strong, hover_t * 0.72))
+            .border_color(motion::mix(p.stroke, p.accent.opacity(0.55), lit_t))
             .rounded(Radius::Card.scaled())
             .flex()
             .flex_row()
             .p(sc(8.))
             .gap(sc(8.))
-            .when(selected, |card| {
+            .when(lit_t > 0.001, |card| {
                 card.child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .bottom_0()
-                        .left_0()
-                        .w(px(3.))
-                        .bg(accent),
+                    // 强调色面只铺一层，不改变卡片自身的透明面。
+                    div().absolute().inset_0().bg(hover_face.opacity(lit_t)),
                 )
             })
-            .when(!selected && hover_t > 0.001, |card| {
-                card.child(
-                    // 悬停色只铺一层，不改变卡片自身的透明面。
-                    div().absolute().inset_0().bg(p.hover.opacity(hover_t)),
-                )
-            })
-            .when(!selected && hover_t > 0.001, |card| {
-                card.child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .left(sc(6.))
-                        .right(sc(6.))
-                        .h(sc(1.))
-                        .bg(p.stroke_strong.opacity(hover_t * 0.7)),
-                )
-            });
+            .child(
+                // 强调线贴在卡片左缘，两端各让出一个圆角半径，避免在卡片
+                // 圆角处露出直角。
+                div()
+                    .absolute()
+                    .top(Radius::Card.scaled())
+                    .bottom(Radius::Card.scaled())
+                    .left_0()
+                    .w(sc(2.))
+                    .rounded(sc(1.))
+                    .bg(accent),
+            );
 
         // --- Wire click handler ---
         let base = if let Some(handler) = on_click {
