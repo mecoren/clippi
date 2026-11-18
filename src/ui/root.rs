@@ -15,6 +15,7 @@ use gpui::*;
 use crate::core::i18n_keys::I18nKey;
 use crate::state::app::AppState;
 use crate::ui::design::palette::Palette;
+use crate::ui::design::typography;
 use crate::ui::transition::keyed_transition;
 use crate::ui::window_manager::{WindowManager, WindowManagerEvent};
 
@@ -1497,7 +1498,7 @@ impl Render for RootView {
             // paints into the transparent border ring.
             .border(px(panel_margin))
             .border_color(Rgba::from(Hsla::transparent_black()))
-            .font_family(gpui_kit::component::Theme::global(cx).font_family.clone())
+            .font(typography::ui_font(cx))
             .track_focus(&root_focus)
             .capture_key_down(move |ev: &KeyDownEvent, window, cx| {
                 if ev.keystroke.key == "escape"

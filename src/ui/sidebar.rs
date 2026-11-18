@@ -407,6 +407,7 @@ impl Render for Sidebar {
         let duration = Duration::from_millis(250);
 
         div()
+            .font(typography::ui_font(cx))
             .relative()
             .w(px(SIDEBAR_WIDTH))
             .h(px(

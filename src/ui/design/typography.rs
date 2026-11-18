@@ -6,7 +6,8 @@
 
 use std::sync::{Arc, OnceLock};
 
-use gpui::{App, FontFeatures, FontWeight, Pixels, SharedString};
+use gpui::{App, Font, FontFeatures, FontStyle, FontWeight, Pixels, SharedString};
+use gpui_kit::component::Theme;
 
 use super::tokens::{base_font_size, design};
 
@@ -82,31 +83,48 @@ pub fn installed_family(kind: &str, _cx: &App) -> SharedString {
     .clone()
 }
 
+/// 回退链：主族之后的可安装族，再接 `fonts.fallback`。中文族必须排在日文族
+/// 之前，否则英文系统会把中文渲染成日文字形。
+pub fn fallback_chain(family: &str) -> Vec<String> {
+    design()["fonts"]["sans"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .skip_while(|name| *name != family)
+        .skip(1)
+        .chain(
+            design()["fonts"]["fallback"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(serde_json::Value::as_str),
+        )
+        .map(str::to_owned)
+        .collect()
+}
+
 /// 界面字体族之后的 CJK/符号回退链（修复英文系统把中文渲染成日文字体）。
 pub fn fallbacks(cx: &App) -> gpui::FontFallbacks {
     static SANS: OnceLock<gpui::FontFallbacks> = OnceLock::new();
     SANS.get_or_init(|| {
         let family = installed_family("sans", cx);
-        let chain = design()["fonts"]["sans"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(serde_json::Value::as_str)
-            .skip_while(|name| *name != family.as_ref())
-            .skip(1)
-            .chain(
-                design()["fonts"]["fallback"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(serde_json::Value::as_str),
-            )
-            .filter(|name| *name != "Microsoft YaHei UI")
-            .map(str::to_owned)
-            .collect();
-        gpui::FontFallbacks::from_fonts(chain)
+        gpui::FontFallbacks::from_fonts(fallback_chain(family.as_ref()))
     })
     .clone()
+}
+
+/// 界面默认字体：族（跟随设置里自选的字体）＋ 等宽数字 ＋ CJK 回退链。
+/// 每个窗口根节点 `.font()` 一次，子树按文本样式继承；数字等宽同时满足
+/// 时间戳/计数/序号在刷新时不横向抖动。
+pub fn ui_font(cx: &App) -> Font {
+    Font {
+        family: Theme::global(cx).font_family.clone(),
+        features: tabular(),
+        fallbacks: Some(fallbacks(cx)),
+        weight: FontWeight::NORMAL,
+        style: FontStyle::Normal,
+    }
 }
 
 /// 提示浮层字体（系统 tooltip 的族）。
@@ -140,5 +158,20 @@ mod tests {
         let features = tabular();
         assert_eq!(features.0.len(), 1);
         assert_eq!(&*features.0[0].0, "tnum");
+    }
+
+    #[test]
+    fn fallback_chain_puts_chinese_before_japanese() {
+        let chain = fallback_chain("Segoe UI");
+        assert!(!chain.iter().any(|name| name == "Segoe UI"), "{chain:?}");
+        let chinese = chain
+            .iter()
+            .position(|name| name == "Microsoft YaHei UI")
+            .expect("Chinese fallback missing");
+        let japanese = chain
+            .iter()
+            .position(|name| name == "Yu Gothic UI")
+            .expect("Japanese fallback missing");
+        assert!(chinese < japanese, "{chain:?}");
     }
 }

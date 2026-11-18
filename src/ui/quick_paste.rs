@@ -1300,6 +1300,7 @@ impl Render for QuickPasteView {
             )
         });
         div()
+            .font(typography::ui_font(cx))
             .w(px(QUICK_WINDOW_WIDTH))
             .h(px(window_h))
             // Paint the entire rectangular window. Windows clips it with the
