@@ -67,6 +67,41 @@ fn mode_shortcut_allowed(view: &str, transfer_active: bool, key: char) -> bool {
     }
 }
 
+/// 窗口过渡：整块面板透明度的一次过渡。
+///
+/// 主窗是 DirectComposition 的无重定向表面窗口（`WS_EX_NOREDIRECTIONBITMAP`），
+/// 不能使用 layered alpha，所以窗口显示/隐藏的淡入淡出由视图层完成；隐藏侧由
+/// `WindowManager` 等这次过渡结束后才真正 `ShowWindow(SW_HIDE)`。
+#[derive(Clone, Copy)]
+struct PanelFade {
+    from: f32,
+    to: f32,
+    started: Instant,
+}
+
+impl PanelFade {
+    fn progress(&self) -> f32 {
+        let duration = if self.to > self.from {
+            crate::platform::window_motion::fade_in()
+        } else {
+            crate::platform::window_motion::fade_out()
+        };
+        (self.started.elapsed().as_secs_f32() / duration.as_secs_f32()).min(1.)
+    }
+
+    fn opacity(&self) -> f32 {
+        let t = self.progress();
+        let eased = if self.to > self.from {
+            // 淡入：前快后慢。
+            1. - (1. - t).powi(3)
+        } else {
+            // 淡出：同样先走大半，收尾柔和。
+            1. - (1. - t).powi(2)
+        };
+        self.from + (self.to - self.from) * eased
+    }
+}
+
 pub struct RootView {
     state: Entity<AppState>,
     window_manager: Entity<WindowManager>,
@@ -120,6 +155,8 @@ pub struct RootView {
     /// Root-level clear-data dialog state, outside the clipped settings list.
     /// The include-* selection itself lives in `AppState`.
     clear_data_confirm: bool,
+    /// 窗口显示/隐藏时的面板透明度过渡。
+    panel_fade: Option<PanelFade>,
     _wm_subscription: Subscription,
     _activation_subscription: Subscription,
     _subscriptions: Vec<Subscription>,
@@ -371,6 +408,20 @@ impl RootView {
                     this.list_view.update(cx, |list, cx| {
                         list.release_items_for_hide(cx);
                     });
+                }
+                WindowManagerEvent::WindowHiding => {
+                    this.fade_panel_to(0.);
+                    cx.notify();
+                }
+                WindowManagerEvent::WindowShown { fresh } => {
+                    if *fresh {
+                        // 真正从隐藏状态呼出：从全透明开始，避免上一帧残留的
+                        // 不透明度让淡入只走后半程。
+                        this.fade_panel_from(0., 1.);
+                    } else {
+                        this.fade_panel_to(1.);
+                    }
+                    cx.notify();
                 }
                 WindowManagerEvent::WindowHidden => {
                     this.sidebar.update(cx, |sidebar, cx| {
@@ -956,6 +1007,7 @@ impl RootView {
             mode_focus_pending: false,
             focus_recovery_pending: false,
             clear_data_confirm: false,
+            panel_fade: None,
             _wm_subscription,
             _activation_subscription,
             _subscriptions,
@@ -974,6 +1026,8 @@ impl Render for RootView {
         // renders, which are independent of this view's invalidations, so a
         // live font-size/family change needs this refresh at the subtree top.
         super::font::sync_window_rem_size(window);
+        // 窗口显示/隐藏的淡入淡出：整块面板一次透明度过渡。
+        let panel_opacity = self.panel_opacity(window);
         let root_entity = cx.entity().clone();
         #[cfg(not(any(target_os = "windows", target_os = "macos")))]
         let sidebar = self.sidebar.clone();
@@ -2595,7 +2649,13 @@ impl Render for RootView {
                     let checked = selected.iter().any(|value| value == kind);
                     let state = self.state.clone();
                     let panel = self.settings_panel.clone();
-                    crate::ui::type_filter_config::selectable_type_row(icon, label.text().to_string(), checked, &Palette::current(cx))
+                    crate::ui::type_filter_config::selectable_type_row(
+                        icon,
+                        label.text().to_string(),
+                        checked,
+                        &Palette::current(cx),
+                        Some(SharedString::from(format!("privacy-type-{kind}"))),
+                    )
                         .id(SharedString::from(format!("privacy-type-{kind}")))
                         .h(px(32. * privacy_popup_layout.1))
                         .cursor(CursorStyle::PointingHand)
@@ -3205,6 +3265,8 @@ impl Render for RootView {
                         .shadow_none().child(label)
                 )
             })
+            // 窗口过渡：整块面板的透明度（显示淡入、隐藏淡出）。
+            .when(panel_opacity < 1., |root| root.opacity(panel_opacity))
     }
 }
 
@@ -3466,6 +3528,42 @@ impl RootView {
         target: f32,
     ) -> f32 {
         keyed_transition(window, cx, key, duration, initial, motion::ease_out, target)
+    }
+
+    /// 面板整体透明度开始向 `target` 过渡。窗口动效关闭时直接落定。
+    fn fade_panel_to(&mut self, target: f32) {
+        let from = self.panel_fade.map(|fade| fade.opacity()).unwrap_or(1.);
+        self.fade_panel_from(from, target);
+    }
+
+    /// 从指定透明度开始过渡（真实呼出时从 0 起，保证整段淡入）。
+    fn fade_panel_from(&mut self, from: f32, to: f32) {
+        if !crate::platform::window_motion::enabled() || (from - to).abs() < 1e-3 {
+            self.panel_fade = None;
+            return;
+        }
+        self.panel_fade = Some(PanelFade {
+            from,
+            to,
+            started: Instant::now(),
+        });
+    }
+
+    /// 本帧的面板透明度；过渡期间自行请求下一帧，结束后清掉状态。
+    fn panel_opacity(&mut self, window: &Window) -> f32 {
+        if !crate::platform::window_motion::enabled() {
+            self.panel_fade = None;
+            return 1.;
+        }
+        let Some(fade) = self.panel_fade else {
+            return 1.;
+        };
+        if fade.progress() >= 1. {
+            self.panel_fade = None;
+            return fade.to;
+        }
+        window.request_animation_frame();
+        fade.opacity()
     }
 }
 

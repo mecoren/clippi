@@ -374,12 +374,14 @@ impl Render for EmojiPanel {
             } else {
                 p.ink_2
             };
+            let control: SharedString = format!("emoji-cat:{index}").into();
             let mut button = super::components::scroll_filter_bar::scroll_filter_chip(
                 ("emoji-cat", index),
                 self.category == index,
                 &p,
                 32.,
             )
+            .relative()
             .aria_label(label)
             .text_size(fs(12.))
             .text_color(color)
@@ -389,7 +391,9 @@ impl Render for EmojiPanel {
                 cx.listener(move |this, _, window, cx| this.choose_category(index, window, cx)),
             );
             if self.kind == 0 || index == 0 {
-                button = button.child(widgets::icon(icon, fs(12.), color));
+                button = button
+                    .child(widgets::icon_moving(control.clone(), icon, fs(12.), color))
+                    .child(widgets::icon_probe(control, CursorStyle::PointingHand));
             } else {
                 button = button.child(icon);
             }

@@ -457,11 +457,10 @@ impl RenderOnce for HoverToolbar {
                 let action_id = action;
                 let action = action.to_string();
                 let icon = icon.to_string();
-                let hovered = window.use_keyed_state(
-                    SharedString::from(format!("toolbar-button-hover-{item_id}-{action_id}")),
-                    cx,
-                    |_, _| false,
-                );
+                let control: SharedString =
+                    format!("toolbar-button-hover-{item_id}-{action_id}").into();
+                let hovered = window.use_keyed_state(control.clone(), cx, |_, _| false);
+                let motion_control = control.clone();
                 let is_hovered = *hovered.read(cx);
                 let extend = keyed_transition(
                     window,
@@ -493,6 +492,9 @@ impl RenderOnce for HoverToolbar {
                     .border_color(if is_hovered { accent } else { pill_border })
                     .cursor(CursorStyle::PointingHand)
                     .on_hover(move |value, _window, cx| {
+                        if *value && !cx.reduce_motion() {
+                            super::icon_motion::trigger(&motion_control);
+                        }
                         hovered.update(cx, |hovered, cx| {
                             *hovered = *value;
                             cx.notify();
@@ -508,7 +510,7 @@ impl RenderOnce for HoverToolbar {
                         } else {
                             color_fn(false)
                         };
-                        widgets::icon(icon, sc(12.), Hsla::from(color))
+                        widgets::icon_moving(control, icon, sc(12.), Hsla::from(color))
                     })
                     .on_mouse_down(MouseButton::Left, {
                         let action = action.clone();

@@ -92,6 +92,8 @@ impl SettingsPanel {
     #[allow(clippy::too_many_arguments)]
     fn render_recording_card(
         title: I18nKey,
+        // 动效键的稳定前缀（与 i18n 文案无关，切换语言不会换 key）。
+        control: &'static str,
         hotkey_display: SharedString,
         recording: bool,
         pending_single: Option<String>,
@@ -264,8 +266,10 @@ impl SettingsPanel {
                     .when(!options.neutral_clear, |row| {
                         row.when_some(clear_btn, |d, clear| {
                             let danger = p.danger;
+                            let control: SharedString = format!("hotkey-clear:{control}").into();
                             d.child(
                                 div()
+                                    .relative()
                                     .w(px(22.))
                                     .h(px(28.))
                                     .rounded(Radius::Md.scaled())
@@ -279,7 +283,13 @@ impl SettingsPanel {
                                         cx.stop_propagation();
                                         clear(window, cx);
                                     })
-                                    .child(widgets::icon("CloseIcon", fs(9.), danger)),
+                                    .child(widgets::icon_moving(
+                                        control.clone(),
+                                        "CloseIcon",
+                                        fs(9.),
+                                        danger,
+                                    ))
+                                    .child(widgets::icon_probe(control, CursorStyle::PointingHand)),
                             )
                         })
                     }),
@@ -393,8 +403,10 @@ impl SettingsPanel {
                     .child(label),
             )
             .when_some(on_clear.filter(|_| has_hotkey), move |d, clr| {
+                let control: SharedString = format!("hotkey-latest-clear:{index}").into();
                 d.child(
                     div()
+                        .relative()
                         .w(px(22.))
                         .h(px(22.))
                         .rounded(Radius::Md.scaled())
@@ -411,7 +423,13 @@ impl SettingsPanel {
                                 clr(window, cx);
                             }
                         })
-                        .child(widgets::icon("CloseIcon", fs(9.), danger)),
+                        .child(widgets::icon_moving(
+                            control.clone(),
+                            "CloseIcon",
+                            fs(9.),
+                            danger,
+                        ))
+                        .child(widgets::icon_probe(control, CursorStyle::PointingHand)),
                 )
             })
     }
@@ -509,6 +527,7 @@ impl SettingsPanel {
                                 let close = panel_entity.clone();
                                 let close_text = p.ink_2;
                                 div()
+                                    .relative()
                                     .w(px(26.))
                                     .h(px(26.))
                                     .rounded(px(6.))
@@ -524,7 +543,16 @@ impl SettingsPanel {
                                             cx.notify();
                                         });
                                     })
-                                    .child(widgets::icon("CloseIcon", fs(13.), close_text))
+                                    .child(widgets::icon_moving(
+                                        "hotkey-popup-close",
+                                        "CloseIcon",
+                                        fs(13.),
+                                        close_text,
+                                    ))
+                                    .child(widgets::icon_probe(
+                                        "hotkey-popup-close",
+                                        CursorStyle::PointingHand,
+                                    ))
                             }),
                     )
                     .child(div().h(px(1.)).bg(p.stroke))
@@ -676,7 +704,7 @@ impl SettingsPanel {
         &mut self,
         takeover_active: bool,
         takeover_status: WinVTakeoverStatus,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let status_text = match takeover_status {
@@ -722,8 +750,6 @@ impl SettingsPanel {
                 I18nKey::WinVTakeoverLabel.text(),
                 status_text,
                 takeover_active,
-                window,
-                cx,
                 on_toggle,
             ))
             .when(show_recheck || show_manual, move |row| {
@@ -874,6 +900,7 @@ impl SettingsPanel {
             } else {
                 Self::render_recording_card(
                     I18nKey::HotkeyTabTitle,
+                    "hotkey-main",
                     main_hotkey_display.clone().into(),
                     recording,
                     pending_single.clone().filter(|_| recording),
@@ -901,6 +928,7 @@ impl SettingsPanel {
             {
                 Self::render_recording_card(
                     I18nKey::HotkeyTabTitle,
+                    "hotkey-main",
                     main_hotkey_display.clone().into(),
                     recording,
                     pending_single.clone().filter(|_| recording),
@@ -938,6 +966,7 @@ impl SettingsPanel {
                 move |parent: Div| {
                     parent.child(Self::render_recording_card(
                         I18nKey::QuickHotkeyLabel,
+                        "hotkey-quick",
                         quick_hotkey.into(),
                         quick_recording,
                         pending_single.filter(|_| quick_recording),
@@ -985,6 +1014,7 @@ impl SettingsPanel {
                 });
                 Self::render_recording_card(
                     I18nKey::HotkeyPastePlainLabel,
+                    "hotkey-paste-plain",
                     display,
                     recording_paste_plain,
                     pending_single.clone().filter(|_| recording_paste_plain),

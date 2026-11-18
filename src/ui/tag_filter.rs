@@ -262,6 +262,7 @@ impl Render for TagFilterPanel {
                     )
                     .child(div().flex_1())
                     .child(icon_btn(
+                        "tag-filter-mode",
                         "CombineIcon",
                         if tag_match_all { accent } else { text_2 },
                         btn_hover,
@@ -273,6 +274,7 @@ impl Render for TagFilterPanel {
                     ))
                     .when(has_tag_filter, |el| {
                         el.child(icon_btn(
+                            "tag-filter-clear",
                             "ClearIcon",
                             text_2,
                             btn_hover,
@@ -283,10 +285,17 @@ impl Render for TagFilterPanel {
                             },
                         ))
                     })
-                    .child(icon_btn("CloseIcon", text_2, btn_hover, None, {
-                        let this = this.clone();
-                        move |_, cx| this.update(cx, |panel, cx| panel.close(cx))
-                    }))
+                    .child(icon_btn(
+                        "tag-filter-close",
+                        "CloseIcon",
+                        text_2,
+                        btn_hover,
+                        None,
+                        {
+                            let this = this.clone();
+                            move |_, cx| this.update(cx, |panel, cx| panel.close(cx))
+                        },
+                    ))
             })
             .child(div().h(px(1.)).w_full().bg(sep_line))
             // --- Create tag row (real Input) ---
@@ -441,6 +450,9 @@ impl Render for TagFilterPanel {
                                                             }
                                                         })
                                                         .child(small_btn(
+                                                            SharedString::from(format!(
+                                                                "tag-cell:{tag_id}:edit"
+                                                            )),
                                                             "EditIcon",
                                                             text_3,
                                                             false,
@@ -483,6 +495,9 @@ impl Render for TagFilterPanel {
                                                             },
                                                         ))
                                                         .child(small_btn(
+                                                            SharedString::from(format!(
+                                                                "tag-cell:{tag_id}:delete"
+                                                            )),
                                                             "DeleteIcon",
                                                             text_3,
                                                             true,
@@ -775,6 +790,7 @@ pub fn render_edit_panel(
 // --- Helpers ---
 
 fn icon_btn(
+    control: &'static str,
     icon: &'static str,
     color: Rgba,
     hover_bg: Rgba,
@@ -782,9 +798,10 @@ fn icon_btn(
     handler: impl Fn(&mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
     div()
-        .id(icon)
+        .id(control)
         .role(Role::Button)
         .tab_stop(true)
+        .relative()
         .w(px(22.))
         .h(px(22.))
         .rounded(Radius::Md.scaled())
@@ -798,11 +815,13 @@ fn icon_btn(
                 .aria_label(tip)
                 .tooltip(move |window, cx| widgets::tooltip(tip, window, cx))
         })
-        .child(widgets::icon(
+        .child(widgets::icon_moving(
+            control,
             icon,
             typography::font(type_role::BODY),
             Hsla::from(color),
         ))
+        .child(widgets::icon_probe(control, CursorStyle::PointingHand))
         .on_mouse_down(MouseButton::Left, move |_e, w, cx| {
             cx.stop_propagation();
             handler(w, cx);
@@ -810,6 +829,7 @@ fn icon_btn(
 }
 
 fn small_btn(
+    control: SharedString,
     icon: &'static str,
     color: Rgba,
     danger: bool,
@@ -817,9 +837,23 @@ fn small_btn(
     danger_hover_bg: Rgba,
     handler: impl Fn(&mut Window, &mut App) + 'static,
 ) -> Div {
-    small_btn_visual(icon, color)
+    div()
+        .relative()
+        .w(px(18.))
+        .h(px(18.))
+        .rounded(px(4.))
+        .flex()
+        .items_center()
+        .justify_center()
         .cursor(CursorStyle::PointingHand)
         .hover(move |style| style.bg(if danger { danger_hover_bg } else { hover_bg }))
+        .child(widgets::icon_moving(
+            control.clone(),
+            icon,
+            typography::font(type_role::BODY),
+            Hsla::from(color),
+        ))
+        .child(widgets::icon_probe(control, CursorStyle::PointingHand))
         .on_mouse_down(MouseButton::Left, move |_e, w, cx| {
             cx.stop_propagation();
             handler(w, cx);

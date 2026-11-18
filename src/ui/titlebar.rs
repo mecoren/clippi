@@ -23,6 +23,8 @@ fn titlebar_button(id: &'static str, p: &Palette) -> Stateful<Div> {
         .id(id)
         .role(Role::Button)
         .tab_stop(true)
+        // 图标动效探针覆盖整枚按钮，宿主必须 relative。
+        .relative()
         .size(Ctrl::Input.scaled())
         .rounded(Radius::Md.scaled())
         .flex()
@@ -277,10 +279,15 @@ impl Render for Titlebar {
                                                 cx.emit(TitlebarEvent::ToggleEmoji)
                                             });
                                         })
-                                        .child(widgets::icon(
+                                        .child(widgets::icon_moving(
+                                            "titlebar-emoji",
                                             "FaceSmileIcon",
                                             IconSize::Md.scaled(),
                                             if emoji_active { accent } else { text_2 },
+                                        ))
+                                        .child(widgets::icon_probe(
+                                            "titlebar-emoji",
+                                            CursorStyle::PointingHand,
                                         )),
                                 )
                                 .when(
@@ -325,10 +332,15 @@ impl Render for Titlebar {
                                                     .update(cx, |_titlebar, cx| cx.notify());
                                             },
                                         )
-                                        .child(widgets::icon(
+                                        .child(widgets::icon_moving(
+                                            "titlebar-hotkeys-filter",
                                             "KeyboardIcon",
                                             IconSize::Md.scaled(),
                                             if hotkeys_active { accent } else { text_2 },
+                                        ))
+                                        .child(widgets::icon_probe(
+                                            "titlebar-hotkeys-filter",
+                                            CursorStyle::PointingHand,
                                         )),
                                 )
                                 .when(
@@ -367,10 +379,15 @@ impl Render for Titlebar {
                                                 });
                                             },
                                         )
-                                        .child(widgets::icon(
+                                        .child(widgets::icon_moving(
+                                            "titlebar-transfer-filter",
                                             "CloudIcon",
                                             IconSize::Md.scaled(),
                                             if transfer_active { accent } else { text_2 },
+                                        ))
+                                        .child(widgets::icon_probe(
+                                            "titlebar-transfer-filter",
+                                            CursorStyle::PointingHand,
                                         )),
                                 )
                                 .when(
@@ -415,10 +432,15 @@ impl Render for Titlebar {
                                                     .update(cx, |_titlebar, cx| cx.notify());
                                             },
                                         )
-                                        .child(widgets::icon(
+                                        .child(widgets::icon_moving(
+                                            "titlebar-favorites-filter",
                                             "StarIcon",
                                             IconSize::Md.scaled(),
                                             if fav_active { fav_color } else { text_2 },
+                                        ))
+                                        .child(widgets::icon_probe(
+                                            "titlebar-favorites-filter",
+                                            CursorStyle::PointingHand,
                                         )),
                                 )
                                 .when(
@@ -454,10 +476,15 @@ impl Render for Titlebar {
                                     cx.emit(TitlebarEvent::TogglePin);
                                 });
                             })
-                            .child(widgets::icon(
+                            .child(widgets::icon_moving(
+                                "titlebar-pin",
                                 "PinIcon",
                                 IconSize::Md.scaled(),
                                 if pinned { accent } else { text_2 },
+                            ))
+                            .child(widgets::icon_probe(
+                                "titlebar-pin",
+                                CursorStyle::PointingHand,
                             )),
                     )
                     // --- Settings button (28x28) ---
@@ -472,7 +499,16 @@ impl Render for Titlebar {
                                     cx.emit(TitlebarEvent::OpenSettings);
                                 });
                             })
-                            .child(widgets::icon("SettingsIcon", IconSize::Md.scaled(), text_2)),
+                            .child(widgets::icon_moving(
+                                "titlebar-settings",
+                                "SettingsIcon",
+                                IconSize::Md.scaled(),
+                                text_2,
+                            ))
+                            .child(widgets::icon_probe(
+                                "titlebar-settings",
+                                CursorStyle::PointingHand,
+                            )),
                     ),
             )
     }

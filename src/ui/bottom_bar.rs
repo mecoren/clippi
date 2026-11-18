@@ -140,6 +140,7 @@ impl RenderOnce for BottomBar {
                                 .role(Role::Button)
                                 .tab_stop(true)
                                 .aria_label(tooltip_label)
+                                .relative()
                                 .size(Ctrl::Chip.scaled())
                                 .rounded(Radius::Sm.scaled())
                                 .flex()
@@ -158,10 +159,15 @@ impl RenderOnce for BottomBar {
                                         settings.update(cx, |_panel, cx| cx.emit(SettingsEvent::ShowHotkeyConfirm(hotkey::HotkeyConfirmAction::AddClipboardBlacklist { app_name: fg.clone() })));
                                     }
                                 })
-                                .child(widgets::icon(
+                                .child(widgets::icon_moving(
+                                    "bottom-clipboard-blacklist",
                                     "ClipboardBlockIcon",
                                     IconSize::Sm.scaled(),
                                     base_color,
+                                ))
+                                .child(widgets::icon_probe(
+                                    "bottom-clipboard-blacklist",
+                                    CursorStyle::PointingHand,
                                 ))
                         })
                         .child({
@@ -173,6 +179,7 @@ impl RenderOnce for BottomBar {
                                 .role(Role::Button)
                                 .tab_stop(true)
                                 .aria_label(I18nKey::BottomBarHotkeyBlacklist.text())
+                                .relative()
                                 .size(Ctrl::Chip.scaled())
                                 .rounded(Radius::Sm.scaled())
                                 .flex()
@@ -195,7 +202,16 @@ impl RenderOnce for BottomBar {
                                         settings.update(cx, |_panel, cx| cx.emit(SettingsEvent::ShowHotkeyConfirm(hotkey::HotkeyConfirmAction::AddBlacklist { app_name: fg.clone() })));
                                     }
                                 })
-                                .child(widgets::icon("BanIcon", IconSize::Sm.scaled(), p.ink_3))
+                                .child(widgets::icon_moving(
+                                    "bottom-hotkey-blacklist",
+                                    "BanIcon",
+                                    IconSize::Sm.scaled(),
+                                    p.ink_3,
+                                ))
+                                .child(widgets::icon_probe(
+                                    "bottom-hotkey-blacklist",
+                                    CursorStyle::PointingHand,
+                                ))
                         })
                 )
             })

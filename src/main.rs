@@ -386,6 +386,10 @@ fn main() {
         ui::font::set_family(&settings.font_family);
         ui::font::apply_to_global_theme(cx);
 
+        // 「动画」设置：界面动效映射到 reduce_motion，窗口动效写入平台层。
+        // 必须在 `gpui_kit::init` 之后，否则组件动画会先用系统默认值。
+        ui::motion_pref::apply(&settings, cx);
+
         // Calculate initial position (physical pixels) and size (logical pixels)
         // before the settings are moved into AppState.
         let initial_phys_pos = core::frontend::calculate_initial_position(&settings);

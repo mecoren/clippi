@@ -1055,6 +1055,7 @@ fn icon_button(
         .id(id)
         .role(Role::Button)
         .tab_stop(true)
+        .relative()
         .w(Ctrl::Chip.scaled())
         .h(Ctrl::Chip.scaled())
         .rounded(Radius::Sm.scaled())
@@ -1071,12 +1072,14 @@ fn icon_button(
         .on_mouse_down(MouseButton::Left, move |_ev, window, cx| {
             handler(window, cx)
         })
-        .child(widgets::icon_hover(
+        .child(widgets::icon_moving_hover(
+            id,
             icon,
             IconSize::Md.scaled(),
             Hsla::from(normal),
             Hsla::from(hover),
         ))
+        .child(widgets::icon_probe(id, CursorStyle::PointingHand))
 }
 
 /// 查找栏里的输入框：和编辑器的输入框同一套写法，外面套一层带边框的壳。

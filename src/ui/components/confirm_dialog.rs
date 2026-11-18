@@ -348,7 +348,10 @@ impl ConfirmDialog {
                             options.into_iter().map(|option| {
                                 let on_toggle = option.on_toggle.clone();
                                 let hover_bg = theme.btn_hover;
+                                let control: SharedString =
+                                    format!("confirm-option:{}", option.label).into();
                                 div()
+                                    .relative()
                                     .flex()
                                     .items_center()
                                     .gap(px(8.))
@@ -359,7 +362,8 @@ impl ConfirmDialog {
                                         cx.stop_propagation();
                                         on_toggle(window, cx);
                                     })
-                                    .child(widgets::icon(
+                                    .child(widgets::icon_moving(
+                                        control.clone(),
                                         if option.selected {
                                             "CircleCheckIcon"
                                         } else {
@@ -372,6 +376,7 @@ impl ConfirmDialog {
                                             theme.text_3
                                         }),
                                     ))
+                                    .child(widgets::icon_probe(control, CursorStyle::PointingHand))
                                     .child(
                                         div()
                                             .text_size(fs(12.))

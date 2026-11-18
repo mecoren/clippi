@@ -177,13 +177,21 @@ impl RenderOnce for TagPickerPanel {
                     )
                     .child(div().flex_1())
                     .child(icon_button(
+                        "tag-picker-clear",
                         "ClearIcon",
                         text_2,
                         btn_hover,
                         Some(I18nKey::TagTooltipClear.text()),
                         on_clear,
                     ))
-                    .child(icon_button("CloseIcon", text_2, btn_hover, None, on_close)),
+                    .child(icon_button(
+                        "tag-picker-close",
+                        "CloseIcon",
+                        text_2,
+                        btn_hover,
+                        None,
+                        on_close,
+                    )),
             )
             .child(div().h(px(1.)).w_full().bg(sep_line))
             // --- Create tag row ---
@@ -401,6 +409,7 @@ impl RenderOnce for TagPickerPanel {
 }
 
 fn icon_button(
+    control: &'static str,
     icon: &'static str,
     color: Rgba,
     hover_bg: Rgba,
@@ -409,9 +418,10 @@ fn icon_button(
 ) -> Stateful<Div> {
     let enabled = handler.is_some();
     let button = div()
-        .id(icon)
+        .id(control)
         .role(Role::Button)
         .tab_stop(enabled)
+        .relative()
         .w(px(22.))
         .h(px(22.))
         .rounded(Radius::Md.scaled())
@@ -425,11 +435,13 @@ fn icon_button(
                 .aria_label(tip)
                 .tooltip(move |window, cx| widgets::tooltip(tip, window, cx))
         })
-        .child(widgets::icon(
+        .child(widgets::icon_moving(
+            control,
             icon,
             typography::font(type_role::BODY),
             Hsla::from(color),
-        ));
+        ))
+        .child(widgets::icon_probe(control, CursorStyle::PointingHand));
 
     if let Some(handler) = handler {
         button.on_mouse_down(MouseButton::Left, move |_ev, window, cx| {

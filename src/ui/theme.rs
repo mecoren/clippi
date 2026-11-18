@@ -205,7 +205,7 @@ mod tests {
         let light = ClippiTheme::light();
         assert!((light.accent_highlight().a - 0x4d as f32 / 255.0).abs() < 1e-6);
         for mut theme in [ClippiTheme::light(), ClippiTheme::dark()] {
-            theme.accent = gpui::rgb(0x0067c0);
+            theme.accent = gpui::rgb(0x3482ff);
             let overlay = theme.accent_overlay();
             let highlight = theme.accent_highlight();
             assert_eq!(

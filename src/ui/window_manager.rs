@@ -383,6 +383,15 @@ pub enum WindowManagerEvent {
     },
     /// Window was hidden — RootView should dismiss all floating panels.
     WindowHidden,
+    /// The panel is about to hide: fade its content out. The real hide follows
+    /// when the fade has run its course.
+    WindowHiding,
+    /// The panel was shown (or a pending hide was cancelled): fade it back in.
+    /// `fresh` is true for a real show (start from transparent) and false when
+    /// an in-flight hide was cancelled (fade from the current opacity).
+    WindowShown {
+        fresh: bool,
+    },
     /// Memory release requested — subscribers must synchronously drop their
     /// live objects (list items, image caches) before the allocator pressure
     /// relief runs in the next app update.
@@ -489,6 +498,12 @@ pub struct WindowManager {
     auto_hide: bool,
     visible: bool,
     suppress_until: Option<Instant>,
+    /// A hide waiting for the panel's fade-out to finish. Until it clears, the
+    /// window stays visible (so the visibility guard and hotkey toggle see a
+    /// consistent state) and further hide requests are ignored.
+    closing_started: Option<Instant>,
+    /// Keeps the deferred-hide task alive (dropping a `Task` cancels it).
+    _close_task: Option<Task<()>>,
     native_dialogs: Rc<NativeDialogState>,
 
     // --- Platform resources ---
@@ -818,6 +833,8 @@ impl WindowManager {
             _poll_task: None,
             _main_show_task: None,
             main_show_pending: false,
+            closing_started: None,
+            _close_task: None,
             _quick_poll_task: None,
             #[cfg(target_os = "windows")]
             _quick_position_task: None,
@@ -1745,6 +1762,11 @@ impl WindowManager {
 
     /// Apply the summed `Main` intent of one poll tick.
     fn apply_main_toggle(&mut self, cx: &mut Context<Self>) {
+        // 淡出途中又按了呼出键：视为反悔，取消隐藏并把面板淡回来。
+        if self.closing_started.is_some() {
+            self.show_and_focus(cx);
+            return;
+        }
         if self.visible {
             // A show that has not reached the screen yet must never be toggled
             // off: `hide()` cancels `_main_show_task`, so the panel would never
@@ -3382,6 +3404,11 @@ impl WindowManager {
     /// period and brings the window to foreground — it skips repositioning
     /// and item reload to avoid disrupting the current view.
     pub fn show_and_focus(&mut self, cx: &mut Context<Self>) {
+        // 淡出途中被重新呼出：取消待执行的隐藏，让面板透明度回到 1。
+        if self.closing_started.take().is_some() {
+            self._close_task = None;
+            cx.emit(WindowManagerEvent::WindowShown { fresh: false });
+        }
         #[cfg(target_os = "windows")]
         if !self.visible {
             crate::platform::focus_restore::capture();
@@ -3401,6 +3428,11 @@ impl WindowManager {
 
         let was_already_visible = self.visible;
         self.visible = true;
+        // 真实呼出：在 ShowWindow 之前就让视图把面板置为全透明，第一帧
+        // 起就参与淡入，不会先闪一帧不透明内容。
+        if !was_already_visible {
+            cx.emit(WindowManagerEvent::WindowShown { fresh: true });
+        }
         // A fresh summon starts a fresh focus-loss count.
         self.main_focus_lost_ticks = 0;
         self.main_foreground_since_show = false;
@@ -4127,10 +4159,55 @@ impl WindowManager {
 
     /// Hide the window and record why.
     ///
-    /// The reason is diagnostic only — it never changes behaviour. Every hide
-    /// runs a synchronous WAL checkpoint and a settings write, so a slow hide is
-    /// itself worth seeing in a user's log.
+    /// With the window-transition preference on, this first asks the panel to
+    /// fade out and defers the real hide by [`crate::platform::window_motion::fade_out`];
+    /// `quick_switch` stays synchronous because the quick window takes over at
+    /// once. Every hide runs a synchronous WAL checkpoint and a settings write,
+    /// so a slow hide is itself worth seeing in a user's log.
     pub fn hide_with_reason(&mut self, reason: &str, cx: &mut Context<Self>) {
+        // 已经在淡出：后来的隐藏请求不重复触发，也不打断当前淡出。快速粘贴
+        // 窗接管时必须立即让位——主窗与快速窗不允许同时可见。
+        if self.closing_started.is_some() {
+            if reason == "quick_switch" {
+                self.closing_started = None;
+                self._close_task = None;
+                self.hide_now("quick_switch", cx);
+            }
+            return;
+        }
+        // 快速粘贴窗接管时保持同步隐藏；窗口本就不可见时也没有可淡出的内容。
+        // 呼出任务还在途时同样不做淡出：取消呼出会在屏幕外放一次透明度动画。
+        let can_fade = reason != "quick_switch"
+            && self.visible
+            && !self.main_show_pending
+            && crate::platform::window_motion::enabled();
+        if !can_fade {
+            self.hide_now(reason, cx);
+            return;
+        }
+        self.closing_started = Some(Instant::now());
+        log::info!("wm hide fade begin reason={reason}");
+        cx.emit(WindowManagerEvent::WindowHiding);
+        let reason = reason.to_owned();
+        let wait = crate::platform::window_motion::fade_out();
+        self._close_task = Some(cx.spawn(async move |weak_self, cx| {
+            cx.background_executor().timer(wait).await;
+            let Some(this) = weak_self.upgrade() else {
+                return;
+            };
+            this.update(cx, |wm, cx| {
+                // A show during the fade cleared the flag and cancelled this
+                // task; only a still-pending hide reaches the real one.
+                if wm.closing_started.take().is_some() {
+                    wm.hide_now(&reason, cx);
+                }
+            });
+        }));
+    }
+
+    /// The real hide: everything `hide_with_reason` used to do in one go.
+    fn hide_now(&mut self, reason: &str, cx: &mut Context<Self>) {
+        self.closing_started = None;
         #[cfg(target_os = "windows")]
         crate::platform::focus_restore::clear();
         let started = Instant::now();

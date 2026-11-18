@@ -130,6 +130,15 @@ pub struct AppSettings {
     /// Latin-only font on Chinese text) fall back via the platform chain.
     #[serde(default)]
     pub font_family: String,
+    /// 界面动画：`None` 跟随系统的「动画效果」，`Some(false)` 关闭全部界面动效。
+    /// 关闭时映射到 `App::set_reduce_motion(true)`，所有经 `design::motion`
+    /// 与 gpui-kit motion 的过渡即时落定。
+    #[serde(default)]
+    pub ui_motion: Option<bool>,
+    /// 窗口过渡动画：`None` 跟随系统的「动画效果」，`Some(false)` 关闭主窗口
+    /// 显示/隐藏时的淡入淡出；快捷粘贴窗与标签侧栏始终瞬时。
+    #[serde(default)]
+    pub window_motion: Option<bool>,
     #[serde(default)]
     pub silent_start: bool,
     #[serde(default)]
@@ -383,6 +392,8 @@ impl Default for AppSettings {
             font_size_level: default_font_size_level(),
             font_size_scale: None,
             font_family: String::new(),
+            ui_motion: None,
+            window_motion: None,
             silent_start: true,
             show_source_app: false,
             auto_scroll_to_top: false,
@@ -1693,6 +1704,28 @@ mod tests {
         let saved = toml::to_string(&changed).unwrap();
         let restored: AppSettings = toml::from_str(&saved).unwrap();
         assert!(!restored.alt_shortcuts_enabled);
+    }
+
+    #[test]
+    fn motion_preferences_default_to_follow_system_and_round_trip() {
+        // 旧配置没有这两个键时必须解析为「跟随系统」（None），而不是关闭。
+        let mut value = toml::Value::try_from(AppSettings::default()).unwrap();
+        let table = value.as_table_mut().unwrap();
+        table.remove("ui_motion");
+        table.remove("window_motion");
+        let loaded: AppSettings = value.try_into().unwrap();
+        assert_eq!(loaded.ui_motion, None);
+        assert_eq!(loaded.window_motion, None);
+
+        let changed = AppSettings {
+            ui_motion: Some(false),
+            window_motion: Some(true),
+            ..loaded
+        };
+        let saved = toml::to_string(&changed).unwrap();
+        let restored: AppSettings = toml::from_str(&saved).unwrap();
+        assert_eq!(restored.ui_motion, Some(false));
+        assert_eq!(restored.window_motion, Some(true));
     }
 
     fn bk(id: &str, name: &str) -> BackendConfig {

@@ -239,6 +239,7 @@ impl Render for TypeFilterConfigPanel {
                     )
                     .child(
                         div()
+                            .relative()
                             .w(px(22.))
                             .h(px(22.))
                             .rounded(px(4.))
@@ -251,7 +252,16 @@ impl Render for TypeFilterConfigPanel {
                                 cx.stop_propagation();
                                 this.update(cx, |panel, cx| panel.close(cx));
                             })
-                            .child(widgets::icon("CloseIcon", fs(14.), Hsla::from(text_2))),
+                            .child(widgets::icon_moving(
+                                "type-filter-config-close",
+                                "CloseIcon",
+                                fs(14.),
+                                Hsla::from(text_2),
+                            ))
+                            .child(widgets::icon_probe(
+                                "type-filter-config-close",
+                                CursorStyle::PointingHand,
+                            )),
                     )
             })
             // --- Separator ---
@@ -390,45 +400,70 @@ impl Render for TypeFilterConfigPanel {
 /// Passive row visuals shared with the drag preview; interaction stays on the live row.
 fn filter_row(key: &str, visible: bool, p: &Palette) -> Div {
     let (icon, label) = filter_type_display(key).unwrap_or(("TextIcon", key.to_string()));
-    selectable_type_row(icon, label, visible, p)
+    selectable_type_row(
+        icon,
+        label,
+        visible,
+        p,
+        Some(SharedString::from(format!("type-filter-{key}"))),
+    )
 }
 
 /// Shared visuals for type choices; callers supply interaction.
-pub(crate) fn selectable_type_row(icon: &str, label: String, visible: bool, p: &Palette) -> Div {
-    div()
+///
+/// `control` 是行内勾选图标的动效键：只有真正可点的活行传入，拖拽预览等
+/// 被动副本传 `None`，保持静止。类型图标属于内容标记，不参与动效。
+pub(crate) fn selectable_type_row(
+    icon: &str,
+    label: String,
+    visible: bool,
+    p: &Palette,
+    control: Option<SharedString>,
+) -> Div {
+    let check_name = if visible {
+        "CircleCheckIcon"
+    } else {
+        "CircleIcon"
+    };
+    let check_size = typography::font(type_role::BODY);
+    let check_color = if visible { p.accent } else { p.ink_3 };
+    let row = div()
         .w_full()
         .flex()
         .flex_row()
         .items_center()
         .h(px(ROW_HEIGHT))
         .px(Space::Xs.scaled())
-        .rounded(Radius::Sm.scaled())
-        .child(widgets::icon(
-            if visible {
-                "CircleCheckIcon"
-            } else {
-                "CircleIcon"
-            },
+        .rounded(Radius::Sm.scaled());
+    let row = match control {
+        Some(control) => row
+            .relative()
+            .child(widgets::icon_moving(
+                control.clone(),
+                check_name,
+                check_size,
+                check_color,
+            ))
+            .child(widgets::icon_probe(control, CursorStyle::PointingHand)),
+        None => row.child(widgets::icon(check_name, check_size, check_color)),
+    };
+    row.when(!icon.is_empty(), |row| {
+        row.child(div().ml(Space::Sm.scaled()).child(widgets::icon(
+            icon.to_string(),
             typography::font(type_role::BODY),
-            if visible { p.accent } else { p.ink_3 },
-        ))
-        .when(!icon.is_empty(), |row| {
-            row.child(div().ml(Space::Sm.scaled()).child(widgets::icon(
-                icon.to_string(),
-                typography::font(type_role::BODY),
-                if visible { p.ink_2 } else { p.ink_3 },
-            )))
-        })
-        .child(
-            div()
-                .ml(Space::Sm.scaled())
-                .text_size(typography::font(type_role::BODY))
-                .flex_1()
-                .text_color(if visible {
-                    Rgba::from(p.ink)
-                } else {
-                    Rgba::from(p.ink_3)
-                })
-                .child(label),
-        )
+            if visible { p.ink_2 } else { p.ink_3 },
+        )))
+    })
+    .child(
+        div()
+            .ml(Space::Sm.scaled())
+            .text_size(typography::font(type_role::BODY))
+            .flex_1()
+            .text_color(if visible {
+                Rgba::from(p.ink)
+            } else {
+                Rgba::from(p.ink_3)
+            })
+            .child(label),
+    )
 }

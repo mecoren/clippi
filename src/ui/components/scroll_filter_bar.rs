@@ -76,7 +76,9 @@ pub(crate) fn scroll_filter_bar(
         } else {
             I18nKey::SourceAppScrollEnd.text()
         };
+        let control: SharedString = format!("{id}:arrow:{}", if left { 0 } else { 1 }).into();
         filter_chip((id, if left { 0usize } else { 1usize }), false, &p)
+            .relative()
             .flex_none()
             // flex_none does not reset the zero basis inherited from filter_chip.
             .flex_basis(px(width))
@@ -100,7 +102,8 @@ pub(crate) fn scroll_filter_bar(
                     cx.notify(owner);
                 }
             })
-            .child(widgets::icon(
+            .child(widgets::icon_moving(
+                control.clone(),
                 if left {
                     "ChevronLeftIcon"
                 } else {
@@ -109,6 +112,7 @@ pub(crate) fn scroll_filter_bar(
                 fs(12.),
                 p.ink_2,
             ))
+            .child(widgets::icon_probe(control, CursorStyle::PointingHand))
     };
     let wheel_scroll = scroll.clone();
     let stride = layout.chip_width + layout.chip_gap;

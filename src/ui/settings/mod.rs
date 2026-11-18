@@ -2,8 +2,8 @@
 //!
 //! --- Matches the original Slint `SettingsPanel.slint` layout: ---
 //! --- - Top navigation bar: back button (→ icon) + "Settings" title (36px) ---
-//! --- - Tab bar: 5 equal-width tabs (General/Clipboard/Hotkey/Data/Sync) ---
-//!   with accent-green underline for active tab
+//! --- - Tab bar: 6 equal-width segmented tabs (General/Clipboard/Hotkey/Data/ ---
+//!   Sync/About) sharing the available width, with a sliding selection block
 //! --- - Scrollable content area routed by active tab index ---
 //!
 //! --- Individual settings controls will be added in follow-up work. ---
@@ -38,6 +38,8 @@ use crate::ui::components::confirm_dialog::ConfirmDialog;
 use crate::ui::components::slider::{
     SliderDetent, SliderDragState, SteppedSlider, SteppedSliderColors,
 };
+use crate::ui::components::wait_switch::WaitToggleSwitch;
+use crate::ui::components::wait_tabs::WaitTabs;
 use crate::ui::design::motion;
 use crate::ui::design::palette::Palette;
 use crate::ui::design::size::{Ctrl, IconSize, Radius, Space};
@@ -570,6 +572,7 @@ impl Render for SettingsPanel {
                     // --- Back button (28x28, Lucide) ---
                     .child(
                         div()
+                            .relative()
                             .w(px(28.))
                             .h(px(28.))
                             .flex()
@@ -590,7 +593,16 @@ impl Render for SettingsPanel {
                                     });
                                 }
                             })
-                            .child(widgets::icon("BackIcon", fs(16.), Hsla::from(theme.text_2))),
+                            .child(widgets::icon_moving(
+                                "settings-back",
+                                "BackIcon",
+                                fs(16.),
+                                Hsla::from(theme.text_2),
+                            ))
+                            .child(widgets::icon_probe(
+                                "settings-back",
+                                CursorStyle::PointingHand,
+                            )),
                     )
                     // --- Title（TITLE 档 16px，700 weight，text_1） ---
                     .child(
@@ -605,66 +617,25 @@ impl Render for SettingsPanel {
                             }),
                     ),
             )
-            //  Tab bar (height 36px, mt 8px matching Slint spacing). Hidden on
-            //  the changelog sub-page, which owns the panel below the title.
+            //  Tab bar：分段 Tab 组件（Orbit 移动端语言），6 个 Tab 等分可用
+            //  宽度，选中块随切换滑移。changelog 子页不显示。
             .when(!changelog_open, |el| {
+                let this = this.clone();
                 el.child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .h(px(36.))
-                        .px(px(8.))
-                        .mt(px(2.))
-                        .border_b(px(1.))
-                        .border_color(theme.divider)
-                        .children(tab_names().iter().enumerate().map(|(i, name)| {
-                            let is_active = i == active;
-                            let tab_color = if is_active {
-                                theme.accent
-                            } else {
-                                theme.text_2
-                            };
-                            let underline_bg = if is_active {
-                                theme.accent
-                            } else {
-                                Rgba::from(Hsla::transparent_black())
-                            };
-                            let this = this.clone();
-
-                            div()
-                                .flex_1()
-                                .min_w(px(0.))
-                                .h_full()
-                                .flex()
-                                .flex_col()
-                                .items_center()
-                                .justify_center()
-                                .cursor(CursorStyle::PointingHand)
-                                .on_mouse_down(MouseButton::Left, move |_ev, _window, cx| {
-                                    this.update(cx, |panel, cx| {
-                                        panel.set_active_tab(i);
-                                        panel.close_app_list_popups();
-                                        panel.latest_hotkeys_popup_open = false;
-                                        panel.font_picker_open = false;
-                                        cx.emit(SettingsEvent::TabChanged(i));
-                                        cx.notify();
-                                    });
-                                })
-                                // --- Tab label ---
-                                .child(
-                                    div()
-                                        .text_size(fs(12.))
-                                        .font_weight(if is_active {
-                                            FontWeight::BOLD
-                                        } else {
-                                            FontWeight::default()
-                                        })
-                                        .text_color(tab_color)
-                                        .child(*name),
-                                )
-                                // --- Active underline indicator (2px) ---
-                                .child(div().w_full().h(px(2.)).mt(px(4.)).bg(underline_bg))
-                        })),
+                    div().px(px(8.)).mt(px(6.)).child(
+                        WaitTabs::new("settings-tabs", tab_names())
+                            .selected(active)
+                            .on_select(move |index, _window, cx| {
+                                this.update(cx, |panel, cx| {
+                                    panel.set_active_tab(index);
+                                    panel.close_app_list_popups();
+                                    panel.latest_hotkeys_popup_open = false;
+                                    panel.font_picker_open = false;
+                                    cx.emit(SettingsEvent::TabChanged(index));
+                                    cx.notify();
+                                });
+                            }),
+                    ),
                 )
             })
             // --- Tab content (fills remaining space, scrollable) ---
@@ -828,7 +799,9 @@ impl SettingsPanel {
     ) -> impl IntoElement {
         let p = self.palette;
         let on_click = Rc::new(on_click);
+        let control: SharedString = format!("settings-opener:{label}").into();
         self.row_shell()
+            .relative()
             .cursor(CursorStyle::PointingHand)
             .hover(move |style| style.bg(p.hover))
             .on_mouse_down(MouseButton::Left, move |_ev, window, cx| {
@@ -836,11 +809,13 @@ impl SettingsPanel {
                 on_click(window, cx);
             })
             .child(self.row_text(label, desc))
-            .child(widgets::icon(
+            .child(widgets::icon_moving(
+                control.clone(),
                 "ChevronDownIcon",
                 IconSize::Sm.scaled(),
                 p.ink_2,
             ))
+            .child(widgets::icon_probe(control, CursorStyle::PointingHand))
     }
 
     /// Render a settings row with an animated toggle switch on the right.
@@ -852,13 +827,13 @@ impl SettingsPanel {
         label: &str,
         desc: &str,
         value: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
         on_toggle: impl Fn(&mut Window, &mut App) + 'static,
     ) -> impl IntoElement {
         let p = self.palette;
         // 开关的滑动动画由 gpui-kit 的 motion 持有，id 用行标题保证唯一。
-        let control = widgets::toggle(&p, label, label, value, false, on_toggle, window, cx);
+        let control = WaitToggleSwitch::new(label, label)
+            .value(value)
+            .on_change(on_toggle);
         widgets::settings_row(&p, label, desc, control)
     }
 
@@ -874,7 +849,7 @@ impl SettingsPanel {
         desc_on: I18nKey,
         desc_off: I18nKey,
         value: bool,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
         on_changed: impl Fn(&Entity<AppState>, &Entity<SettingsPanel>, &mut Window, &mut App) + 'static,
     ) -> impl IntoElement {
@@ -885,7 +860,7 @@ impl SettingsPanel {
         } else {
             desc_off.text()
         };
-        self.setting_row_with_toggle(label.text(), desc, value, window, cx, move |window, app| {
+        self.setting_row_with_toggle(label.text(), desc, value, move |window, app| {
             on_changed(&state, &this, window, app);
             this.update(app, |_panel, cx| cx.notify());
         })
@@ -958,6 +933,55 @@ impl SettingsPanel {
             )
     }
 
+    /// 选择型设置行：页脚是 [`WaitTabs`]（灰轨道 + 白色抬起块），切换时
+    /// 选中块 250 ms 滑到新选项。
+    ///
+    /// 只用于「互斥选择」的行；本地备份这类动作按钮仍用
+    /// [`Self::setting_row_with_options`]。
+    #[allow(clippy::too_many_arguments)]
+    fn setting_row_with_tabs(
+        &self,
+        label: &str,
+        desc: &str,
+        id: impl Into<SharedString>,
+        options: &[(&'static str, &'static str)],
+        active_key: &str,
+        on_select: impl Fn(&'static str, &mut Window, &mut App) + 'static,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> impl IntoElement {
+        let p = self.palette;
+        let on_select = Rc::new(on_select);
+        let keys: Vec<&'static str> = options.iter().map(|(key, _)| *key).collect();
+        let labels: Vec<SharedString> = options
+            .iter()
+            .map(|(_, display_label)| SharedString::from(*display_label))
+            .collect();
+        let selected = options
+            .iter()
+            .position(|(key, _)| *key == active_key)
+            .unwrap_or(0);
+        let tabs =
+            WaitTabs::new(id, labels)
+                .selected(selected)
+                .on_select(move |index, window, cx| {
+                    if let Some(key) = keys.get(index) {
+                        on_select(key, window, cx);
+                    }
+                });
+        div()
+            .flex()
+            .flex_col()
+            .child(self.row_header(label, desc))
+            .child(div().h(px(1.)).bg(p.stroke))
+            .child(
+                div()
+                    .px(Space::Sm.scaled())
+                    .py(Space::Sm.scaled())
+                    .child(tabs),
+            )
+    }
+
     /// The layered palette every slider in the settings shares: track < fill <
     /// ticks < knob, derived from the theme accent so it adapts to light/dark.
     pub(crate) fn slider_colors(&self) -> SteppedSliderColors {
@@ -1024,11 +1048,13 @@ impl SettingsPanel {
         let p = self.palette;
         let on_click = Rc::new(on_click);
 
+        let control: SharedString = format!("settings-value:{label}").into();
         widgets::row_shell()
             .child(widgets::row_text(&p, label, desc))
             // --- Right: current value + caret (never compresses, never overlaps) ---
             .child(
                 div()
+                    .relative()
                     .flex()
                     .flex_shrink_0()
                     .flex_row()
@@ -1054,11 +1080,13 @@ impl SettingsPanel {
                             .text_color(p.ink_2)
                             .child(value),
                     )
-                    .child(widgets::icon(
+                    .child(widgets::icon_moving(
+                        control.clone(),
                         "ChevronDownIcon",
                         IconSize::Sm.scaled(),
                         p.ink_3,
-                    )),
+                    ))
+                    .child(widgets::icon_probe(control, CursorStyle::PointingHand)),
             )
     }
 
@@ -1266,6 +1294,7 @@ impl SettingsPanel {
                             )
                             .child(
                                 div()
+                                    .relative()
                                     .w(Ctrl::Small.scaled())
                                     .h(Ctrl::Small.scaled())
                                     .rounded(Radius::Md.scaled())
@@ -1281,10 +1310,15 @@ impl SettingsPanel {
                                             });
                                         }
                                     })
-                                    .child(widgets::icon(
+                                    .child(widgets::icon_moving(
+                                        "settings-font-picker-close",
                                         "CloseIcon",
                                         IconSize::Sm.scaled(),
                                         p.ink_2,
+                                    ))
+                                    .child(widgets::icon_probe(
+                                        "settings-font-picker-close",
+                                        CursorStyle::PointingHand,
                                     )),
                             ),
                     )

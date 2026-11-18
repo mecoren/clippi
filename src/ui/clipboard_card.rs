@@ -1503,7 +1503,6 @@ impl RenderOnce for ClipboardCard {
         // `Rgba` 为接口，这里转一次，下游保持原样。
         let p = Palette::current(cx);
         let surface: Rgba = p.layer.into();
-        let divider: Rgba = p.stroke.into();
         let accent: Rgba = p.accent.into();
         let on_accent: Rgba = p.on_accent.into();
         let ok: Rgba = p.ok.into();
@@ -1630,6 +1629,23 @@ impl RenderOnce for ClipboardCard {
         } else {
             surface
         };
+        // 悬停过渡（167 ms）：只给指针下的卡片请求帧。gpui 0.3.12 的 Div 没有
+        // transform，抬升感用「悬停色叠加 + 描边提亮 + 顶部 1 px 高光」表达，
+        // 不改列表行高与滚动位置。
+        let hover_t = gpui_kit::base::motion::transition(
+            (
+                ElementId::Name(SharedString::from(format!("card-hover-{}", item.id))),
+                "t",
+            ),
+            if is_hovered && !selected {
+                1.0_f32
+            } else {
+                0.0
+            },
+            motion::transition(cx),
+            window,
+            cx,
+        );
 
         let base = div()
             .relative()
@@ -1641,7 +1657,7 @@ impl RenderOnce for ClipboardCard {
             })
             .bg(card_face)
             .border(sc(1.))
-            .border_color(divider)
+            .border_color(motion::mix(p.stroke, p.stroke_strong, hover_t * 0.72))
             .rounded(Radius::Card.scaled())
             .flex()
             .flex_row()
@@ -1656,6 +1672,23 @@ impl RenderOnce for ClipboardCard {
                         .left_0()
                         .w(px(3.))
                         .bg(accent),
+                )
+            })
+            .when(!selected && hover_t > 0.001, |card| {
+                card.child(
+                    // 悬停色只铺一层，不改变卡片自身的透明面。
+                    div().absolute().inset_0().bg(p.hover.opacity(hover_t)),
+                )
+            })
+            .when(!selected && hover_t > 0.001, |card| {
+                card.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left(sc(6.))
+                        .right(sc(6.))
+                        .h(sc(1.))
+                        .bg(p.stroke_strong.opacity(hover_t * 0.7)),
                 )
             });
 
@@ -2099,6 +2132,7 @@ impl RenderOnce for ClipboardCard {
                     // --- Confirm button (checkmark icon CheckIcon) ---
                     div().flex().flex_row().justify_end().child(
                         div()
+                            .relative()
                             .w(sc(20.))
                             .h(sc(20.))
                             .rounded(sc(4.))
@@ -2116,7 +2150,16 @@ impl RenderOnce for ClipboardCard {
                                     }
                                 }
                             })
-                            .child(widgets::icon("CheckIcon", sc(12.), Hsla::from(accent))),
+                            .child(widgets::icon_moving(
+                                format!("card-note-commit:{}", item.id),
+                                "CheckIcon",
+                                sc(12.),
+                                Hsla::from(accent),
+                            ))
+                            .child(widgets::icon_probe(
+                                format!("card-note-commit:{}", item.id),
+                                CursorStyle::PointingHand,
+                            )),
                     ),
                 )
                 .on_key_down({

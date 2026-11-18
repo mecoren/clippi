@@ -357,6 +357,7 @@ fn render_title_bar(
                     actions.child(
                         div()
                             .id("app-list-help")
+                            .relative()
                             .w(px(20.))
                             .h(px(20.))
                             .rounded(px(10.))
@@ -370,17 +371,23 @@ fn render_title_bar(
                             .tooltip(move |window, cx| {
                                 widgets::tooltip_lines(tooltip_lines.clone(), window, cx)
                             })
-                            .child(widgets::icon_hover(
+                            .child(widgets::icon_moving_hover(
+                                "app-list-help",
                                 "HelpIcon",
                                 fs(13.),
                                 Hsla::from(text_2),
                                 Hsla::from(accent),
+                            ))
+                            .child(widgets::icon_probe(
+                                "app-list-help",
+                                CursorStyle::PointingHand,
                             )),
                     )
                 })
                 .child({
                     let close = on_close;
                     div()
+                        .relative()
                         .w(px(26.))
                         .h(px(26.))
                         .rounded(px(6.))
@@ -393,7 +400,16 @@ fn render_title_bar(
                             cx.stop_propagation();
                             close(window, cx);
                         })
-                        .child(widgets::icon("CloseIcon", fs(13.), Hsla::from(text_2)))
+                        .child(widgets::icon_moving(
+                            "app-list-close",
+                            "CloseIcon",
+                            fs(13.),
+                            Hsla::from(text_2),
+                        ))
+                        .child(widgets::icon_probe(
+                            "app-list-close",
+                            CursorStyle::PointingHand,
+                        ))
                 }),
         )
 }
@@ -504,8 +520,11 @@ fn render_entry(
                 // Cancel button (when recording)
                 .when(is_recording, |row| {
                     let cancel = actions.on_cancel_recording.clone();
+                    let control: SharedString =
+                        format!("app-list-cancel-recording:{}", entry.app_name).into();
                     row.child(
                         div()
+                            .relative()
                             .w(px(20.))
                             .h(px(20.))
                             .rounded(px(4.))
@@ -522,14 +541,23 @@ fn render_entry(
                                     }
                                 }
                             })
-                            .child(widgets::icon("CloseIcon", fs(12.), Hsla::from(text_2))),
+                            .child(widgets::icon_moving(
+                                control.clone(),
+                                "CloseIcon",
+                                fs(12.),
+                                Hsla::from(text_2),
+                            ))
+                            .child(widgets::icon_probe(control, CursorStyle::PointingHand)),
                     )
                 })
                 // Delete button
                 .child({
                     let del_name = app_name.clone();
                     let del_cb = actions.on_delete.clone();
+                    let control: SharedString =
+                        format!("app-list-delete:{}", entry.app_name).into();
                     div()
+                        .relative()
                         .w(px(20.))
                         .h(px(20.))
                         .rounded(px(4.))
@@ -546,12 +574,14 @@ fn render_entry(
                                 del_cb(del_name.clone(), window, cx);
                             }
                         })
-                        .child(widgets::icon_hover(
+                        .child(widgets::icon_moving_hover(
+                            control.clone(),
                             "DeleteIcon",
                             fs(12.),
                             Hsla::from(text_3),
                             Hsla::from(danger),
                         ))
+                        .child(widgets::icon_probe(control, CursorStyle::PointingHand))
                 }),
         )
 }

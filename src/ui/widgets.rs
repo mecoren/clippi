@@ -15,7 +15,8 @@
 //!    控件仍用 `control_face` 这类半透明令牌，与 gpui-kit 组件保持一致。
 //! 4. 控件不持有主题、不缓存状态；需要动效时用 `design::motion`，
 //!    不在此处自写缓动。
-//! 5. 页面不直接拼 gpui-kit 原生控件；需要新外观时先在本文件加构造器。
+//! 5. 页面不直接拼 gpui-kit 原生控件；无状态的构造器写在本文件，需要自带
+//!    交互状态的组件（如 `components::wait_switch`）放进 `components/`。
 //! 6. 图标只经 [`icon`] / [`icon_hover`]，名称先在 `ui/assets.rs` 的
 //!    `product_icons!` 表登记；SVG 不继承宿主文字色，颜色必须显式传入。
 
@@ -31,7 +32,6 @@ use super::design::motion;
 use super::design::palette::Palette;
 use super::design::size::{Ctrl, IconSize, Radius, Space};
 use super::design::typography::{self, type_role};
-use crate::core::i18n_keys::I18nKey;
 
 // ---------------------------------------------------------------------------
 // 基础工具：描边、叠加、图标
@@ -117,19 +117,101 @@ pub fn icon(name: impl Into<SharedString>, size: Pixels, color: Hsla) -> Div {
         .child(svg().path(path).size(size).text_color(color))
 }
 
-/// 同 [`icon`]，并在指针悬停时换色（菜单项、图标按钮的强调反馈）。
-///
-/// SVG 只认自己的 `text_color`，不会从容器继承，所以悬停样式必须落在
-/// 图标元素本身。
-pub fn icon_hover(name: impl Into<SharedString>, size: Pixels, normal: Hsla, hover: Hsla) -> Div {
-    let path = super::assets::icon_path(&name.into());
-    div().flex_shrink_0().size(size).child(
-        svg()
+/// 交互图标：与 [`icon`] 同一外观，但按 `control` 的播放记录施加一次
+/// 悬停动效（[`icon_probe`] 启动）。静止时不请求动画帧。
+pub fn icon_moving(
+    control: impl Into<SharedString>,
+    name: impl Into<SharedString>,
+    size: Pixels,
+    color: Hsla,
+) -> AnyElement {
+    icon_moving_inner(control.into(), name.into(), size, color, None)
+}
+
+/// 同 [`icon_moving`]，并保留指针悬停换色（图标按钮的强调反馈）。
+pub fn icon_moving_hover(
+    control: impl Into<SharedString>,
+    name: impl Into<SharedString>,
+    size: Pixels,
+    normal: Hsla,
+    hover: Hsla,
+) -> AnyElement {
+    icon_moving_inner(control.into(), name.into(), size, normal, Some(hover))
+}
+
+fn icon_moving_inner(
+    control: SharedString,
+    name: SharedString,
+    size: Pixels,
+    color: Hsla,
+    hover: Option<Hsla>,
+) -> AnyElement {
+    let (motion, plays, since) = super::icon_motion::prepare(&control, &name);
+    let path = super::assets::icon_path(&name);
+    let glyph = match hover {
+        Some(hover) => svg()
             .path(path)
             .size(size)
-            .text_color(normal)
+            .text_color(color)
             .hover(move |style| style.text_color(hover)),
-    )
+        None => svg().path(path).size(size).text_color(color),
+    };
+    let Some(since) = since else {
+        return div()
+            .flex_shrink_0()
+            .size(size)
+            .child(glyph)
+            .into_any_element();
+    };
+    div()
+        .flex_shrink_0()
+        .size(size)
+        .child(glyph.with_animation(
+            // 每次播放换一个 id，保证播放期间持续出帧；姿态用播放自身的
+            // 时钟采样，控件中途重绘也能接着走。
+            ElementId::NamedInteger("icon-motion".into(), plays),
+            Animation::new(motion.duration()),
+            move |glyph, _| {
+                let t = motion.played(Some(since), Instant::now()).unwrap_or(1.);
+                let pose = motion.pose(t);
+                if pose == super::icon_motion::Pose::REST {
+                    return glyph;
+                }
+                let moved = glyph.with_transformation(
+                    Transformation::scale(gpui::size(pose.scale.0, pose.scale.1))
+                        .with_rotation(radians(pose.turn))
+                        .with_translation(point(px(pose.shift.0), px(pose.shift.1))),
+                );
+                if pose.alpha < 1. {
+                    moved.text_color(color.opacity(pose.alpha))
+                } else {
+                    moved
+                }
+            },
+        ))
+        .into_any_element()
+}
+
+/// 覆盖在控件上的透明悬停探针：指针进入时启动该控件的图标动效。
+///
+/// 宿主必须 `relative`。探针不 `occlude`：gpui 的命中测试会把指针下所有
+/// 未阻断的 hitbox 都算作 hovered，因此父按钮的 hover 底色与图标自身的
+/// 悬停换色都不受影响，点击也照常冒泡。`cursor` 与父控件一致，避免指针
+/// 移到图标上时光标闪回箭头。
+pub fn icon_probe(control: impl Into<SharedString>, cursor: CursorStyle) -> Stateful<Div> {
+    let control: SharedString = control.into();
+    let play = control.clone();
+    div()
+        .id(ElementId::Name(format!("icon-probe:{control}").into()))
+        .absolute()
+        .inset_0()
+        .cursor(cursor)
+        .hover(|style| style)
+        .on_hover(move |hovered, _window, cx| {
+            if *hovered && !cx.reduce_motion() {
+                super::icon_motion::trigger(&play);
+            }
+        })
 }
 
 // ---------------------------------------------------------------------------
@@ -234,12 +316,16 @@ pub fn tool_icon_btn(
 ) -> AnyElement {
     let p = *p;
     let size = Ctrl::Small.scaled();
+    let id: ElementId = id.into();
+    let control = element_control(&id);
+    let probe_control = control.clone();
     let on_click = std::rc::Rc::new(on_click);
     div()
         .id(id)
         .role(Role::Button)
         .tab_stop(!disabled)
         .aria_label(tooltip_text)
+        .relative()
         .w(size)
         .h(size)
         .rounded(Radius::Md.scaled())
@@ -252,17 +338,23 @@ pub fn tool_icon_btn(
             CursorStyle::PointingHand
         })
         .when(!disabled, move |button| {
-            button.hover(move |style| style.bg(p.hover)).on_mouse_down(
-                MouseButton::Left,
-                move |_, window, cx| {
+            button
+                .hover(move |style| style.bg(p.hover))
+                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                     cx.stop_propagation();
                     on_click(window, cx);
-                },
-            )
+                })
+                .child(icon_probe(probe_control, CursorStyle::PointingHand))
         })
         .when(disabled, |button| button.opacity(0.35))
         .tooltip(move |window, cx| tooltip(tooltip_text, window, cx))
-        .child(icon_hover(glyph, IconSize::Sm.scaled(), tint, p.accent))
+        .child(icon_moving_hover(
+            control,
+            glyph,
+            IconSize::Sm.scaled(),
+            tint,
+            p.accent,
+        ))
         .into_any_element()
 }
 
@@ -309,6 +401,19 @@ impl ButtonExt for Button {
     }
 }
 
+/// 控件 id 对应的图标动效键。`ElementId` 没有反向字符串化，这里只覆盖
+/// 本仓按钮实际使用的几种形态；其余共享一个兜底键。
+fn element_control(id: &ElementId) -> SharedString {
+    match id {
+        ElementId::Name(name) => name.clone(),
+        ElementId::NamedInteger(name, number) => format!("{name}:{number}").into(),
+        ElementId::Integer(number) => format!("button:{number}").into(),
+        // 其余形态（实体 id、uuid）在本仓按钮里没有使用；用 Debug 值兜底，
+        // 至少不会让不同按钮共用同一个播放槽。
+        other => format!("button:{other:?}").into(),
+    }
+}
+
 fn button_face(
     p: &Palette,
     id: ElementId,
@@ -319,6 +424,7 @@ fn button_face(
     glyph_size: Option<Pixels>,
 ) -> Button {
     let p = *p;
+    let control = element_control(&id);
     let (bg, fg, border) = tone.face(&p);
     let height = if small {
         Ctrl::Small.scaled()
@@ -363,7 +469,9 @@ fn button_face(
     }
     if let Some(glyph) = glyph {
         let size = glyph_size.unwrap_or_else(|| IconSize::Sm.scaled());
-        button = button.child(icon(glyph, size, fg));
+        button = button
+            .child(icon_moving(control.clone(), glyph, size, fg))
+            .child(icon_probe(control, CursorStyle::PointingHand));
     }
     if !text.is_empty() {
         button = button.child(text);
@@ -402,186 +510,11 @@ pub fn chip(p: &Palette, id: impl Into<ElementId>, active: bool) -> Stateful<Div
         })
 }
 
-/// 分段控件：`layer` 底轨道 + 1 px 描边，抬起的选择块沿 `ease_move`
-/// 滑到新位置。选项等宽（外层 `flex_1`），所以位置可以用父宽分数表示，
-/// 不需要测量。
-pub fn segments(
-    p: &Palette,
-    id: impl Into<SharedString>,
-    items: Vec<(SharedString, bool)>,
-    on_pick: impl Fn(usize, &mut Window, &mut App) + 'static,
-    window: &mut Window,
-    cx: &mut App,
-) -> AnyElement {
-    let p = *p;
-    let id: SharedString = id.into();
-    let count = items.len().max(1);
-    let selected = items.iter().position(|(_, on)| *on).unwrap_or(0);
-
-    let position = gpui_kit::base::motion::transition(
-        (ElementId::Name(id.clone()), "thumb"),
-        selected as f32,
-        motion::transition_slow(cx),
-        window,
-        cx,
-    );
-    let (left, width) = segment_slot(position, count);
-    let on_pick = std::rc::Rc::new(on_pick);
-
-    let thumb = div()
-        .absolute()
-        .top(px(2.))
-        .bottom(px(2.))
-        .left(px(2.))
-        .right(px(2.))
-        .child(
-            div()
-                .absolute()
-                .top_0()
-                .bottom_0()
-                .left(relative(left))
-                .w(relative(width))
-                .rounded(Radius::Sm.scaled())
-                .border_1()
-                .border_color(p.stroke)
-                .bg(p.control_checked),
-        );
-
-    let mut track = div()
-        .relative()
-        .h(Ctrl::Chip.scaled())
-        .rounded(Radius::Md.scaled())
-        .border_1()
-        .border_color(p.stroke)
-        .bg(p.control_face)
-        .flex()
-        .items_center()
-        .child(thumb);
-
-    for (index, (label, on)) in items.into_iter().enumerate() {
-        let on_pick = on_pick.clone();
-        track = track.child(
-            div()
-                .id(ElementId::Name(format!("{id}:seg:{index}").into()))
-                .role(Role::Button)
-                .tab_stop(true)
-                .aria_label(label.clone())
-                .relative()
-                .flex_1()
-                .min_w(px(0.))
-                .h_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .cursor_pointer()
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .text_size(typography::font(type_role::BODY))
-                .text_color(if on { p.ink } else { p.ink_2 })
-                .when(on, |el| el.font_weight(typography::LABEL_WEIGHT))
-                .child(label)
-                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                    cx.stop_propagation();
-                    on_pick(index, window, cx);
-                }),
-        );
-    }
-
-    track.into_any_element()
-}
-
 /// 第 `position` 格在 `count` 等分轨道里的 (左偏移, 宽度)，均为父宽分数。
-fn segment_slot(position: f32, count: usize) -> (f32, f32) {
+pub(crate) fn segment_slot(position: f32, count: usize) -> (f32, f32) {
     let count = count.max(1) as f32;
     let index = position.clamp(0., count - 1.);
     (index / count, 1. / count)
-}
-
-// ---------------------------------------------------------------------------
-// 开关
-// ---------------------------------------------------------------------------
-
-/// 开关：40×20 轨道 + 12 px 圆形滑块，滑块沿 `ease_move` 在 0/20 px 间
-/// 滑动；关闭时只有描边，开启时填强调色。左侧带"开/关"字样，颜色之外
-/// 多一层可读状态。
-#[allow(clippy::too_many_arguments)]
-pub fn toggle(
-    p: &Palette,
-    id: impl Into<SharedString>,
-    name: impl Into<SharedString>,
-    value: bool,
-    disabled: bool,
-    on_change: impl Fn(&mut Window, &mut App) + 'static,
-    window: &mut Window,
-    cx: &mut App,
-) -> AnyElement {
-    let p = *p;
-    let id: SharedString = id.into();
-    let offset = gpui_kit::base::motion::transition(
-        (ElementId::Name(id.clone()), "thumb"),
-        if value { 20f32 } else { 0f32 },
-        motion::transition(cx),
-        window,
-        cx,
-    );
-    let thumb = if value { p.on_accent } else { p.ink_3 };
-    let track = if value {
-        p.accent
-    } else {
-        p.background.opacity(0.)
-    };
-    let edge = if value { p.accent } else { p.ink_3 };
-
-    div()
-        .flex()
-        .items_center()
-        .gap(Space::Md.scaled())
-        .flex_shrink_0()
-        .child(
-            div()
-                .min_w(px(20.))
-                .flex()
-                .justify_end()
-                .text_size(typography::font(type_role::BODY))
-                .text_color(p.ink_2)
-                .child(if value {
-                    I18nKey::ToggleOn.text()
-                } else {
-                    I18nKey::ToggleOff.text()
-                }),
-        )
-        .child(
-            Button::new(ElementId::Name(id))
-                .role(Role::Switch)
-                .accessibility_label(name)
-                .relative()
-                .w(px(40.))
-                .h(px(20.))
-                .flex_shrink_0()
-                .rounded(px(10.))
-                .border_1()
-                .border_color(edge)
-                .bg(track)
-                .when(value, move |el| {
-                    el.hover(move |style| style.bg(brighter(p.accent)))
-                })
-                .child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .bottom_0()
-                        .left(px(offset))
-                        .w(px(18.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(div().size(px(12.)).rounded_full().bg(thumb)),
-                )
-                .disabled(disabled)
-                .on_click(move |_, window, cx| on_change(window, cx))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()),
-        )
-        .into_any_element()
 }
 
 // ---------------------------------------------------------------------------

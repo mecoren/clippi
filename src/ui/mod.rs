@@ -15,6 +15,8 @@ pub mod font;
 pub mod frame_trace;
 pub mod hover_toolbar;
 pub mod i18n;
+pub mod icon_motion;
+pub mod motion_pref;
 pub mod quick_paste;
 pub mod rich_preview;
 pub mod root;

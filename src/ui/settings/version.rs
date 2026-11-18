@@ -99,6 +99,7 @@ impl SettingsPanel {
                         };
                         let check_color = if auto_check { accent } else { text_3 };
                         div()
+                            .relative()
                             .flex()
                             .flex_row()
                             .items_center()
@@ -114,7 +115,16 @@ impl SettingsPanel {
                                     cx.notify();
                                 });
                             })
-                            .child(widgets::icon(check_icon, fs(12.), Hsla::from(check_color)))
+                            .child(widgets::icon_moving(
+                                "version-auto-check",
+                                check_icon,
+                                fs(12.),
+                                Hsla::from(check_color),
+                            ))
+                            .child(widgets::icon_probe(
+                                "version-auto-check",
+                                CursorStyle::PointingHand,
+                            ))
                             .child(
                                 div()
                                     .text_size(fs(12.))
@@ -179,8 +189,17 @@ impl SettingsPanel {
                             .left_0()
                             .opacity(0.0)
                             .group_hover("gh-icon", |s| s.opacity(1.0))
-                            .child(widgets::icon("GithubIcon", fs(26.), Hsla::from(accent))),
-                    ),
+                            .child(widgets::icon_moving(
+                                "version-github-lit",
+                                "GithubIcon",
+                                fs(26.),
+                                Hsla::from(accent),
+                            )),
+                    )
+                    .child(widgets::icon_probe(
+                        "version-github-lit",
+                        CursorStyle::PointingHand,
+                    )),
             )
             .when(matches!(phase, UpdatePhase::Downloading { .. }), |el| {
                 el.child(render_progress_bar(

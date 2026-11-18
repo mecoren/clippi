@@ -212,20 +212,20 @@ pub(crate) fn source_app_filter_bar(
                 .size(IconSize::Md.scaled())
                 .into_any_element()
         } else if name.is_none() {
-            widgets::icon(
+            widgets::icon_moving(
+                format!("source-app:{index}"),
                 "LayoutGridIcon",
                 IconSize::Sm.scaled(),
                 if active { p.accent } else { p.ink_2 },
             )
-            .into_any_element()
         } else {
             // Apps without an icon keep the same fixed target size.
-            widgets::icon(
+            widgets::icon_moving(
+                format!("source-app:{index}"),
                 "ContactIcon",
                 IconSize::Sm.scaled(),
                 if active { p.accent } else { p.ink_2 },
             )
-            .into_any_element()
         };
         let tooltip = SharedString::from(label.clone());
         let on_select = on_select.clone();
@@ -237,6 +237,7 @@ pub(crate) fn source_app_filter_bar(
                 p,
                 chip_width,
             )
+            .relative()
             .overflow_hidden()
             .aria_label(label.clone())
             .text_size(typography::font(type_role::BODY))
@@ -249,6 +250,10 @@ pub(crate) fn source_app_filter_bar(
                 }
                 on_select(name.as_deref(), cx);
             })
+            .child(widgets::icon_probe(
+                format!("source-app:{index}"),
+                CursorStyle::PointingHand,
+            ))
             .child(content),
         );
     }
@@ -471,12 +476,14 @@ impl Render for FilterBar {
                                     let list_view = self.list_view.clone();
                                     let this = this.clone();
 
+                                    let control: SharedString = format!("filter-type:{key}").into();
                                     let content = div()
                                         .flex()
                                         .flex_shrink_0()
                                         .items_center()
                                         .gap(Space::Xxs.scaled())
-                                        .child(widgets::icon(
+                                        .child(widgets::icon_moving(
+                                            control.clone(),
                                             icon,
                                             IconSize::Sm.scaled(),
                                             filter_text,
@@ -492,6 +499,7 @@ impl Render for FilterBar {
                                         });
 
                                     let button = filter_chip(("filter-type", index), is_active, &p)
+                                        .relative()
                                         .aria_label(label)
                                         .border_1()
                                         .border_color(if is_active {
@@ -514,6 +522,10 @@ impl Render for FilterBar {
                                                 this.update(cx, |_bar, cx| cx.notify());
                                             },
                                         )
+                                        .child(widgets::icon_probe(
+                                            control,
+                                            CursorStyle::PointingHand,
+                                        ))
                                         .child(content);
                                     external_shortcut(
                                         SharedString::from(format!(
@@ -549,6 +561,7 @@ impl Render for FilterBar {
                             .role(Role::Button)
                             .tab_stop(true)
                             .aria_label(I18nKey::FilterTagsTooltip.text())
+                            .relative()
                             .w(px(24.))
                             .h(Ctrl::Chip.scaled())
                             .flex_shrink_0()
@@ -574,10 +587,15 @@ impl Render for FilterBar {
                                     });
                                 }
                             })
-                            .child(widgets::icon(
+                            .child(widgets::icon_moving(
+                                "filter-tags",
                                 "TagIcon",
                                 IconSize::Sm.scaled(),
                                 if has_tag_filter { accent } else { text_2 },
+                            ))
+                            .child(widgets::icon_probe(
+                                "filter-tags",
+                                CursorStyle::PointingHand,
                             )),
                     ),
                 );

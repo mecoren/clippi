@@ -277,6 +277,11 @@ impl SettingsPanel {
                     label.text().to_owned(),
                     checked,
                     &Palette::current(cx),
+                    Some(gpui::SharedString::from(if settings {
+                        "backup-settings"
+                    } else {
+                        "backup-data"
+                    })),
                 )
                 .id(if settings {
                     "backup-settings"
@@ -924,6 +929,7 @@ impl SettingsPanel {
                     let state = state.clone();
 
                     div()
+                        .relative()
                         .flex()
                         .flex_row()
                         .items_center()
@@ -939,19 +945,22 @@ impl SettingsPanel {
                             CursorStyle::PointingHand
                         })
                         .when(!maintenance_running, |row| {
-                            row.hover(|row| row.bg(btn_hover)).on_mouse_down(
-                                MouseButton::Left,
-                                move |_ev, _window, cx| {
+                            row.hover(|row| row.bg(btn_hover))
+                                .on_mouse_down(MouseButton::Left, move |_ev, _window, cx| {
                                     cx.stop_propagation();
                                     state.update(cx, |state, _cx| {
                                         state.settings.cleanup_stale_items =
                                             !state.settings.cleanup_stale_items;
                                         state.settings.save();
                                     });
-                                },
-                            )
+                                })
+                                .child(widgets::icon_probe(
+                                    "settings-cleanup-stale",
+                                    CursorStyle::PointingHand,
+                                ))
                         })
-                        .child(widgets::icon(
+                        .child(widgets::icon_moving(
+                            "settings-cleanup-stale",
                             if stale_enabled {
                                 "CircleCheckIcon"
                             } else {

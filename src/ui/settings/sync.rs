@@ -12,6 +12,8 @@ use gpui_kit::component::scroll::ScrollableElement;
 use crate::core::i18n_keys::I18nKey;
 use crate::services::gpui_sync::format_last_sync;
 use crate::state::sync::BackendStatus;
+use crate::ui::components::wait_switch::WaitToggleSwitch;
+use crate::ui::components::wait_tabs::WaitTabs;
 use crate::ui::design::motion;
 use crate::ui::design::palette::Palette;
 use crate::ui::design::size::{Radius, Space};
@@ -66,8 +68,6 @@ impl SettingsPanel {
             I18nKey::SyncTabTitle.text(),
             I18nKey::DescSyncAuto.text(),
             sync.auto_enabled,
-            window,
-            cx,
             {
                 let wm = wm.clone();
                 move |_window, cx| {
@@ -82,8 +82,6 @@ impl SettingsPanel {
                 I18nKey::SyncFavoritesOnly.text(),
                 I18nKey::DescSyncFavorites.text(),
                 sync.favorites_only,
-                window,
-                cx,
                 {
                     let wm = wm.clone();
                     move |_window, cx| {
@@ -103,8 +101,6 @@ impl SettingsPanel {
                 I18nKey::SyncIncludeImages.text(),
                 I18nKey::DescSyncIncludeImages.text(),
                 sync.include_images,
-                window,
-                cx,
                 {
                     let wm = wm.clone();
                     move |_window, cx| {
@@ -119,8 +115,6 @@ impl SettingsPanel {
                     I18nKey::SyncCompressImages.text(),
                     I18nKey::DescSyncCompressImages.text(),
                     sync.compress_images,
-                    window,
-                    cx,
                     {
                         let wm = wm.clone();
                         move |_window, cx| {
@@ -144,8 +138,6 @@ impl SettingsPanel {
                 I18nKey::DescTransferStation.text()
             },
             transfer_enabled,
-            window,
-            cx,
             {
                 let wm = wm.clone();
                 move |_window, cx| {
@@ -205,33 +197,28 @@ impl SettingsPanel {
     fn render_retention_row(
         &self,
         retention: u32,
-        window: &mut Window,
-        cx: &mut Context<Self>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
     ) -> AnyElement {
-        let p = self.palette;
         let wm = self.window_manager.clone();
         let days = [0u32, 1, 3, 7, 30];
-        let labels: Vec<(SharedString, bool)> = days
+        let labels: Vec<SharedString> = days
             .iter()
-            .map(|days| (retention_label(*days).into(), retention == *days))
+            .map(|days| SharedString::from(retention_label(*days)))
             .collect();
-        let segments = widgets::segments(
-            &p,
-            "transfer-retention",
-            labels,
-            move |index, _window, cx| {
+        let selected = days.iter().position(|days| *days == retention).unwrap_or(0);
+        let tabs = WaitTabs::new("transfer-retention", labels)
+            .selected(selected)
+            .on_select(move |index, _window, cx| {
                 let days = days[index.min(days.len() - 1)];
                 wm.update(cx, |wm, cx| wm.set_transfer_retention_days(days, cx));
-            },
-            window,
-            cx,
-        );
+            });
         self.row_shell()
             .child(self.row_text(
                 I18nKey::TransferRetention.text(),
                 I18nKey::DescTransferRetention.text(),
             ))
-            .child(div().w(px(220.)).flex_shrink_0().child(segments))
+            .child(div().w(px(220.)).flex_shrink_0().child(tabs))
             .into_any_element()
     }
 
@@ -601,22 +588,16 @@ impl SettingsPanel {
             },
         );
 
-        let toggle = widgets::toggle(
-            &p,
-            format!("sync-backend-{id}"),
-            id.clone(),
-            enabled,
-            !auto_enabled,
-            {
+        let toggle = WaitToggleSwitch::new(format!("sync-backend-{id}"), id.clone())
+            .value(enabled)
+            .disabled(!auto_enabled)
+            .on_change({
                 let id = id.clone();
                 let wm = wm.clone();
                 move |_window, cx| {
                     wm.update(cx, |wm, cx| wm.toggle_sync_backend(&id, cx));
                 }
-            },
-            window,
-            cx,
-        );
+            });
 
         // --- 同步间隔：分段控件 ---
         let intervals = [
@@ -625,25 +606,24 @@ impl SettingsPanel {
             (600, I18nKey::SyncInterval10m.text()),
             (1800, I18nKey::SyncInterval30m.text()),
         ];
-        let labels: Vec<(SharedString, bool)> = intervals
+        let selected = intervals
             .iter()
-            .map(|(secs, label)| ((*label).into(), interval == *secs))
+            .position(|(secs, _)| *secs == interval)
+            .unwrap_or(0);
+        let labels: Vec<SharedString> = intervals
+            .iter()
+            .map(|(_, label)| SharedString::from(*label))
             .collect();
-        let segments = widgets::segments(
-            &p,
-            format!("sync-backend-interval-{id}"),
-            labels,
-            {
+        let tabs = WaitTabs::new(format!("sync-backend-interval-{id}"), labels)
+            .selected(selected)
+            .on_select({
                 let id = id.clone();
                 let wm = wm.clone();
                 move |index, _window, cx| {
                     let secs = intervals[index.min(intervals.len() - 1)].0;
                     wm.update(cx, |wm, cx| wm.set_backend_sync_interval(&id, secs, cx));
                 }
-            },
-            window,
-            cx,
-        );
+            });
 
         div()
             .mb(Space::Md.scaled())
@@ -757,7 +737,7 @@ impl SettingsPanel {
                     .flex()
                     .items_center()
                     .gap(Space::Sm.scaled())
-                    .child(div().flex_1().min_w(px(0.)).child(segments))
+                    .child(div().flex_1().min_w(px(0.)).child(tabs))
                     .child(
                         widgets::btn_small(
                             &p,
@@ -784,18 +764,17 @@ impl SettingsPanel {
 }
 
 /// 一行「标题 + 说明 + 开关」；设置页所有布尔项共用这一形状。
-#[allow(clippy::too_many_arguments)]
 fn toggle_row(
     p: &Palette,
     id: &'static str,
     label: &str,
     desc: &str,
     value: bool,
-    window: &mut Window,
-    cx: &mut Context<SettingsPanel>,
     on_change: impl Fn(&mut Window, &mut App) + 'static,
 ) -> AnyElement {
-    let control = widgets::toggle(p, id, label.to_owned(), value, false, on_change, window, cx);
+    let control = WaitToggleSwitch::new(id, label.to_owned())
+        .value(value)
+        .on_change(on_change);
     widgets::settings_row(p, label, desc, control).into_any_element()
 }
 

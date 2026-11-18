@@ -1382,7 +1382,10 @@ impl Render for QuickPasteView {
                                         let key = entry.key;
                                         let app_state = self.state.clone();
                                         let filter_text = if active { p.accent } else { p.ink_2 };
+                                        let control: SharedString =
+                                            format!("quick-type:{key}").into();
                                         widgets::chip(&p, ("quick-type", index), active)
+                                            .relative()
                                             .aria_label(label.clone())
                                             .justify_center()
                                             .when(icon_only, |b| b.min_w(px(0.0)))
@@ -1400,10 +1403,15 @@ impl Render for QuickPasteView {
                                                     v.update(cx, |view, cx| view.reset_scroll(cx));
                                                 }
                                             })
-                                            .child(widgets::icon(
+                                            .child(widgets::icon_moving(
+                                                control.clone(),
                                                 icon,
                                                 IconSize::Sm.scaled(),
                                                 filter_text,
+                                            ))
+                                            .child(widgets::icon_probe(
+                                                control,
+                                                CursorStyle::PointingHand,
                                             ))
                                             .when(!icon_only, |b| {
                                                 b.child(
@@ -1426,6 +1434,7 @@ impl Render for QuickPasteView {
                     .child(
                         div()
                             .id("quick-fav")
+                            .relative()
                             .w(px(FAV_BUTTON_SIZE))
                             .h(px(FAV_BUTTON_SIZE))
                             .rounded(Radius::Sm.scaled())
@@ -1444,11 +1453,13 @@ impl Render for QuickPasteView {
                                     v.update(cx, |view, cx| view.reset_scroll(cx));
                                 }
                             })
-                            .child(widgets::icon(
+                            .child(widgets::icon_moving(
+                                "quick-fav",
                                 "StarIcon",
                                 IconSize::Md.scaled(),
                                 if fav_active { p.fav } else { p.ink_2 },
-                            )),
+                            ))
+                            .child(widgets::icon_probe("quick-fav", CursorStyle::PointingHand)),
                     ),
             )
             .when(has_type_bar, |parent| {

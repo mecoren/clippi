@@ -726,13 +726,12 @@ impl RenderOnce for ContextMenu {
                     accent
                 };
 
+                let control: SharedString = format!("context-menu-{action}").into();
                 div()
-                    .id(ElementId::Name(SharedString::from(format!(
-                        "context-menu-{}",
-                        action
-                    ))))
+                    .id(ElementId::Name(control.clone()))
                     .role(Role::MenuItem)
                     .aria_label(label.clone())
+                    .relative()
                     .w(px(ITEM_WIDTH))
                     .h(px(30.))
                     .rounded(Radius::Md.scaled())
@@ -751,7 +750,8 @@ impl RenderOnce for ContextMenu {
                             .gap(px(8.))
                             .child({
                                 let icon = icon.clone();
-                                widgets::icon_hover(
+                                widgets::icon_moving_hover(
+                                    control.clone(),
                                     icon,
                                     fs(13.),
                                     Hsla::from(normal_icon),
@@ -775,6 +775,7 @@ impl RenderOnce for ContextMenu {
                                 .child(shortcut.clone().unwrap()),
                         )
                     })
+                    .child(widgets::icon_probe(control, CursorStyle::PointingHand))
                     .on_mouse_down(MouseButton::Left, {
                         let action = action.clone();
                         move |_ev, window, cx| {

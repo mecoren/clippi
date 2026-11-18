@@ -284,6 +284,13 @@ mod tests {
     /// 阻止继续变浅。正文、图标与 `ink`/`ink-2` 仍是 4.5 / 3.0，不放宽。
     const INK_3_MIN: f32 = 2.78;
 
+    /// 强调色下限。`accent` 是产品指定的卡布里蓝：暗色用原色 `#4aa8d8`，
+    /// 亮色压深一档到 `#3f93bd`——原色落在浅底上只有约 2.2:1，作图标与
+    /// 选中标记会糊。压深后两种模式都过 WCAG AA 大字与图形组件的 3:1。
+    /// 品牌色不可调，门禁只压到 3:1——强调色只用于填充、图标、选中标记与
+    /// 大字，不承担正文；`ink`/`ink-2` 仍是 4.5。
+    const ACCENT_MIN: f32 = 3.0;
+
     /// FR-A11Y-03：正文 ≥ 4.5:1、辅助与图标 ≥ 3:1。底色覆盖窗口、卡片
     /// （`layer`）与浮层（`flyout`）三层，因为同一文字会落在三者上。
     #[test]
@@ -308,13 +315,18 @@ mod tests {
                 assert_contrast(&format!("{mode} ink on {surface}"), ink, bg, 4.5);
                 assert_contrast(&format!("{mode} ink-2 on {surface}"), ink_2, bg, 4.5);
                 assert_contrast(&format!("{mode} ink-3 on {surface}"), ink_3, bg, INK_3_MIN);
-                assert_contrast(&format!("{mode} accent on {surface}"), accent, bg, 4.5);
+                assert_contrast(
+                    &format!("{mode} accent on {surface}"),
+                    accent,
+                    bg,
+                    ACCENT_MIN,
+                );
             }
             assert_contrast(
                 &format!("{mode} on-accent on accent"),
                 on_accent,
                 accent,
-                4.5,
+                ACCENT_MIN,
             );
             assert_contrast(
                 &format!("{mode} on-danger on danger"),

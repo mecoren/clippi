@@ -134,6 +134,14 @@ git push origin wait
 - 剪贴板内容属于用户敏感数据：禁止写入日志、提交信息、测试夹具或文档示例，测试用自造假数据。
 - 版本号、`RELEASES.md`、`.github/workflows/*`、`dist-workspace.toml`、`installer.nsi` 由发布流程维护，非任务要求不要改动。
 
+### 6.8 开关组件与动画（硬约束）
+
+- 所有"开/关"控件一律使用 `src/ui/components/wait_switch.rs` 的 `WaitToggleSwitch`（`new` / `value` / `disabled` / `on_change`）。禁止自绘开关，禁止用无动画的 checkbox 或普通按钮代替。
+- 开关切换只能由**一个进度值**驱动：用 `gpui_kit::base::motion::transition` 对 `0`/`1` 插值，滑块位移、轨道底色、滑块色与两处描边全部由该进度经 `design::motion::mix` 派生。不允许"滑块在动、颜色跳变"。
+- 时长与曲线固定用 `design::motion::transition_slow`（`t-slow` 250 ms + `ease-move`），它自带"减少动态效果"的瞬时退化；页面层不得自写缓动、`with_animation` 或另设时长。
+- 后续新增的开关类控件（复选式开关、切换按钮、分段式开关等）必须沿用同一套过渡参数与 `<id>:toggle-thumb` 的进度槽约定；需要额外视觉变化时，把它写成该进度的函数，而不是另起一段动画。
+- 开关的 `id` 必须在同一视图内唯一，否则多个开关会共用同一个动画进度槽。
+
 ## 7. 提交信息规范
 
 - 合并上游：`merge: sync upstream/main <起..止 sha>`，正文列出冲突文件与每处取舍结论。

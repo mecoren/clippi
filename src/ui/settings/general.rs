@@ -44,6 +44,8 @@ impl SettingsPanel {
             .font_size_scale
             .unwrap_or_else(|| crate::ui::font::level_scale(&font_size_level));
         let font_family = app.settings.font_family.clone();
+        let ui_motion_on = crate::ui::motion_pref::effective_ui_motion(&app.settings);
+        let window_motion_on = crate::ui::motion_pref::effective_window_motion(&app.settings);
         // --- borrow released here — `app` is a &AppState reference ---
 
         // --- Derive display indices from string settings ---
@@ -398,9 +400,10 @@ impl SettingsPanel {
             {
                 let state = state.clone();
                 let this = this.clone();
-                self.setting_row_with_options(
+                self.setting_row_with_tabs(
                     I18nKey::SettingTheme.text(),
                     I18nKey::DescTheme.text(),
+                    "settings-theme",
                     &[
                         ("system", I18nKey::ThemeSystem.text()),
                         ("dark", I18nKey::ThemeDark.text()),
@@ -422,15 +425,18 @@ impl SettingsPanel {
                             cx.notify();
                         });
                     },
+                    window,
+                    cx,
                 )
             }
             .into_any_element(),
             {
                 let state = state.clone();
                 let this = this.clone();
-                self.setting_row_with_options(
+                self.setting_row_with_tabs(
                     I18nKey::SettingThemeColor.text(),
                     I18nKey::DescThemeColor.text(),
+                    "settings-theme-color",
                     &[
                         ("default", I18nKey::ThemeColorDefault.text()),
                         ("system", I18nKey::ThemeColorSystem.text()),
@@ -451,6 +457,8 @@ impl SettingsPanel {
                             cx.notify();
                         });
                     },
+                    window,
+                    cx,
                 )
             }
             .into_any_element(),
@@ -528,14 +536,63 @@ impl SettingsPanel {
         container =
             container.child(self.settings_group(I18nKey::GroupAppearance.text(), appearance_rows));
 
+        // --- Motion ---
+        // 两个开关都是 Option<bool>：点击写入显式值，未点击过则跟随系统。
+        // 设置变更后立即应用到运行期，无需重启。
+        let motion_rows: Vec<AnyElement> = vec![
+            {
+                let state = state.clone();
+                let this = this.clone();
+                self.setting_row_with_toggle(
+                    I18nKey::SettingWindowMotion.text(),
+                    I18nKey::DescWindowMotion.text(),
+                    window_motion_on,
+                    move |_window, app| {
+                        let settings = state.update(app, |s, _cx| {
+                            let next =
+                                !crate::ui::motion_pref::effective_window_motion(&s.settings);
+                            s.settings.window_motion = Some(next);
+                            s.settings.save();
+                            s.settings.clone()
+                        });
+                        crate::ui::motion_pref::apply(&settings, app);
+                        this.update(app, |_panel, cx| cx.notify());
+                    },
+                )
+            }
+            .into_any_element(),
+            {
+                let state = state.clone();
+                let this = this.clone();
+                self.setting_row_with_toggle(
+                    I18nKey::SettingUiMotion.text(),
+                    I18nKey::DescUiMotion.text(),
+                    ui_motion_on,
+                    move |_window, app| {
+                        let settings = state.update(app, |s, _cx| {
+                            let next = !crate::ui::motion_pref::effective_ui_motion(&s.settings);
+                            s.settings.ui_motion = Some(next);
+                            s.settings.save();
+                            s.settings.clone()
+                        });
+                        crate::ui::motion_pref::apply(&settings, app);
+                        this.update(app, |_panel, cx| cx.notify());
+                    },
+                )
+            }
+            .into_any_element(),
+        ];
+        container = container.child(self.settings_group(I18nKey::GroupMotion.text(), motion_rows));
+
         // --- Language ---
         let language_rows: Vec<AnyElement> = vec![{
             let state = state.clone();
             let this = this.clone();
             let wm = wm.clone();
-            self.setting_row_with_options(
+            self.setting_row_with_tabs(
                 I18nKey::SettingLanguage.text(),
                 I18nKey::DescLanguage.text(),
+                "settings-language",
                 &[
                     ("system", I18nKey::LangSystem.text()),
                     ("zh_CN", I18nKey::LangZh.text()),
@@ -561,6 +618,8 @@ impl SettingsPanel {
                     wm.update(_cx, |wm, _cx| wm.update_tray_language());
                     this.update(_cx, |_, cx| cx.notify());
                 },
+                window,
+                cx,
             )
         }
         .into_any_element()];
@@ -572,9 +631,10 @@ impl SettingsPanel {
             let state = state.clone();
             let wm = wm.clone();
             let this = this.clone();
-            self.setting_row_with_options(
+            self.setting_row_with_tabs(
                 I18nKey::SettingPosition.text(),
                 I18nKey::DescPosition.text(),
+                "settings-position",
                 &[
                     ("center", I18nKey::PosCenter.text()),
                     ("follow", I18nKey::PosFollow.text()),
@@ -594,6 +654,8 @@ impl SettingsPanel {
                     wm.update(_cx, |wm, _cx| wm.set_position_mode(mode));
                     this.update(_cx, |_panel, cx| cx.notify());
                 },
+                window,
+                cx,
             )
         }
         .into_any_element()];

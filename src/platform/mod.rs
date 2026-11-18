@@ -13,6 +13,7 @@ pub mod hotkey;
 pub mod ime;
 pub mod keyboard_hook;
 pub mod monitor;
+pub mod motion;
 pub mod paste;
 #[cfg(target_os = "windows")]
 pub mod quick_window;
@@ -25,5 +26,6 @@ pub mod text_input;
 pub mod tray;
 pub mod util;
 pub mod window_frame;
+pub mod window_motion;
 #[cfg(target_os = "windows")]
 pub mod windows_hotkeys;

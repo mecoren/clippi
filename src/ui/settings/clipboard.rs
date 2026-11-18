@@ -7,7 +7,7 @@ use super::SettingsPanel;
 use crate::core::i18n_keys::I18nKey;
 use crate::services::copy_sound::{preview_sound, SOUND_LIST};
 use crate::ui::components::slider::{SliderDetent, SteppedSlider};
-use crate::ui::widgets;
+use crate::ui::components::wait_switch::WaitToggleSwitch;
 
 /// Height of the collapsed copy-sound card (header only).
 const SOUND_CARD_COLLAPSED: f32 = 52.0;
@@ -22,7 +22,6 @@ impl SettingsPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let p = self.palette;
         let state = self.state.clone();
         let this = cx.entity().clone();
         let window_manager = self.window_manager.clone();
@@ -311,9 +310,10 @@ impl SettingsPanel {
         let card_rows: Vec<AnyElement> = vec![{
             let state = state.clone();
             let this = this.clone();
-            self.setting_row_with_options(
+            self.setting_row_with_tabs(
                 I18nKey::SettingCardHeight.text(),
                 I18nKey::DescCardHeight.text(),
+                "settings-card-height",
                 &[
                     ("high", I18nKey::CardHeightTall.text()),
                     ("medium", I18nKey::CardHeightMed.text()),
@@ -334,6 +334,8 @@ impl SettingsPanel {
                         cx.notify();
                     });
                 },
+                window,
+                cx,
             )
         }
         .into_any_element()];
@@ -345,9 +347,10 @@ impl SettingsPanel {
             {
                 let state = state.clone();
                 let this = this.clone();
-                self.setting_row_with_options(
+                self.setting_row_with_tabs(
                     I18nKey::SettingPasteClickMode.text(),
                     I18nKey::DescPasteClickMode.text(),
+                    "settings-paste-click-mode",
                     &[
                         ("double_click", I18nKey::PasteClickModeDouble.text()),
                         ("single_click", I18nKey::PasteClickModeSingle.text()),
@@ -366,6 +369,8 @@ impl SettingsPanel {
                             cx.notify();
                         });
                     },
+                    window,
+                    cx,
                 )
             }
             .into_any_element(),
@@ -601,34 +606,36 @@ impl SettingsPanel {
                                         }),
                                 ),
                         )
-                        .child(div().flex_shrink_0().child(widgets::toggle(
-                            &p,
-                            "copy-sound",
-                            I18nKey::SettingCopySound.text(),
-                            enabled,
-                            false,
-                            {
-                                let state = state.clone();
-                                let this = this.clone();
-                                move |_window, cx| {
-                                    state.update(cx, |s, _cx| {
-                                        s.settings.copy_sound_enabled =
-                                            !s.settings.copy_sound_enabled;
-                                        s.settings.save();
-                                    });
-                                    this.update(cx, |panel, cx| {
-                                        panel.copy_sound_anim_gen =
-                                            panel.copy_sound_anim_gen.wrapping_add(1);
-                                        cx.emit(super::SettingsEvent::ClipboardSettingsChanged {
-                                            reload_items: false,
-                                            scroll_to_top: false,
+                        .child(
+                            div().flex_shrink_0().child(
+                                WaitToggleSwitch::new(
+                                    "copy-sound",
+                                    I18nKey::SettingCopySound.text(),
+                                )
+                                .value(enabled)
+                                .on_change({
+                                    let state = state.clone();
+                                    let this = this.clone();
+                                    move |_window, cx| {
+                                        state.update(cx, |s, _cx| {
+                                            s.settings.copy_sound_enabled =
+                                                !s.settings.copy_sound_enabled;
+                                            s.settings.save();
                                         });
-                                    });
-                                }
-                            },
-                            window,
-                            cx,
-                        ))),
+                                        this.update(cx, |panel, cx| {
+                                            panel.copy_sound_anim_gen =
+                                                panel.copy_sound_anim_gen.wrapping_add(1);
+                                            cx.emit(
+                                                super::SettingsEvent::ClipboardSettingsChanged {
+                                                    reload_items: false,
+                                                    scroll_to_top: false,
+                                                },
+                                            );
+                                        });
+                                    }
+                                }),
+                            ),
+                        ),
                 )
                 // Footer: bare detent slider — no fill, the knob rides the
                 // six numbered stops and each stop previews its sound.

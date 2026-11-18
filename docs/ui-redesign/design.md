@@ -121,7 +121,7 @@ src/ui/
     "control-checked": "#ffffff",
     "flyout": "rgb(250 250 252 / 0.9)",
     "scrim": "rgb(0 0 0 / 0.28)",
-    "accent": "#0067c0",
+    "accent": "#3f93bd",
     "on-accent": "#ffffff",
     "fav": "#b07a2e",
     "danger": "#c42b1c",
@@ -150,7 +150,7 @@ src/ui/
     "control-checked": "rgb(255 255 255 / 0.12)",
     "flyout": "rgb(40 41 48 / 0.92)",
     "scrim": "rgb(0 0 0 / 0.45)",
-    "accent": "#4cc2ff",
+    "accent": "#4aa8d8",
     "on-accent": "#00213b",
     "fav": "#d9a55d",
     "danger": "#ff6a5c",
@@ -170,7 +170,7 @@ src/ui/
 | 令牌 | 依据 |
 |---|---|
 | `layer / layer-strong / stroke / control` 全部半透明 | Argus 的分层方式：亮度差而不是实色堆叠（`theme.json:58-65`）；为 Mica（P3）预留 |
-| `accent #0067c0` / `#4cc2ff` | 与 Argus `resources/theme.json` 逐值一致（Windows 11 默认强调色）。此前是品牌绿 `#287a55`/`#7ecba3`，按"UI 与 Argus 一模一样"的取舍改为蓝色，品牌绿不再使用 |
+| `accent` 暗色 `#4aa8d8` / 亮色 `#3f93bd` | 产品指定的卡布里蓝。亮色模式压深一档：原色 `#4aa8d8` 落在浅底上仅约 2.2:1，作图标与选中标记会糊。两模式都不足正文 4.5，故 `palette.rs` 对 accent 用 `ACCENT_MIN = 3.0`（WCAG AA 大字/图形组件）；强调色只用于填充、图标、选中标记与大字。`ink` / `ink-2` 仍是 4.5 |
 | `ink-3 #8e92a0` / `#6f7384` | 与 Argus 逐值一致。亮色实测 2.80（窗口底）/ 2.95（卡片）/ 2.99（浮层），低于 WCAG 大字 3:1；`palette.rs` 的门禁因此下探到 2.78（`INK_3_MIN`），只防继续变浅，正文与图标仍是 4.5 / 3.0 |
 | `on-accent` 暗色用深蓝 | 暗色 accent 是浅蓝，反白文字应为深色（Argus `#00213b` 同值） |
 | 投影只给对话框 | 对齐 Argus `--shadow-flyout`：`widgets::flyout_shadow` 两层同轴；菜单、提示、卡片、列表一律无投影 |
