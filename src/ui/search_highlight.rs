@@ -204,7 +204,7 @@ pub fn render_highlighted_block(
     div()
         .flex()
         .flex_col()
-        .gap(px(1.))
+        .gap(px(2.))
         .children(preview.lines().map(move |line| {
             div()
                 .flex()

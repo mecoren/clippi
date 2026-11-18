@@ -36,7 +36,10 @@ pub const QUICK_WINDOW_WIDTH: f32 = 430.0;
 const TYPE_BAR_HEIGHT: f32 = 30.0;
 const TAG_ROW_HEIGHT: f32 = 26.0;
 const SOURCE_ROW_HEIGHT: f32 = 26.0;
-const TAG_INDICATOR_ANIM_DURATION: Duration = Duration::from_millis(180);
+/// 标签指示器滑移：快速档 `t-fast`（167 ms）。
+fn tag_indicator_anim_duration() -> Duration {
+    super::design::motion::fast()
+}
 /// Width of the favorites filter button (icon is ~14px, 3px padding each side).
 const FAV_BUTTON_SIZE: f32 = 20.0;
 /// Gap between the type filter area and the favorites button.
@@ -120,7 +123,7 @@ fn advanced_scroll_step(accumulator: &mut f32, delta: ScrollDelta) -> i32 {
 }
 
 fn quick_tag_indicator_ease(delta: f32) -> f32 {
-    1.0 - (1.0 - delta).powi(3)
+    super::design::motion::ease_out_cubic(delta)
 }
 
 /// 按快速窗口规则判定单个条目是否可用。
@@ -1480,7 +1483,7 @@ impl Render for QuickPasteView {
                                 window,
                                 cx,
                                 ("quick-tag-indicator", tag_id as u64),
-                                TAG_INDICATOR_ANIM_DURATION,
+                                tag_indicator_anim_duration(),
                                 indicator_target,
                                 quick_tag_indicator_ease,
                                 indicator_target,

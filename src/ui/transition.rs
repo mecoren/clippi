@@ -36,6 +36,12 @@ where
     T: Lerp + PartialEq + 'static,
 {
     let id: ElementId = key.into();
+    // AC-6：系统开启"减少动态效果"时不做补间，直接落定到目标值。
+    let duration = if cx.reduce_motion() {
+        Duration::ZERO
+    } else {
+        duration
+    };
     // motion 的内部状态挂在 NamedChild(id, "__base-transition-state") 上，
     // 与这里同 id 的种子标记（布尔、不同条目）不会冲突。
     let seeded = window.use_keyed_state(id.clone(), cx, |_, _| false);

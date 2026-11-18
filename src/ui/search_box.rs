@@ -46,23 +46,8 @@ fn primary_modifier_pressed(modifiers: Modifiers) -> bool {
     }
 }
 
-/// Linear blend between two colors; `t` is clamped to 0..=1.
-fn mix(from: Rgba, to: Rgba, t: f32) -> Rgba {
-    let t = t.clamp(0.0, 1.0);
-    Rgba {
-        r: from.r + (to.r - from.r) * t,
-        g: from.g + (to.g - from.g) * t,
-        b: from.b + (to.b - from.b) * t,
-        a: from.a + (to.a - from.a) * t,
-    }
-}
-
-/// Ease-out quint: most of the distance is covered early, then the motion
-/// decays into place. The long decelerating tail is what reads as damping —
-/// no overshoot, no bounce.
-fn ease_out_damped(delta: f32) -> f32 {
-    1.0 - (1.0 - delta).powi(5)
-}
+// 混色与缓动统一取自 `design::motion`（AC-9）。
+use super::design::motion::{ease_out_damped, mix_rgba as mix};
 
 /// User actions the search box raises for the root view to resolve.
 pub enum SearchBoxEvent {
@@ -238,7 +223,7 @@ impl Render for SearchBox {
             .flex_col()
             .w_full()
             .flex_shrink_0()
-            .pt(px(1.))
+            .pt(px(2.))
             .px(px(8.))
             .when_some(self.picker.clone(), |row, picker| {
                 row.capture_key_down(move |event, window, cx| {

@@ -583,7 +583,7 @@ impl RenderOnce for SteppedSlider {
                                 .flex()
                                 .flex_col()
                                 .items_center()
-                                .gap(px(1.))
+                                .gap(px(2.))
                                 .cursor(CursorStyle::PointingHand)
                                 .on_mouse_down(MouseButton::Left, move |_ev, window, cx| {
                                     on_change(travel_at, window, cx);

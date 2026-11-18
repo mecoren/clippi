@@ -66,6 +66,36 @@ pub fn ease_in_out(t: f32) -> f32 {
     t * t * (3. - 2. * t)
 }
 
+/// 对称二次缓动（ease-in-out quad）：拖拽换位与落位共用。
+pub fn ease_in_out_quad(t: f32) -> f32 {
+    if t < 0.5 {
+        2. * t * t
+    } else {
+        1. - (-2. * t + 2.).powi(2) / 2.
+    }
+}
+
+/// 三次减速（ease-out cubic）：快窗指示器滑移、短提示淡入。
+pub fn ease_out_cubic(t: f32) -> f32 {
+    1. - (1. - t).powi(3)
+}
+
+/// 强减速缓动（ease-out quint）：滚动滑行"到位即停"，无回弹。
+pub fn ease_out_damped(t: f32) -> f32 {
+    1. - (1. - t).powi(5)
+}
+
+/// 线性 RGB 插值（含 alpha）；用于滚动渐隐这类纯色过渡。
+pub fn mix_rgba(from: Rgba, to: Rgba, t: f32) -> Rgba {
+    let t = t.clamp(0., 1.);
+    Rgba {
+        r: from.r + (to.r - from.r) * t,
+        g: from.g + (to.g - from.g) * t,
+        b: from.b + (to.b - from.b) * t,
+        a: from.a + (to.a - from.a) * t,
+    }
+}
+
 /// `from` 向 `to` 过渡 `t`（预乘 sRGB 插值，含 alpha），与 CSS
 /// `color-mix(in srgb, …)` 一致。`Hsla::blend` 保留首色 alpha，
 /// 无法把半透明描边混向强调色，故这里自己实现（Argus `theme.rs:546`）。

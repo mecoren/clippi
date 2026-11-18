@@ -268,12 +268,9 @@ fn auto_scroll_speed(depth: f32) -> f32 {
 }
 
 /// Symmetric easing shared by the row shuffle and drop settle animations.
+/// 曲线定义在 `design::motion`（AC-9），这里只做转发。
 pub fn ease_in_out(delta: f32) -> f32 {
-    if delta < 0.5 {
-        2.0 * delta * delta
-    } else {
-        1.0 - (-2.0 * delta + 2.0).powi(2) / 2.0
-    }
+    super::super::design::motion::ease_in_out_quad(delta)
 }
 
 /// Cursor of a drag handle at rest: an open hand where the platform has one.

@@ -1,14 +1,11 @@
 //! Animated external shortcut hints with shared theme and transition behavior.
 
-use std::time::Duration;
-
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 
+use crate::ui::design::size::Radius;
 use crate::ui::transition::keyed_transition;
 use crate::ui::{font, theme::ClippiTheme};
-
-const TRANSITION_MS: u64 = 160;
 
 /// Stable keys preserve the current value when Alt is released mid-animation.
 ///
@@ -26,9 +23,9 @@ pub fn shortcut_progress(
         window,
         cx,
         id,
-        Duration::from_millis(TRANSITION_MS),
+        super::super::design::motion::fast(),
         0.0_f32,
-        |t| 1.0 - (1.0 - t).powi(3),
+        super::super::design::motion::ease_out_cubic,
         if visible { 1.0 } else { 0.0 },
     )
     .clamp(0.0, 1.0)
@@ -70,9 +67,9 @@ fn shortcut_foreground(accent: Rgba) -> Rgba {
     // 与 `on_accent` 同一意图：按键底恒为强调色，文字按底的实际亮度取黑/白，
     // 不随主题翻转（深浅强调色都可能被用户选中）。
     if luminance > 0.179 {
-        rgb(0x000000)
+        Rgba::from(Hsla::black())
     } else {
-        rgb(0xffffff)
+        Rgba::from(Hsla::white())
     }
 }
 
@@ -81,7 +78,7 @@ fn keycap(key: SharedString, geometry: HintGeometry, theme: &ClippiTheme) -> Div
         .flex_shrink_0()
         .w(px(geometry.width))
         .h(px(geometry.height))
-        .rounded(px(3.))
+        .rounded(Radius::Sm.scaled())
         .bg(theme.accent)
         .font_family(font::system_family())
         .text_size(px(geometry.font_size))
