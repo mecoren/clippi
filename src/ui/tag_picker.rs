@@ -22,6 +22,7 @@ use super::components::reorder::{
 use super::design::palette::Palette;
 use super::design::size::{Ctrl, Radius, Space};
 use super::design::typography::{self, type_role};
+use super::widgets;
 type ReorderHandler = Rc<dyn Fn(i64, i64, bool, &mut Window, &mut App)>;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -176,13 +177,13 @@ impl RenderOnce for TagPickerPanel {
                     )
                     .child(div().flex_1())
                     .child(icon_button(
-                        "\u{e62e}",
+                        "ClearIcon",
                         text_2,
                         btn_hover,
                         Some(I18nKey::TagTooltipClear.text()),
                         on_clear,
                     ))
-                    .child(icon_button("\u{e7b7}", text_2, btn_hover, None, on_close)),
+                    .child(icon_button("CloseIcon", text_2, btn_hover, None, on_close)),
             )
             .child(div().h(px(1.)).w_full().bg(sep_line))
             // --- Create tag row ---
@@ -426,13 +427,11 @@ fn icon_button(
                 .build(window, cx)
             })
         })
-        .child(
-            div()
-                .font_family("iconfont")
-                .text_size(typography::font(type_role::BODY))
-                .text_color(color)
-                .child(icon),
-        );
+        .child(widgets::icon(
+            icon,
+            typography::font(type_role::BODY),
+            Hsla::from(color),
+        ));
 
     if let Some(handler) = handler {
         button.on_mouse_down(MouseButton::Left, move |_ev, window, cx| {

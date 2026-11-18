@@ -464,14 +464,11 @@ impl SettingsPanel {
                                             }),
                                     )
                                     .when(ids.len() > 1, |el| {
-                                        el.child(
-                                            div()
-                                                .flex_shrink_0()
-                                                .font_family("iconfont")
-                                                .text_size(fs(8.))
-                                                .text_color(text_3)
-                                                .child("\u{e602}"),
-                                        )
+                                        el.child(widgets::icon(
+                                            "ChevronDownIcon",
+                                            fs(8.),
+                                            Hsla::from(text_3),
+                                        ))
                                     })
                                     .on_mouse_down(MouseButton::Left, {
                                         let ids = ids.clone();
@@ -639,9 +636,11 @@ impl SettingsPanel {
                                                 div()
                                                     .ml(px(6.))
                                                     .flex_shrink_0()
-                                                    .font_family("iconfont")
-                                                    .text_size(fs(10.))
-                                                    .child("\u{e611}"),
+                                                    .child(widgets::icon(
+                                                        "CheckIcon",
+                                                        fs(10.),
+                                                        Hsla::from(accent),
+                                                    )),
                                             )
                                         })
                                 })),
@@ -848,14 +847,11 @@ impl SettingsPanel {
                                     .flex()
                                     .items_center()
                                     .gap(px(6.))
-                                    .child(
-                                        div()
-                                            .text_size(fs(12.))
-                                            .font_family("iconfont")
-                                            .text_color(status_color)
-                                            .flex_shrink_0()
-                                            .child("\u{e61f}"),
-                                    )
+                                    .child(div().flex_shrink_0().child(widgets::icon(
+                                        "CircleCheckIcon",
+                                        fs(12.),
+                                        Hsla::from(status_color),
+                                    )))
                                     .child(
                                         div()
                                             .min_w(px(0.))
@@ -912,7 +908,7 @@ impl SettingsPanel {
                                                 {
                                                     icon_button(
                                                         ("sync-transfer", key),
-                                                        "\u{e794}",
+                                                        "CloudIcon",
                                                         if transfer_selected {
                                                             accent
                                                         } else {
@@ -943,7 +939,7 @@ impl SettingsPanel {
                                                 } else {
                                                     disabled_icon_button(
                                                         ("sync-transfer", key),
-                                                        "\u{e794}",
+                                                        "CloudIcon",
                                                         text_3,
                                                         if transfer_station_enabled {
                                                             I18nKey::BackendTooltipSetTransfer
@@ -959,7 +955,7 @@ impl SettingsPanel {
                                             .child(if auto_enabled {
                                                 icon_button(
                                                     ("sync-edit", key),
-                                                    "\u{e679}",
+                                                    "EditIcon",
                                                     text_3,
                                                     accent,
                                                     Rgba::from(p.hover),
@@ -983,7 +979,7 @@ impl SettingsPanel {
                                             } else {
                                                 disabled_icon_button(
                                                     ("sync-edit", key),
-                                                    "\u{e679}",
+                                                    "EditIcon",
                                                     text_3,
                                                     I18nKey::BackendTooltipEdit.text(),
                                                 )
@@ -992,7 +988,7 @@ impl SettingsPanel {
                                             .child(if auto_enabled {
                                                 icon_button(
                                                     ("sync-delete", key),
-                                                    "\u{e696}",
+                                                    "DeleteIcon",
                                                     text_3,
                                                     danger,
                                                     Rgba::from(p.hover),
@@ -1019,7 +1015,7 @@ impl SettingsPanel {
                                             } else {
                                                 disabled_icon_button(
                                                     ("sync-delete", key),
-                                                    "\u{e696}",
+                                                    "DeleteIcon",
                                                     text_3,
                                                     I18nKey::BackendTooltipDelete.text(),
                                                 )
@@ -1167,14 +1163,11 @@ fn icon_button(
         .w(px(24.))
         .h(px(24.))
         .rounded(px(5.))
-        .font_family("iconfont")
-        .text_size(fs(12.))
-        .text_color(color)
         .flex()
         .items_center()
         .justify_center()
         .cursor(CursorStyle::PointingHand)
-        .hover(move |style| style.text_color(hover_color).bg(hover_bg))
+        .hover(move |style| style.bg(hover_bg))
         .tooltip(move |window, cx| {
             Tooltip::element(move |_window, _cx| div().text_size(fs(10.)).child(tooltip))
                 .build(window, cx)
@@ -1182,7 +1175,12 @@ fn icon_button(
         .on_mouse_down(MouseButton::Left, move |_ev, window, cx| {
             on_click(window, cx);
         })
-        .child(icon)
+        .child(widgets::icon_hover(
+            icon,
+            fs(12.),
+            Hsla::from(color),
+            Hsla::from(hover_color),
+        ))
 }
 
 fn disabled_icon_button(
@@ -1196,9 +1194,6 @@ fn disabled_icon_button(
         .w(px(24.))
         .h(px(24.))
         .rounded(px(5.))
-        .font_family("iconfont")
-        .text_size(fs(12.))
-        .text_color(color)
         .opacity(0.35)
         .flex()
         .items_center()
@@ -1208,7 +1203,7 @@ fn disabled_icon_button(
             Tooltip::element(move |_window, _cx| div().text_size(fs(10.)).child(tooltip))
                 .build(window, cx)
         })
-        .child(icon)
+        .child(widgets::icon(icon, fs(12.), Hsla::from(color)))
 }
 
 /// 禁用态开关：形状与 [`widgets::toggle`] 一致，但整体压暗且不响应指针。

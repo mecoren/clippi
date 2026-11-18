@@ -8,6 +8,7 @@ use gpui_kit::component::text::{TextView, TextViewStyle};
 
 use crate::core::i18n_keys::I18nKey;
 use crate::services::update::UpdatePhase;
+use crate::ui::widgets;
 
 use super::SettingsPanel;
 
@@ -90,7 +91,11 @@ impl SettingsPanel {
                     // ── Left: compact auto-check checkbox ──
                     .child({
                         let this = this.clone();
-                        let check_icon = if auto_check { "\u{e61f}" } else { "\u{e831}" };
+                        let check_icon = if auto_check {
+                            "CircleCheckIcon"
+                        } else {
+                            "CircleIcon"
+                        };
                         let check_color = if auto_check { accent } else { text_3 };
                         div()
                             .flex()
@@ -108,13 +113,7 @@ impl SettingsPanel {
                                     cx.notify();
                                 });
                             })
-                            .child(
-                                div()
-                                    .text_size(fs(12.))
-                                    .font_family("iconfont")
-                                    .text_color(check_color)
-                                    .child(check_icon),
-                            )
+                            .child(widgets::icon(check_icon, fs(12.), Hsla::from(check_color)))
                             .child(
                                 div()
                                     .text_size(fs(11.))
@@ -170,25 +169,16 @@ impl SettingsPanel {
                         }
                     })
                     // Gray icon (default)
-                    .child(
-                        div()
-                            .text_size(fs(26.))
-                            .font_family("iconfont")
-                            .text_color(text_3)
-                            .child("\u{ea0a}"),
-                    )
+                    .child(widgets::icon("GithubIcon", fs(26.), Hsla::from(text_3)))
                     // Green icon (shown on group hover)
                     .child(
                         div()
                             .absolute()
                             .top_0()
                             .left_0()
-                            .text_size(fs(26.))
-                            .font_family("iconfont")
-                            .text_color(accent)
                             .opacity(0.0)
                             .group_hover("gh-icon", |s| s.opacity(1.0))
-                            .child("\u{ea0a}"),
+                            .child(widgets::icon("GithubIcon", fs(26.), Hsla::from(accent))),
                     ),
             )
             .when(matches!(phase, UpdatePhase::Downloading { .. }), |el| {

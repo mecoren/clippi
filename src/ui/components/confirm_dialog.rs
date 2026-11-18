@@ -24,6 +24,7 @@ use gpui::*;
 use crate::ui::design::palette::Palette;
 use crate::ui::theme::ClippiTheme;
 use crate::ui::transition::keyed_transition;
+use crate::ui::widgets;
 
 type DialogHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 
@@ -353,22 +354,19 @@ impl ConfirmDialog {
                                         cx.stop_propagation();
                                         on_toggle(window, cx);
                                     })
-                                    .child(
-                                        div()
-                                            .flex_shrink_0()
-                                            .font_family("iconfont")
-                                            .text_size(fs(12.))
-                                            .text_color(if option.selected {
-                                                theme.accent
-                                            } else {
-                                                theme.text_3
-                                            })
-                                            .child(if option.selected {
-                                                "\u{e61f}"
-                                            } else {
-                                                "\u{e831}"
-                                            }),
-                                    )
+                                    .child(widgets::icon(
+                                        if option.selected {
+                                            "CircleCheckIcon"
+                                        } else {
+                                            "CircleIcon"
+                                        },
+                                        fs(12.),
+                                        Hsla::from(if option.selected {
+                                            theme.accent
+                                        } else {
+                                            theme.text_3
+                                        }),
+                                    ))
                                     .child(
                                         div()
                                             .text_size(fs(12.))

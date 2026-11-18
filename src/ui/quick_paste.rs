@@ -1374,7 +1374,7 @@ impl Render for QuickPasteView {
                                     |(index, entry)| {
                                         let active = filters.is_type_active(entry.key);
                                         let (icon, label) = filter_type_display(entry.key)
-                                            .unwrap_or(("\u{e606}", "".into()));
+                                            .unwrap_or(("TextIcon", "".into()));
                                         let key = entry.key;
                                         let app_state = self.state.clone();
                                         let filter_text = if active { p.accent } else { p.ink_2 };
@@ -1440,7 +1440,7 @@ impl Render for QuickPasteView {
                                 }
                             })
                             .child(widgets::icon(
-                                "\u{e630}",
+                                "StarIcon",
                                 IconSize::Md.scaled(),
                                 if fav_active { p.fav } else { p.ink_2 },
                             )),
@@ -2023,7 +2023,11 @@ impl Render for QuickPasteView {
                             .items_center()
                             .gap(Space::Sm.scaled())
                             .overflow_hidden()
-                            .child(widgets::icon("\u{e66b}", IconSize::Sm.scaled(), p.ink_3))
+                            .child(widgets::icon(
+                                "KeyboardIcon",
+                                IconSize::Sm.scaled(),
+                                p.ink_3,
+                            ))
                             .child(div().whitespace_nowrap().child("Enter 粘贴"))
                             .child(
                                 div()
@@ -2074,7 +2078,7 @@ impl Render for QuickPasteView {
                                     view.update(cx, |view, cx| view.activate_search(cx));
                                 }
                             })
-                            .child(widgets::icon("\u{e688}", IconSize::Sm.scaled(), p.ink_3))
+                            .child(widgets::icon("SearchIcon", IconSize::Sm.scaled(), p.ink_3))
                             .child(
                                 div()
                                     .flex_1()
@@ -2095,29 +2099,29 @@ impl Render for QuickPasteView {
 
 fn type_icon(item: &ClipboardItem) -> &'static str {
     if item.meta_type == "email" {
-        return "\u{e604}";
+        return "MailIcon";
     }
     if item.meta_type == "phone" {
-        return "\u{e966}";
+        return "PhoneIcon";
     }
     if item.content_type == ContentType::Image
         && crate::core::types::RichData::from_json(&item.rich_data)
             .qr_text
             .is_some()
     {
-        return "\u{e605}";
+        return "QrCodeIcon";
     }
     match item.display_kind() {
-        DisplayKind::PlainText => "\u{e606}",
-        DisplayKind::Html | DisplayKind::Markdown | DisplayKind::Rtf => "\u{e853}",
-        DisplayKind::Image => "\u{e626}",
-        DisplayKind::File => "\u{e68a}",
-        DisplayKind::Link => "\u{e6d7}",
-        DisplayKind::Path => "\u{e60f}",
-        DisplayKind::Color => "\u{e608}",
-        DisplayKind::Email => "\u{e604}",
-        DisplayKind::Phone => "\u{e966}",
-        DisplayKind::Secret => "\u{e612}",
+        DisplayKind::PlainText => "TextIcon",
+        DisplayKind::Html | DisplayKind::Markdown | DisplayKind::Rtf => "RichTextIcon",
+        DisplayKind::Image => "ImageIcon",
+        DisplayKind::File => "FilesIcon",
+        DisplayKind::Link => "LinkIcon",
+        DisplayKind::Path => "PathIcon",
+        DisplayKind::Color => "ColorIcon",
+        DisplayKind::Email => "MailIcon",
+        DisplayKind::Phone => "PhoneIcon",
+        DisplayKind::Secret => "SecretIcon",
     }
 }
 

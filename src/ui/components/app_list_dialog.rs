@@ -8,6 +8,8 @@ use std::rc::Rc;
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
+
+use crate::ui::widgets;
 use gpui_kit::component::scroll::{Scrollbar, ScrollbarAxis};
 use gpui_kit::component::tooltip::Tooltip;
 
@@ -360,9 +362,6 @@ fn render_title_bar(
                             .rounded(px(10.))
                             .border(px(1.))
                             .border_color(divider)
-                            .font_family("iconfont")
-                            .text_size(fs(13.))
-                            .text_color(text_2)
                             .flex()
                             .items_center()
                             .justify_center()
@@ -385,7 +384,12 @@ fn render_title_bar(
                                 })
                                 .build(window, cx)
                             })
-                            .child("\u{e60a}"),
+                            .child(widgets::icon_hover(
+                                "HelpIcon",
+                                fs(13.),
+                                Hsla::from(text_2),
+                                Hsla::from(accent),
+                            )),
                     )
                 })
                 .child({
@@ -394,9 +398,6 @@ fn render_title_bar(
                         .w(px(26.))
                         .h(px(26.))
                         .rounded(px(6.))
-                        .font_family("iconfont")
-                        .text_size(fs(13.))
-                        .text_color(text_2)
                         .flex()
                         .items_center()
                         .justify_center()
@@ -406,7 +407,7 @@ fn render_title_bar(
                             cx.stop_propagation();
                             close(window, cx);
                         })
-                        .child("\u{e7b7}")
+                        .child(widgets::icon("CloseIcon", fs(13.), Hsla::from(text_2)))
                 }),
         )
 }
@@ -522,9 +523,6 @@ fn render_entry(
                             .w(px(20.))
                             .h(px(20.))
                             .rounded(px(4.))
-                            .font_family("iconfont")
-                            .text_size(fs(12.))
-                            .text_color(text_2)
                             .flex()
                             .items_center()
                             .justify_center()
@@ -538,7 +536,7 @@ fn render_entry(
                                     }
                                 }
                             })
-                            .child("\u{e7b7}"),
+                            .child(widgets::icon("CloseIcon", fs(12.), Hsla::from(text_2))),
                     )
                 })
                 // Delete button
@@ -549,9 +547,6 @@ fn render_entry(
                         .w(px(20.))
                         .h(px(20.))
                         .rounded(px(4.))
-                        .font_family("iconfont")
-                        .text_size(fs(12.))
-                        .text_color(text_3)
                         .flex()
                         .items_center()
                         .justify_center()
@@ -565,7 +560,12 @@ fn render_entry(
                                 del_cb(del_name.clone(), window, cx);
                             }
                         })
-                        .child("\u{e696}")
+                        .child(widgets::icon_hover(
+                            "DeleteIcon",
+                            fs(12.),
+                            Hsla::from(text_3),
+                            Hsla::from(danger),
+                        ))
                 }),
         )
 }

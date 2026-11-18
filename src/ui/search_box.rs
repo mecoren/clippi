@@ -400,7 +400,7 @@ impl Render for SearchBox {
                                     .prefix(
                                         div().pl(Space::Md.scaled()).pr(Space::Xxs.scaled()).child(
                                             widgets::icon(
-                                                "\u{e688}",
+                                                "SearchIcon",
                                                 IconSize::Md.scaled(),
                                                 text_3.into(),
                                             ),

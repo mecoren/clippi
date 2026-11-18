@@ -27,6 +27,7 @@ use super::design::palette::Palette;
 use super::design::size::{Ctrl, Radius, Space};
 use super::design::typography::{self, type_role};
 use super::filter_bar::FilterBar;
+use super::widgets;
 
 /// Pending tag-deletion target, emitted as a user intent and confirmed at the
 /// root level before any database mutation happens.
@@ -262,7 +263,7 @@ impl Render for TagFilterPanel {
                     )
                     .child(div().flex_1())
                     .child(icon_btn(
-                        "\u{e61e}",
+                        "CombineIcon",
                         if tag_match_all { accent } else { text_2 },
                         btn_hover,
                         Some(I18nKey::TagTooltipToggleMode.text()),
@@ -273,7 +274,7 @@ impl Render for TagFilterPanel {
                     ))
                     .when(has_tag_filter, |el| {
                         el.child(icon_btn(
-                            "\u{e62e}",
+                            "ClearIcon",
                             text_2,
                             btn_hover,
                             Some(I18nKey::TagTooltipClear.text()),
@@ -283,7 +284,7 @@ impl Render for TagFilterPanel {
                             },
                         ))
                     })
-                    .child(icon_btn("\u{e7b7}", text_2, btn_hover, None, {
+                    .child(icon_btn("CloseIcon", text_2, btn_hover, None, {
                         let this = this.clone();
                         move |_, cx| this.update(cx, |panel, cx| panel.close(cx))
                     }))
@@ -411,11 +412,11 @@ impl Render for TagFilterPanel {
                                                             &preview_palette,
                                                         )
                                                         .child(small_btn_visual(
-                                                            "\u{e679}",
+                                                            "EditIcon",
                                                             Rgba::from(preview_palette.ink_3),
                                                         ))
                                                         .child(small_btn_visual(
-                                                            "\u{e696}",
+                                                            "DeleteIcon",
                                                             Rgba::from(preview_palette.ink_3),
                                                         ))
                                                         .into_any_element()
@@ -441,7 +442,7 @@ impl Render for TagFilterPanel {
                                                             }
                                                         })
                                                         .child(small_btn(
-                                                            "\u{e679}",
+                                                            "EditIcon",
                                                             text_3,
                                                             false,
                                                             btn_hover,
@@ -483,7 +484,7 @@ impl Render for TagFilterPanel {
                                                             },
                                                         ))
                                                         .child(small_btn(
-                                                            "\u{e696}",
+                                                            "DeleteIcon",
                                                             text_3,
                                                             true,
                                                             btn_hover,
@@ -573,10 +574,7 @@ fn filter_tag_cell(tag: &TagInfo, checked: bool, pinned: bool, p: &Palette) -> D
                 .flex()
                 .items_center()
                 .justify_center()
-                .text_size(typography::font(type_role::BODY))
-                .font_family("iconfont")
-                .text_color(tag_color)
-                .child("\u{e633}")
+                .child(widgets::icon("PinIcon", px(10.), Hsla::from(tag_color)))
         } else {
             div()
                 .w(px(10.))
@@ -804,13 +802,11 @@ fn icon_btn(
                 .build(window, cx)
             })
         })
-        .child(
-            div()
-                .font_family("iconfont")
-                .text_size(typography::font(type_role::BODY))
-                .text_color(color)
-                .child(icon),
-        )
+        .child(widgets::icon(
+            icon,
+            typography::font(type_role::BODY),
+            Hsla::from(color),
+        ))
         .on_mouse_down(MouseButton::Left, move |_e, w, cx| {
             cx.stop_propagation();
             handler(w, cx);
@@ -842,13 +838,11 @@ fn small_btn_visual(icon: &'static str, color: Rgba) -> Div {
         .flex()
         .items_center()
         .justify_center()
-        .child(
-            div()
-                .font_family("iconfont")
-                .text_size(typography::font(type_role::BODY))
-                .text_color(color)
-                .child(icon),
-        )
+        .child(widgets::icon(
+            icon,
+            typography::font(type_role::BODY),
+            Hsla::from(color),
+        ))
 }
 
 fn parse_hex_to_rgba(hex: &str, fallback: Rgba) -> Rgba {

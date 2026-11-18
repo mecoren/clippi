@@ -952,18 +952,15 @@ impl SettingsPanel {
                                 },
                             )
                         })
-                        .child(
-                            div()
-                                .flex_shrink_0()
-                                .font_family("iconfont")
-                                .text_size(fs(12.))
-                                .text_color(if stale_enabled { accent } else { text_3 })
-                                .child(if stale_enabled {
-                                    "\u{e61f}"
-                                } else {
-                                    "\u{e831}"
-                                }),
-                        )
+                        .child(widgets::icon(
+                            if stale_enabled {
+                                "CircleCheckIcon"
+                            } else {
+                                "CircleIcon"
+                            },
+                            fs(12.),
+                            Hsla::from(if stale_enabled { accent } else { text_3 }),
+                        ))
                         .child(
                             div()
                                 .flex()

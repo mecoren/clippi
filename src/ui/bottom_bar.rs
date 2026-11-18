@@ -156,7 +156,7 @@ impl RenderOnce for BottomBar {
                                     }
                                 })
                                 .child(widgets::icon(
-                                    "\u{e638}",
+                                    "ClipboardBlockIcon",
                                     IconSize::Sm.scaled(),
                                     base_color,
                                 ))
@@ -189,7 +189,7 @@ impl RenderOnce for BottomBar {
                                         settings.update(cx, |_panel, cx| cx.emit(SettingsEvent::ShowHotkeyConfirm(hotkey::HotkeyConfirmAction::AddBlacklist { app_name: fg.clone() })));
                                     }
                                 })
-                                .child(widgets::icon("\u{e600}", IconSize::Sm.scaled(), p.ink_3))
+                                .child(widgets::icon("BanIcon", IconSize::Sm.scaled(), p.ink_3))
                         })
                 )
             })

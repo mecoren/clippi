@@ -375,15 +375,11 @@ impl AddBackendPanel {
                                 })
                                 .child({
                                     let icon = match name.as_str() {
-                                        "OneDrive" => "\u{e601}",
-                                        "iCloud" => "\u{ebc8}",
-                                        _ => "\u{e60a}",
+                                        "OneDrive" => "CloudIcon",
+                                        "iCloud" => "CloudIcon",
+                                        _ => "HelpIcon",
                                     };
-                                    div()
-                                        .font_family("iconfont")
-                                        .text_size(fs(14.))
-                                        .text_color(text_2)
-                                        .child(icon)
+                                    widgets::icon(icon, fs(14.), Hsla::from(text_2))
                                 })
                                 .child(
                                     div()
@@ -772,8 +768,6 @@ impl Render for AddBackendPanel {
                                                 .w(px(26.))
                                                 .h(px(26.))
                                                 .rounded(px(6.))
-                                                .font_family("iconfont")
-                                                .text_size(fs(14.))
                                                 .text_color(self.theme.text_2)
                                                 .flex()
                                                 .items_center()
@@ -791,7 +785,11 @@ impl Render for AddBackendPanel {
                                                         });
                                                     }
                                                 })
-                                                .child("\u{e62b}"),
+                                                .child(widgets::icon(
+                                                    "BackIcon",
+                                                    fs(14.),
+                                                    Hsla::from(self.theme.text_2),
+                                                )),
                                         )
                                     })
                                     .child(if self.step == EditorStep::SelectType {
@@ -810,8 +808,6 @@ impl Render for AddBackendPanel {
                                     .w(px(26.))
                                     .h(px(26.))
                                     .rounded(px(6.))
-                                    .font_family("iconfont")
-                                    .text_size(fs(13.))
                                     .text_color(self.theme.text_2)
                                     .flex()
                                     .items_center()
@@ -825,7 +821,11 @@ impl Render for AddBackendPanel {
                                             this.update(cx, |panel, cx| panel.close(cx));
                                         }
                                     })
-                                    .child("\u{e7b7}"),
+                                    .child(widgets::icon(
+                                        "CloseIcon",
+                                        fs(13.),
+                                        Hsla::from(self.theme.text_2),
+                                    )),
                             ),
                     )
                     .child(div().h(px(1.)).bg(self.theme.divider))

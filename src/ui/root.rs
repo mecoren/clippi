@@ -2577,10 +2577,10 @@ impl Render for RootView {
                 let theme = self.theme.clone();
                 let hover = theme.btn_hover;
                 let rows = [
-                    ("secret", "\u{e612}", I18nKey::PrivacySecret),
-                    ("phone", "\u{e966}", I18nKey::PrivacyPhone),
-                    ("email", "\u{e604}", I18nKey::PrivacyEmail),
-                    ("link", "\u{e6d7}", I18nKey::PrivacyLink),
+                    ("secret", "SecretIcon", I18nKey::PrivacySecret),
+                    ("phone", "PhoneIcon", I18nKey::PrivacyPhone),
+                    ("email", "MailIcon", I18nKey::PrivacyEmail),
+                    ("link", "LinkIcon", I18nKey::PrivacyLink),
                 ].into_iter().map(|(kind, icon, label)| {
                     let checked = selected.iter().any(|value| value == kind);
                     let state = self.state.clone();

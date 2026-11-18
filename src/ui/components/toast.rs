@@ -124,13 +124,11 @@ impl RenderOnce for Toast {
             .gap(px(8.));
 
         if let Some(icon) = self.icon {
-            left = left.child(
-                div()
-                    .font_family("iconfont")
-                    .text_size(fs(12.))
-                    .text_color(text_color)
-                    .child(icon),
-            );
+            left = left.child(crate::ui::widgets::icon(
+                icon,
+                fs(12.),
+                Hsla::from(text_color),
+            ));
         }
 
         let mut message = div()

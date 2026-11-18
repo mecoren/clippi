@@ -14,7 +14,7 @@
 //!
 //! The font family is applied through `Theme::font_family`, which the
 //! gpui-component `Root` view already cascades to every child. Because the
-//! family is inherited (iconfont glyphs set theirs locally and are unaffected),
+//! family is inherited (icons are SVG assets and are unaffected),
 //! a single family choice re-skins the whole UI, and Chinese/English both
 //! render: DirectWrite/CoreText resolve any missing glyphs through the system
 //! fallback chain, so a Latin-only font still shows CJK and vice versa.

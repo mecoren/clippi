@@ -15,6 +15,8 @@ use std::time::Duration;
 use base64::Engine;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
+
+use super::widgets;
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::text::{TextView, TextViewStyle};
 
@@ -598,29 +600,29 @@ mod rtf_preview_tests {
     }
 }
 
-/// Get a content type iconfont glyph for display.
+/// 内容类型对应的产品图标名（见 `ui/assets.rs` 的登记表）。
 fn type_icon(item: &ClipboardItem) -> &'static str {
     // Use meta-type specific icons for email and phone
     if item.meta_type == "email" {
-        return "\u{e604}";
+        return "MailIcon";
     }
     if item.meta_type == "phone" {
-        return "\u{e966}";
+        return "PhoneIcon";
     }
     if has_qr_code(item) {
-        return "\u{e605}";
+        return "QrCodeIcon";
     }
     match item.display_kind() {
-        DisplayKind::PlainText => "\u{e606}",
-        DisplayKind::Html | DisplayKind::Markdown | DisplayKind::Rtf => "\u{e853}",
-        DisplayKind::Image => "\u{e626}",
-        DisplayKind::File => "\u{e68a}",
-        DisplayKind::Link => "\u{e6d7}",
-        DisplayKind::Path => "\u{e60f}",
-        DisplayKind::Color => "\u{e608}",
-        DisplayKind::Email => "\u{e604}",
-        DisplayKind::Phone => "\u{e966}",
-        DisplayKind::Secret => "\u{e612}",
+        DisplayKind::PlainText => "TextIcon",
+        DisplayKind::Html | DisplayKind::Markdown | DisplayKind::Rtf => "RichTextIcon",
+        DisplayKind::Image => "ImageIcon",
+        DisplayKind::File => "FilesIcon",
+        DisplayKind::Link => "LinkIcon",
+        DisplayKind::Path => "PathIcon",
+        DisplayKind::Color => "ColorIcon",
+        DisplayKind::Email => "MailIcon",
+        DisplayKind::Phone => "PhoneIcon",
+        DisplayKind::Secret => "SecretIcon",
     }
 }
 
@@ -1765,11 +1767,7 @@ impl RenderOnce for ClipboardCard {
                                 .rounded(sc(4.))
                                 .into_any_element()
                         } else {
-                            div()
-                                .text_size(sc(18.))
-                                .font_family("iconfont")
-                                .text_color(tag_text)
-                                .child(icon.to_string())
+                            widgets::icon(icon.to_string(), sc(18.), Hsla::from(tag_text))
                                 .into_any_element()
                         }),
                 )
@@ -1809,7 +1807,7 @@ impl RenderOnce for ClipboardCard {
                         })
                 };
                 let effective_icon = file_icon.or(source_icon_path);
-                let fallback_icon = if transfer_is_cloud { "\u{e794}" } else { icon };
+                let fallback_icon = if transfer_is_cloud { "CloudIcon" } else { icon };
                 div()
                     .w(sc(36.))
                     .flex()
@@ -1836,12 +1834,12 @@ impl RenderOnce for ClipboardCard {
                                     .rounded(sc(4.))
                                     .into_any_element()
                             } else {
-                                div()
-                                    .text_size(sc(18.))
-                                    .font_family("iconfont")
-                                    .text_color(tag_text)
-                                    .child(fallback_icon.to_string())
-                                    .into_any_element()
+                                widgets::icon(
+                                    fallback_icon.to_string(),
+                                    sc(18.),
+                                    Hsla::from(tag_text),
+                                )
+                                .into_any_element()
                             }),
                     )
                     .child(
@@ -1905,11 +1903,7 @@ impl RenderOnce for ClipboardCard {
                                     .rounded(sc(4.))
                                     .into_any_element()
                             } else {
-                                div()
-                                    .text_size(sc(18.))
-                                    .font_family("iconfont")
-                                    .text_color(tag_text)
-                                    .child(icon.to_string())
+                                widgets::icon(icon.to_string(), sc(18.), Hsla::from(tag_text))
                                     .into_any_element()
                             }),
                     )
@@ -1958,11 +1952,7 @@ impl RenderOnce for ClipboardCard {
                                 .rounded(sc(4.))
                                 .into_any_element()
                         } else {
-                            div()
-                                .text_size(sc(18.))
-                                .font_family("iconfont")
-                                .text_color(tag_text)
-                                .child(icon.to_string())
+                            widgets::icon(icon.to_string(), sc(18.), Hsla::from(tag_text))
                                 .into_any_element()
                         }),
                 )
@@ -2013,13 +2003,7 @@ impl RenderOnce for ClipboardCard {
                         .flex_row()
                         .items_center()
                         .gap(sc(4.))
-                        .child(
-                            div()
-                                .font_family("iconfont")
-                                .text_size(sc(14.))
-                                .text_color(accent)
-                                .child("\u{e66b}"),
-                        )
+                        .child(widgets::icon("KeyboardIcon", sc(14.), Hsla::from(accent)))
                         .child(
                             div()
                                 .text_size(sc(12.))
@@ -2095,7 +2079,7 @@ impl RenderOnce for ClipboardCard {
                     }),
                 )
                 .child(
-                    // --- Confirm button (checkmark icon \u{e611}) ---
+                    // --- Confirm button (checkmark icon CheckIcon) ---
                     div().flex().flex_row().justify_end().child(
                         div()
                             .w(sc(20.))
@@ -2115,13 +2099,7 @@ impl RenderOnce for ClipboardCard {
                                     }
                                 }
                             })
-                            .child(
-                                div()
-                                    .font_family("iconfont")
-                                    .text_size(sc(12.))
-                                    .text_color(accent)
-                                    .child("\u{e611}"), // checkmark icon
-                            ),
+                            .child(widgets::icon("CheckIcon", sc(12.), Hsla::from(accent))),
                     ),
                 )
                 .on_key_down({
@@ -2354,9 +2332,9 @@ impl RenderOnce for ClipboardCard {
                                 )
                         } else if image_missing || preview_img_path.is_none() {
                             let (placeholder_color, placeholder_icon) = if img_stale {
-                                (danger, "\u{e607}")
+                                (danger, "BrokenImageIcon")
                             } else {
-                                (text_3, "\u{e626}")
+                                (text_3, "ImageIcon")
                             };
                             div()
                                 .flex_1()
@@ -2374,13 +2352,11 @@ impl RenderOnce for ClipboardCard {
                                         .flex()
                                         .items_center()
                                         .justify_center()
-                                        .child(
-                                            div()
-                                                .text_size(sc(24.))
-                                                .font_family("iconfont")
-                                                .text_color(placeholder_color)
-                                                .child(placeholder_icon),
-                                        ),
+                                        .child(widgets::icon(
+                                            placeholder_icon,
+                                            sc(24.),
+                                            Hsla::from(placeholder_color),
+                                        )),
                                 )
                         } else {
                             div()
@@ -2404,10 +2380,11 @@ impl RenderOnce for ClipboardCard {
                                                 .flex()
                                                 .items_center()
                                                 .justify_center()
-                                                .text_size(sc(22.))
-                                                .font_family("iconfont")
-                                                .text_color(text_2)
-                                                .child("\u{e626}"),
+                                                .child(widgets::icon(
+                                                    "ImageIcon",
+                                                    sc(22.),
+                                                    Hsla::from(text_2),
+                                                )),
                                         )
                                         .child(
                                             div()
@@ -2563,7 +2540,11 @@ impl RenderOnce for ClipboardCard {
                                 highlight_bg,
                                 highlight_text,
                             );
-                            let bad_icon = if fi.is_dir { "\u{e60f}" } else { "\u{e646}" };
+                            let bad_icon = if fi.is_dir {
+                                "PathIcon"
+                            } else {
+                                "FileImageIcon"
+                            };
                             div()
                                 .flex_1()
                                 .flex()
@@ -2581,13 +2562,7 @@ impl RenderOnce for ClipboardCard {
                                         .gap(sc(4.))
                                         .items_center()
                                         .overflow_hidden()
-                                        .child(
-                                            div()
-                                                .font_family("iconfont")
-                                                .text_size(sc(12.))
-                                                .text_color(danger)
-                                                .child(bad_icon),
-                                        )
+                                        .child(widgets::icon(bad_icon, sc(12.), Hsla::from(danger)))
                                         .child(
                                             div()
                                                 .flex_1()
@@ -2626,8 +2601,11 @@ impl RenderOnce for ClipboardCard {
                                     } else {
                                         cached_file_icon_path(&fi.path, fi.is_dir)
                                     };
-                                    let fallback_icon =
-                                        if fi.is_dir { "\u{e60f}" } else { "\u{e646}" };
+                                    let fallback_icon = if fi.is_dir {
+                                        "PathIcon"
+                                    } else {
+                                        "FileImageIcon"
+                                    };
                                     let row = div()
                                         .rounded(sc(4.))
                                         .bg(subtle_row_bg)
@@ -2657,12 +2635,12 @@ impl RenderOnce for ClipboardCard {
                                                         .rounded(sc(2.))
                                                         .into_any_element()
                                                 } else {
-                                                    div()
-                                                        .font_family("iconfont")
-                                                        .text_size(sc(12.))
-                                                        .text_color(text_3)
-                                                        .child(fallback_icon)
-                                                        .into_any_element()
+                                                    widgets::icon(
+                                                        fallback_icon,
+                                                        sc(12.),
+                                                        Hsla::from(text_3),
+                                                    )
+                                                    .into_any_element()
                                                 }),
                                         )
                                     } else {
@@ -2986,13 +2964,7 @@ impl RenderOnce for ClipboardCard {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .child(
-                            div()
-                                .font_family("iconfont")
-                                .text_size(sc(10.))
-                                .text_color(accent)
-                                .child("\u{e6d7}"),
-                        ),
+                        .child(widgets::icon("LinkIcon", sc(10.), Hsla::from(accent))),
                 )
             })
             .when_some(hotkey_pill, |el, hk| {
@@ -3019,13 +2991,7 @@ impl RenderOnce for ClipboardCard {
                         .flex()
                         .items_center()
                         .gap(sc(HOTKEY_PILL_ICON_GAP))
-                        .child(
-                            div()
-                                .font_family("iconfont")
-                                .text_size(sc(9.))
-                                .text_color(accent)
-                                .child("\u{e66b}"),
-                        )
+                        .child(widgets::icon("KeyboardIcon", sc(9.), Hsla::from(accent)))
                         .child(div().text_size(sc(9.)).text_color(accent).child(hk)),
                 )
             })
@@ -3062,16 +3028,17 @@ impl RenderOnce for ClipboardCard {
                         .child(if matches!(kind, TransferPillKind::Downloading) {
                             activity_spinner(animation_id, pill_text_color, 12.)
                         } else {
-                            div()
-                                .font_family("iconfont")
-                                .text_size(sc(9.))
-                                .text_color(pill_text_color)
-                                .child(match kind {
-                                    TransferPillKind::Cloud => "\u{e601}",
-                                    TransferPillKind::Local => "\u{e794}",
+                            widgets::icon(
+                                match kind {
+                                    TransferPillKind::Cloud | TransferPillKind::Local => {
+                                        "CloudIcon"
+                                    }
                                     TransferPillKind::Downloading => unreachable!(),
-                                })
-                                .into_any_element()
+                                },
+                                sc(9.),
+                                Hsla::from(pill_text_color),
+                            )
+                            .into_any_element()
                         })
                         .child(
                             div()
@@ -3110,11 +3077,7 @@ impl RenderOnce for ClipboardCard {
                         .child(if source_is_uploading {
                             activity_spinner(uploading_spinner_id, pin, 14.)
                         } else {
-                            div()
-                                .font_family("iconfont")
-                                .text_size(sc(10.))
-                                .child("\u{e794}")
-                                .into_any_element()
+                            widgets::icon("CloudIcon", sc(10.), Hsla::from(pin)).into_any_element()
                         }),
                 )
             })

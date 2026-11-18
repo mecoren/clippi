@@ -588,7 +588,7 @@ impl Render for SettingsPanel {
                     .h(px(36.))
                     .px(px(8.))
                     .mt(px(4.))
-                    // --- Back button (28x28, iconfont → ---
+                    // --- Back button (28x28, Lucide) ---
                     .child(
                         div()
                             .w(px(28.))
@@ -611,13 +611,7 @@ impl Render for SettingsPanel {
                                     });
                                 }
                             })
-                            .child(
-                                div()
-                                    .font_family("iconfont")
-                                    .text_size(fs(16.))
-                                    .text_color(theme.text_2)
-                                    .child("\u{e62b}"),
-                            ),
+                            .child(widgets::icon("BackIcon", fs(16.), Hsla::from(theme.text_2))),
                     )
                     // --- Title (14px, 700 weight, text_1) ---
                     .child(
@@ -863,7 +857,11 @@ impl SettingsPanel {
                 on_click(window, cx);
             })
             .child(self.row_text(label, desc))
-            .child(widgets::icon("\u{e602}", IconSize::Sm.scaled(), p.ink_2))
+            .child(widgets::icon(
+                "ChevronDownIcon",
+                IconSize::Sm.scaled(),
+                p.ink_2,
+            ))
     }
 
     /// Render a settings row with an animated toggle switch on the right.
@@ -1077,7 +1075,11 @@ impl SettingsPanel {
                             .text_color(p.ink_2)
                             .child(value),
                     )
-                    .child(widgets::icon("\u{e602}", IconSize::Sm.scaled(), p.ink_3)),
+                    .child(widgets::icon(
+                        "ChevronDownIcon",
+                        IconSize::Sm.scaled(),
+                        p.ink_3,
+                    )),
             )
     }
 
@@ -1299,9 +1301,6 @@ impl SettingsPanel {
                                     .w(px(24.))
                                     .h(px(24.))
                                     .rounded(px(6.))
-                                    .font_family("iconfont")
-                                    .text_size(fs(12.))
-                                    .text_color(text_2)
                                     .flex()
                                     .items_center()
                                     .justify_center()
@@ -1314,7 +1313,7 @@ impl SettingsPanel {
                                             });
                                         }
                                     })
-                                    .child("\u{e7b7}"),
+                                    .child(widgets::icon("CloseIcon", fs(12.), Hsla::from(text_2))),
                             ),
                     )
                     .child(div().h(px(1.)).flex_shrink_0().bg(divider))

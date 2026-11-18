@@ -3,6 +3,8 @@
 use base64::Engine;
 use gpui::prelude::*;
 use gpui::*;
+
+use super::widgets;
 use gpui_kit::component::input::{Input, InputEvent, InputState, RopeExt, Textarea, TextareaState};
 use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::text::{TextView, TextViewStyle};
@@ -338,18 +340,18 @@ impl EditPanel {
                 surface,
                 divider,
                 text_3,
-                "\u{e64c}",
+                "FindIcon",
             ))
             .child(find_field(
                 &self.replace_input,
                 surface,
                 divider,
                 text_3,
-                "\u{e7a9}",
+                "ReplaceFieldIcon",
             ))
             .child(icon_button(
                 "edit-replace-all",
-                "\u{e6ed}",
+                "ReplaceAllIcon",
                 text_2,
                 accent,
                 hover_bg,
@@ -532,7 +534,7 @@ impl Render for EditPanel {
                     .h(px(36.))
                     .child(icon_button(
                         "edit-back",
-                        "\u{e62b}",
+                        "BackIcon",
                         text_2,
                         accent,
                         hover_bg,
@@ -593,7 +595,7 @@ impl Render for EditPanel {
                     .child(div().flex_1())
                     .child(icon_button(
                         "edit-extract-links",
-                        "\u{e6d7}",
+                        "LinkIcon",
                         text_2,
                         accent,
                         hover_bg,
@@ -626,7 +628,7 @@ impl Render for EditPanel {
                     ))
                     .child(icon_button(
                         "edit-find",
-                        "\u{e64c}",
+                        "FindIcon",
                         if self.find_open { accent } else { text_2 },
                         accent,
                         hover_bg,
@@ -640,7 +642,7 @@ impl Render for EditPanel {
                     ))
                     .child(icon_button(
                         "edit-url-decode",
-                        "\u{e6da}",
+                        "LinkDecodeIcon",
                         text_2,
                         accent,
                         hover_bg,
@@ -659,7 +661,7 @@ impl Render for EditPanel {
                     ))
                     .child(icon_button(
                         "edit-base64-decode",
-                        "\u{e66e}",
+                        "Base64Icon",
                         text_2,
                         accent,
                         hover_bg,
@@ -678,7 +680,7 @@ impl Render for EditPanel {
                     ))
                     .child(icon_button(
                         "edit-json-format",
-                        "\u{e819}",
+                        "JsonIcon",
                         text_2,
                         accent,
                         hover_bg,
@@ -692,7 +694,7 @@ impl Render for EditPanel {
                     ))
                     .child(icon_button(
                         "edit-trim",
-                        "\u{e6db}",
+                        "TrimIcon",
                         text_2,
                         accent,
                         hover_bg,
@@ -1073,14 +1075,12 @@ fn icon_button(
         .on_mouse_down(MouseButton::Left, move |_ev, window, cx| {
             handler(window, cx)
         })
-        .child(
-            div()
-                .font_family("iconfont")
-                .text_size(IconSize::Md.scaled())
-                .text_color(normal)
-                .hover(move |style| style.text_color(hover))
-                .child(icon),
-        )
+        .child(widgets::icon_hover(
+            icon,
+            IconSize::Md.scaled(),
+            Hsla::from(normal),
+            Hsla::from(hover),
+        ))
 }
 
 /// 查找栏里的输入框：和编辑器的输入框同一套写法，外面套一层带边框的壳。
@@ -1108,10 +1108,11 @@ fn find_field(
                 .pl(Space::Sm.scaled())
                 .pr(Space::Xs.scaled())
                 .flex_shrink_0()
-                .font_family("iconfont")
-                .text_size(typography::font(type_role::BASE))
-                .text_color(icon_color)
-                .child(icon),
+                .child(widgets::icon(
+                    icon,
+                    typography::font(type_role::BASE),
+                    Hsla::from(icon_color),
+                )),
         )
         .child(
             Input::new(input)

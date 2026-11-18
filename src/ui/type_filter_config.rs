@@ -25,6 +25,7 @@ use super::design::palette::Palette;
 use super::design::size::{Radius, Space};
 use super::design::typography::{self, type_role};
 use super::filter_bar::{filter_type_display, FilterBar};
+use super::widgets;
 
 /// Row height, row gap, and their sum (the vertical pitch between rows).
 const ROW_HEIGHT: f32 = 28.0;
@@ -249,13 +250,7 @@ impl Render for TypeFilterConfigPanel {
                                 cx.stop_propagation();
                                 this.update(cx, |panel, cx| panel.close(cx));
                             })
-                            .child(
-                                div()
-                                    .text_size(fs(14.))
-                                    .font_family("iconfont")
-                                    .text_color(text_2)
-                                    .child("\u{e7b7}"),
-                            ),
+                            .child(widgets::icon("CloseIcon", fs(14.), Hsla::from(text_2))),
                     )
             })
             // --- Separator ---
@@ -393,7 +388,7 @@ impl Render for TypeFilterConfigPanel {
 
 /// Passive row visuals shared with the drag preview; interaction stays on the live row.
 fn filter_row(key: &str, visible: bool, p: &Palette) -> Div {
-    let (icon, label) = filter_type_display(key).unwrap_or(("\u{e606}", key.to_string()));
+    let (icon, label) = filter_type_display(key).unwrap_or(("TextIcon", key.to_string()));
     selectable_type_row(icon, label, visible, p)
 }
 
@@ -407,31 +402,21 @@ pub(crate) fn selectable_type_row(icon: &str, label: String, visible: bool, p: &
         .h(px(ROW_HEIGHT))
         .px(Space::Xs.scaled())
         .rounded(Radius::Sm.scaled())
-        .child(
-            div()
-                .text_size(typography::font(type_role::BODY))
-                .font_family("iconfont")
-                .text_color(if visible {
-                    Rgba::from(p.accent)
-                } else {
-                    Rgba::from(p.ink_3)
-                })
-                .flex_shrink_0()
-                .child(if visible { "\u{e61f}" } else { "\u{e831}" }),
-        )
+        .child(widgets::icon(
+            if visible {
+                "CircleCheckIcon"
+            } else {
+                "CircleIcon"
+            },
+            typography::font(type_role::BODY),
+            if visible { p.accent } else { p.ink_3 },
+        ))
         .when(!icon.is_empty(), |row| {
-            row.child(
-                div()
-                    .ml(Space::Sm.scaled())
-                    .text_size(typography::font(type_role::BODY))
-                    .font_family("iconfont")
-                    .text_color(if visible {
-                        Rgba::from(p.ink_2)
-                    } else {
-                        Rgba::from(p.ink_3)
-                    })
-                    .child(icon.to_string()),
-            )
+            row.child(div().ml(Space::Sm.scaled()).child(widgets::icon(
+                icon.to_string(),
+                typography::font(type_role::BODY),
+                if visible { p.ink_2 } else { p.ink_3 },
+            )))
         })
         .child(
             div()

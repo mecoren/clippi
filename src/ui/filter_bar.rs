@@ -31,42 +31,42 @@ pub(crate) const FILTER_TYPES: &[FilterDef] = &[
     FilterDef {
         label_key: I18nKey::FilterTextLabel,
         key: "plain_text",
-        icon: "\u{e606}",
+        icon: "TextIcon",
     },
     FilterDef {
         label_key: I18nKey::FilterRtfLabel,
         key: "rich_text",
-        icon: "\u{e853}",
+        icon: "RichTextIcon",
     },
     FilterDef {
         label_key: I18nKey::FilterImageLabel,
         key: "image",
-        icon: "\u{e626}",
+        icon: "ImageIcon",
     },
     FilterDef {
         label_key: I18nKey::FilterFilesLabel,
         key: "file",
-        icon: "\u{e68a}",
+        icon: "FilesIcon",
     },
     FilterDef {
         label_key: I18nKey::FilterLinksLabel,
         key: "link",
-        icon: "\u{e6d7}",
+        icon: "LinkIcon",
     },
     FilterDef {
         label_key: I18nKey::FilterPathLabel,
         key: "path",
-        icon: "\u{e60f}",
+        icon: "PathIcon",
     },
     FilterDef {
         label_key: I18nKey::FilterColorLabel,
         key: "color",
-        icon: "\u{e608}",
+        icon: "ColorIcon",
     },
     FilterDef {
         label_key: I18nKey::FilterContactLabel,
         key: "contact",
-        icon: "\u{e616}",
+        icon: "ContactIcon",
     },
 ];
 const SEARCH_BAR_HORIZONTAL_PADDING: f32 = 16.0;
@@ -218,7 +218,7 @@ pub(crate) fn source_app_filter_bar(
         } else {
             // Apps without an icon keep the same fixed target size.
             widgets::icon(
-                "\u{e616}",
+                "ContactIcon",
                 IconSize::Sm.scaled(),
                 if active { p.accent } else { p.ink_2 },
             )
@@ -567,7 +567,7 @@ impl Render for FilterBar {
                                 }
                             })
                             .child(widgets::icon(
-                                "\u{e886}",
+                                "TagIcon",
                                 IconSize::Sm.scaled(),
                                 if has_tag_filter { accent } else { text_2 },
                             )),

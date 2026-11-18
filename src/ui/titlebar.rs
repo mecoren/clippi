@@ -326,7 +326,7 @@ impl Render for Titlebar {
                                             },
                                         )
                                         .child(widgets::icon(
-                                            "\u{e66b}",
+                                            "KeyboardIcon",
                                             IconSize::Md.scaled(),
                                             if hotkeys_active { accent } else { text_2 },
                                         )),
@@ -367,7 +367,7 @@ impl Render for Titlebar {
                                             },
                                         )
                                         .child(widgets::icon(
-                                            "\u{e794}",
+                                            "CloudIcon",
                                             IconSize::Md.scaled(),
                                             if transfer_active { accent } else { text_2 },
                                         )),
@@ -414,7 +414,7 @@ impl Render for Titlebar {
                                             },
                                         )
                                         .child(widgets::icon(
-                                            "\u{e630}",
+                                            "StarIcon",
                                             IconSize::Md.scaled(),
                                             if fav_active { fav_color } else { text_2 },
                                         )),
@@ -448,7 +448,7 @@ impl Render for Titlebar {
                                 });
                             })
                             .child(widgets::icon(
-                                "\u{e633}",
+                                "PinIcon",
                                 IconSize::Md.scaled(),
                                 if pinned { accent } else { text_2 },
                             )),
@@ -464,7 +464,7 @@ impl Render for Titlebar {
                                     cx.emit(TitlebarEvent::OpenSettings);
                                 });
                             })
-                            .child(widgets::icon("\u{e6b6}", IconSize::Md.scaled(), text_2)),
+                            .child(widgets::icon("SettingsIcon", IconSize::Md.scaled(), text_2)),
                     ),
             )
     }

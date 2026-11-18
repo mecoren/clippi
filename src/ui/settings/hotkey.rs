@@ -11,6 +11,8 @@ use std::rc::Rc;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 
+use crate::ui::widgets;
+
 use super::SettingsPanel;
 use crate::core::i18n_keys::I18nKey;
 use crate::core::settings::LatestHotkeyEntry;
@@ -278,13 +280,7 @@ impl SettingsPanel {
                                         cx.stop_propagation();
                                         clear(window, cx);
                                     })
-                                    .child(
-                                        div()
-                                            .font_family("iconfont")
-                                            .text_size(fs(9.))
-                                            .text_color(danger)
-                                            .child("\u{e7b7}"),
-                                    ),
+                                    .child(widgets::icon("CloseIcon", fs(9.), Hsla::from(danger))),
                             )
                         })
                     }),
@@ -417,13 +413,7 @@ impl SettingsPanel {
                                 clr(window, cx);
                             }
                         })
-                        .child(
-                            div()
-                                .font_family("iconfont")
-                                .text_size(fs(9.))
-                                .text_color(danger)
-                                .child("\u{e7b7}"),
-                        ),
+                        .child(widgets::icon("CloseIcon", fs(9.), Hsla::from(danger))),
                 )
             })
     }
@@ -525,9 +515,6 @@ impl SettingsPanel {
                                     .w(px(26.))
                                     .h(px(26.))
                                     .rounded(px(6.))
-                                    .font_family("iconfont")
-                                    .text_size(fs(13.))
-                                    .text_color(close_text)
                                     .flex()
                                     .items_center()
                                     .justify_center()
@@ -540,7 +527,11 @@ impl SettingsPanel {
                                             cx.notify();
                                         });
                                     })
-                                    .child("\u{e7b7}")
+                                    .child(widgets::icon(
+                                        "CloseIcon",
+                                        fs(13.),
+                                        Hsla::from(close_text),
+                                    ))
                             }),
                     )
                     .child(div().h(px(1.)).bg(theme.divider))

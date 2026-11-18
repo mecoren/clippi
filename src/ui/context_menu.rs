@@ -3,7 +3,7 @@
 //! --- Matches the original Slint ContextMenu.slint design: ---
 //! --- - 164px width, 8px border-radius, 4px padding ---
 //! --- - 30px item height, 5px border-radius per item ---
-//! --- - Icon (13px iconfont) + label (13px) per row ---
+//! --- - Icon (13px Lucide) + label (13px) per row ---
 //! --- - Separators: 3px gap + 1px line + 3px gap ---
 //! --- - Single and batch mode variants with conditional items ---
 //! --- - Position clamping to container bounds ---
@@ -13,6 +13,8 @@ use std::rc::Rc;
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
+
+use super::widgets;
 
 use crate::core::i18n_keys::I18nKey;
 use crate::ui::theme::ClippiTheme;
@@ -125,7 +127,7 @@ fn ctrl_shortcut(key: &str) -> Option<String> {
 const MENU_WIDTH: f32 = 184.0;
 /// Generic open glyph, shared by every open action so one icon means "open"
 /// whatever the entry type is.
-const OPEN_ICON: &str = "\u{e603}";
+const OPEN_ICON: &str = "OpenIcon";
 /// Internal item width (menu width minus 4px padding on each side).
 const ITEM_WIDTH: f32 = MENU_WIDTH - 8.0; // 176.0
 /// Height of a single menu item row.
@@ -157,7 +159,7 @@ impl ContextMenu {
         items.push(RawMenuItem {
             label: I18nKey::CtxCopy.text().into(),
             action: "copy".into(),
-            icon: "\u{e7e1}".into(),
+            icon: "CopyIcon".into(),
             danger: false,
             fav: false,
             shortcut: ctrl_shortcut("C"),
@@ -166,7 +168,7 @@ impl ContextMenu {
         items.push(RawMenuItem {
             label: I18nKey::CtxPaste.text().into(),
             action: "paste".into(),
-            icon: "\u{e63f}".into(),
+            icon: "PasteIcon".into(),
             danger: false,
             fav: false,
             shortcut: sc("Enter"),
@@ -176,7 +178,7 @@ impl ContextMenu {
             items.push(RawMenuItem {
                 label: I18nKey::CtxPastePlain.text().into(),
                 action: "paste_plain".into(),
-                icon: "\u{e606}".into(),
+                icon: "TextIcon".into(),
                 danger: false,
                 fav: false,
                 shortcut: sc("Shift+Enter"),
@@ -193,7 +195,7 @@ impl ContextMenu {
             items.push(RawMenuItem {
                 label: label.into(),
                 action: action.into(),
-                icon: "\u{e608}".into(),
+                icon: "ColorIcon".into(),
                 danger: false,
                 fav: false,
                 shortcut: None,
@@ -215,7 +217,7 @@ impl ContextMenu {
             items.push(RawMenuItem {
                 label: I18nKey::CtxEdit.text().into(),
                 action: "edit".into(),
-                icon: "\u{e679}".into(),
+                icon: "EditIcon".into(),
                 danger: false,
                 fav: false,
                 shortcut: ctrl_shortcut("E"),
@@ -226,7 +228,7 @@ impl ContextMenu {
         items.push(RawMenuItem {
             label: I18nKey::EditNote.text().into(),
             action: "edit_note".into(),
-            icon: "\u{e6fa}".into(),
+            icon: "NoteIcon".into(),
             danger: false,
             fav: false,
             shortcut: sc("F2"),
@@ -237,7 +239,7 @@ impl ContextMenu {
             items.push(RawMenuItem {
                 label: I18nKey::CtxChangeHotkey.text().into(),
                 action: "set_hotkey".into(),
-                icon: "\u{e66b}".into(),
+                icon: "KeyboardIcon".into(),
                 danger: false,
                 fav: false,
                 shortcut: None,
@@ -245,7 +247,7 @@ impl ContextMenu {
             items.push(RawMenuItem {
                 label: I18nKey::CtxRemoveHotkey.text().into(),
                 action: "remove_hotkey".into(),
-                icon: "\u{e7b7}".into(),
+                icon: "CloseIcon".into(),
                 danger: true,
                 fav: false,
                 shortcut: None,
@@ -254,7 +256,7 @@ impl ContextMenu {
             items.push(RawMenuItem {
                 label: I18nKey::CtxSetHotkey.text().into(),
                 action: "set_hotkey".into(),
-                icon: "\u{e66b}".into(),
+                icon: "KeyboardIcon".into(),
                 danger: false,
                 fav: false,
                 shortcut: None,
@@ -274,7 +276,7 @@ impl ContextMenu {
             items.push(RawMenuItem {
                 label: I18nKey::CtxPasteImagePath.text().into(),
                 action: "paste_image_path".into(),
-                icon: "\u{e606}".into(),
+                icon: "TextIcon".into(),
                 danger: false,
                 fav: false,
                 shortcut: None,
@@ -282,7 +284,7 @@ impl ContextMenu {
             items.push(RawMenuItem {
                 label: I18nKey::CtxPasteImageBitmap.text().into(),
                 action: "paste_image_bitmap".into(),
-                icon: "\u{e626}".into(),
+                icon: "ImageIcon".into(),
                 danger: false,
                 fav: false,
                 shortcut: ctrl_shortcut("Enter"),
@@ -290,7 +292,7 @@ impl ContextMenu {
             items.push(RawMenuItem {
                 label: I18nKey::CtxPasteOcr.text().into(),
                 action: "paste_ocr".into(),
-                icon: "\u{e6a5}".into(),
+                icon: "OcrIcon".into(),
                 danger: false,
                 fav: false,
                 shortcut: None,
@@ -298,7 +300,7 @@ impl ContextMenu {
             items.push(RawMenuItem {
                 label: I18nKey::CtxDetectQr.text().into(),
                 action: "qr_detect".into(),
-                icon: "\u{e605}".into(),
+                icon: "QrCodeIcon".into(),
                 danger: false,
                 fav: false,
                 shortcut: None,
@@ -309,7 +311,7 @@ impl ContextMenu {
         items.push(RawMenuItem {
             label: I18nKey::CtxTag.text().into(),
             action: "show_tag_picker".into(),
-            icon: "\u{e886}".into(),
+            icon: "TagIcon".into(),
             danger: false,
             fav: false,
             shortcut: ctrl_shortcut("T"),
@@ -364,7 +366,7 @@ impl ContextMenu {
             items.push(RawMenuItem {
                 label: I18nKey::CtxPasteFilePath.text().into(),
                 action: "paste_file_path".into(),
-                icon: "\u{e606}".into(),
+                icon: "TextIcon".into(),
                 danger: false,
                 fav: false,
                 shortcut: None,
@@ -375,7 +377,7 @@ impl ContextMenu {
             items.push(RawMenuItem {
                 label: I18nKey::UploadToTransfer.text().into(),
                 action: "upload_to_transfer".into(),
-                icon: "\u{e61c}".into(),
+                icon: "UploadIcon".into(),
                 danger: false,
                 fav: false,
                 shortcut: None,
@@ -394,9 +396,9 @@ impl ContextMenu {
 
         // --- Favorite ---
         let (fav_label, fav_icon) = if ctx.is_favorite {
-            (I18nKey::CtxUnfav.text(), "\u{e630}")
+            (I18nKey::CtxUnfav.text(), "StarIcon")
         } else {
-            (I18nKey::CtxFav.text(), "\u{e68d}")
+            (I18nKey::CtxFav.text(), "StarFilledIcon")
         };
         items.push(RawMenuItem {
             label: fav_label.into(),
@@ -411,7 +413,7 @@ impl ContextMenu {
         items.push(RawMenuItem {
             label: I18nKey::CtxDelete.text().into(),
             action: "delete".into(),
-            icon: "\u{e696}".into(),
+            icon: "DeleteIcon".into(),
             danger: true,
             fav: false,
             shortcut: sc("Delete"),
@@ -425,7 +427,7 @@ impl ContextMenu {
         let mut items = vec![RawMenuItem {
             label: I18nKey::CtxBatchPasteN.fmt(&[&selected_count.to_string()]),
             action: "batch_paste".into(),
-            icon: "\u{e63f}".into(),
+            icon: "PasteIcon".into(),
             danger: false,
             fav: false,
             shortcut: None,
@@ -435,7 +437,7 @@ impl ContextMenu {
             items.push(RawMenuItem {
                 label: I18nKey::CtxMergeSelected.text().into(),
                 action: "merge_selected".into(),
-                icon: "\u{e68a}".into(),
+                icon: "FilesIcon".into(),
                 danger: false,
                 fav: false,
                 shortcut: None,
@@ -454,7 +456,7 @@ impl ContextMenu {
             RawMenuItem {
                 label: I18nKey::CtxBatchTag.text().into(),
                 action: "show_tag_picker".into(),
-                icon: "\u{e886}".into(),
+                icon: "TagIcon".into(),
                 danger: false,
                 fav: false,
                 shortcut: ctrl_shortcut("T"),
@@ -470,7 +472,7 @@ impl ContextMenu {
             RawMenuItem {
                 label: I18nKey::CtxBatchFav.text().into(),
                 action: "batch_favorite".into(),
-                icon: "\u{e630}".into(),
+                icon: "StarIcon".into(),
                 danger: false,
                 fav: true,
                 shortcut: ctrl_shortcut("D"),
@@ -478,7 +480,7 @@ impl ContextMenu {
             RawMenuItem {
                 label: I18nKey::CtxBatchDelete.text().into(),
                 action: "batch_delete".into(),
-                icon: "\u{e696}".into(),
+                icon: "DeleteIcon".into(),
                 danger: true,
                 fav: false,
                 shortcut: sc("Delete"),
@@ -492,7 +494,7 @@ impl ContextMenu {
         Self::new().items(vec![RawMenuItem {
             label: I18nKey::RemoveSelectedFromTransfer.text().into(),
             action: "batch_delete_transfer".into(),
-            icon: "\u{e696}".into(),
+            icon: "DeleteIcon".into(),
             danger: true,
             fav: false,
             shortcut: sc("Delete"),
@@ -508,7 +510,7 @@ impl ContextMenu {
             items.push(RawMenuItem {
                 label: I18nKey::DownloadTransfer.text().into(),
                 action: "download_transfer".into(),
-                icon: "\u{e7c8}".into(),
+                icon: "DownloadIcon".into(),
                 danger: false,
                 fav: false,
                 shortcut: None,
@@ -531,7 +533,7 @@ impl ContextMenu {
                 I18nKey::TransferPin.text().into()
             },
             action: "toggle_transfer_pin".into(),
-            icon: "\u{e633}".into(),
+            icon: "PinIcon".into(),
             danger: false,
             fav: false,
             shortcut: None,
@@ -548,7 +550,7 @@ impl ContextMenu {
         items.push(RawMenuItem {
             label: I18nKey::RemoveFromTransfer.text().into(),
             action: "delete_transfer".into(),
-            icon: "\u{e696}".into(),
+            icon: "DeleteIcon".into(),
             danger: true,
             fav: false,
             shortcut: sc("Delete"),
@@ -740,12 +742,12 @@ impl RenderOnce for ContextMenu {
                             .gap(px(8.))
                             .child({
                                 let icon = icon.clone();
-                                div()
-                                    .font_family("iconfont")
-                                    .text_size(fs(13.))
-                                    .text_color(normal_icon)
-                                    .hover(move |style| style.text_color(hover_icon))
-                                    .child(icon)
+                                widgets::icon_hover(
+                                    icon,
+                                    fs(13.),
+                                    Hsla::from(normal_icon),
+                                    Hsla::from(hover_icon),
+                                )
                             })
                             .child({
                                 let label = label.clone();

@@ -1,7 +1,5 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
-use std::borrow::Cow;
-
 use gpui::*;
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -316,7 +314,7 @@ fn main() {
 
     log::info!("Starting Clippi (GPUI experiment)");
 
-    gpui_kit::application().with_assets(ui::assets::PickerAssets).run(|cx: &mut App| {
+    gpui_kit::application().with_assets(ui::assets::Assets).run(|cx: &mut App| {
         cx.on_app_quit(|_| {
             if !crate::services::usage_touch::flush() {
                 log::warn!("Quitting before all usage timestamps could be saved");
@@ -324,61 +322,6 @@ fn main() {
             async {}
         }).detach();
         gpui_kit::init(cx);
-        // --- iconfont.ttf has an 'm' glyph added (mapped to first icon ---
-        // --- glyph) because GPUI's load_family skips any font without ---
-        // --- glyph_for_char('m') — icon-only fonts would be silently ---
-        // --- dropped and render as tofu (□). The CTFontManager path ---
-        // --- registers with the system as a fallback. ---
-        #[cfg(target_os = "macos")]
-        {
-            use objc2::AnyThread;
-            use objc2_foundation::NSURL;
-            use std::io::Write;
-
-            let font_bytes = include_bytes!("../assets/fonts/iconfont.ttf");
-            let tmp_dir = std::env::temp_dir();
-            let font_path = tmp_dir.join("clippi_iconfont.ttf");
-            if let Ok(mut f) = std::fs::File::create(&font_path) {
-                if f.write_all(font_bytes).is_ok() {
-                    let path_str = font_path.to_string_lossy();
-                    let path_ns = objc2_foundation::NSString::from_str(&path_str);
-                    let url = NSURL::initFileURLWithPath(NSURL::alloc(), &path_ns);
-                    extern "C" {
-                        fn CTFontManagerRegisterFontsForURL(
-                            url: *const std::ffi::c_void,
-                            scope: u32,
-                            error: *mut *const std::ffi::c_void,
-                        ) -> bool;
-                    }
-                    const K_CT_FONT_MANAGER_SCOPE_PROCESS: u32 = 1;
-                    // Retained<T>::as_ptr is the safe way to get the inner
-                    // pointer without transmute.
-                    let url_ptr: *const std::ffi::c_void =
-                        objc2::rc::Retained::as_ptr(&url) as *const std::ffi::c_void;
-                    // SAFETY: `url_ptr` is a valid CFURLRef obtained from
-                    // Retained::as_ptr. CTFontManagerRegisterFontsForURL is a
-                    // read-only registration call — it makes the font available
-                    // to the process and has no other side effects.
-                    unsafe {
-                        CTFontManagerRegisterFontsForURL(
-                            url_ptr,
-                            K_CT_FONT_MANAGER_SCOPE_PROCESS,
-                            std::ptr::null_mut(),
-                        );
-                    }
-                }
-            }
-        }
-
-        // --- CGFont→Handle::from_native preserves PostScript name & ---
-        // --- CoreText traits that GPUI's load_family requires. ---
-        // --- (Handle::from_memory via Cow::Owned may lose PostScript ---
-        // --- name, causing zed-font-kit to silently drop the font.) ---
-        if let Err(err) = cx.text_system().add_fonts(vec![Cow::Borrowed(
-            include_bytes!("../assets/fonts/iconfont.ttf").as_slice(),
-        )]) {
-            log::error!("Failed to load iconfont.ttf: {err}");
-        }
 
         let settings = AppSettings::load();
         // The persisted flag cannot notice a moved exe or a registration removed

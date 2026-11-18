@@ -16,9 +16,8 @@
 //! 4. 控件不持有主题、不缓存状态；需要动效时用 `design::motion`，
 //!    不在此处自写缓动。
 //! 5. 页面不直接拼 gpui-kit 原生控件；需要新外观时先在本文件加构造器。
-//!
-//! 过渡期（M2）本模块尚无调用方，`ui/mod.rs` 以 `allow(dead_code)`
-//! 注册；M3 起逐屏替换，替换完一处就删一处依赖。
+//! 6. 图标只经 [`icon`] / [`icon_hover`]，名称先在 `ui/assets.rs` 的
+//!    `product_icons!` 表登记；SVG 不继承宿主文字色，颜色必须显式传入。
 
 use std::time::Duration;
 
@@ -33,9 +32,6 @@ use super::design::palette::Palette;
 use super::design::size::{Ctrl, IconSize, Radius, Space};
 use super::design::typography::{self, type_role};
 use crate::core::i18n_keys::I18nKey;
-
-/// 图标字体族：全仓既有约定（iconfont 打点字形），集中在此避免各处硬编码。
-pub const ICON_FONT: &str = "iconfont";
 
 // ---------------------------------------------------------------------------
 // 基础工具：描边、叠加、图标
@@ -110,14 +106,29 @@ pub fn placeholder(text: SharedString, left: Pixels, right: Pixels, p: &Palette)
         .child(text)
 }
 
-/// 单个 iconfont 字形。
-pub fn icon(glyph: impl Into<SharedString>, size: Pixels, color: Hsla) -> Div {
+/// 单个产品图标：名称在 [`super::assets::product_icons`] 表里登记，
+/// 未登记的名字显示圆圈。尺寸只用 12/16/20 三档（`IconSize`）。
+pub fn icon(name: impl Into<SharedString>, size: Pixels, color: Hsla) -> Div {
+    let path = super::assets::icon_path(&name.into());
     div()
         .flex_shrink_0()
-        .font_family(ICON_FONT)
-        .text_size(size)
-        .text_color(color)
-        .child(glyph.into())
+        .size(size)
+        .child(svg().path(path).size(size).text_color(color))
+}
+
+/// 同 [`icon`]，并在指针悬停时换色（菜单项、图标按钮的强调反馈）。
+///
+/// SVG 只认自己的 `text_color`，不会从容器继承，所以悬停样式必须落在
+/// 图标元素本身。
+pub fn icon_hover(name: impl Into<SharedString>, size: Pixels, normal: Hsla, hover: Hsla) -> Div {
+    let path = super::assets::icon_path(&name.into());
+    div().flex_shrink_0().size(size).child(
+        svg()
+            .path(path)
+            .size(size)
+            .text_color(normal)
+            .hover(move |style| style.text_color(hover)),
+    )
 }
 
 // ---------------------------------------------------------------------------

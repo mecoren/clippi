@@ -12,6 +12,8 @@ type ToolbarActionHandler = Rc<dyn Fn(&str, &mut gpui::Window, &mut gpui::App)>;
 
 use gpui::prelude::*;
 use gpui::*;
+
+use super::widgets;
 use gpui_kit::component::tooltip::Tooltip;
 
 use crate::core::i18n_keys::I18nKey;
@@ -194,7 +196,7 @@ impl RenderOnce for HoverToolbar {
             )
         {
             buttons.push((
-                "\u{e6d7}",
+                "LinkIcon",
                 "extract_links",
                 Box::new(move |hovered| if hovered { accent } else { icon_color }),
             ));
@@ -204,20 +206,20 @@ impl RenderOnce for HoverToolbar {
             let pin_color: Rgba = p.pin.into();
             if props.transfer_is_local {
                 buttons.push((
-                    "\u{e603}",
+                    "OpenIcon",
                     "open_transfer_location",
                     Box::new(move |hovered| if hovered { accent } else { icon_color }),
                 ));
             } else {
                 buttons.push((
-                    "\u{e7c8}",
+                    "DownloadIcon",
                     "download_transfer",
                     Box::new(move |hovered| if hovered { accent } else { icon_color }),
                 ));
             }
             // Pin/unpin — between open/download and delete.
             buttons.push((
-                "\u{e633}",
+                "PinIcon",
                 "toggle_transfer_pin",
                 Box::new(move |hovered| {
                     if hovered || transfer_pinned {
@@ -228,14 +230,14 @@ impl RenderOnce for HoverToolbar {
                 }),
             ));
             buttons.push((
-                "\u{e696}",
+                "DeleteIcon",
                 "delete_transfer",
                 Box::new(move |hovered| if hovered { danger } else { icon_color }),
             ));
         } else if is_single {
             // Copy
             buttons.push((
-                "\u{e7e1}",
+                "CopyIcon",
                 "copy",
                 Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
             ));
@@ -243,7 +245,7 @@ impl RenderOnce for HoverToolbar {
             // --- Paste Plain Text (only when item has actual rich formatting) ---
             if props.has_rich_content {
                 buttons.push((
-                    "\u{e606}",
+                    "TextIcon",
                     "paste_plain",
                     Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
                 ));
@@ -252,7 +254,7 @@ impl RenderOnce for HoverToolbar {
             // --- Paste as bitmap (image only) ---
             if props.content_type == ContentType::Image {
                 buttons.push((
-                    "\u{e626}",
+                    "ImageIcon",
                     "paste_image_bitmap",
                     Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
                 ));
@@ -261,7 +263,7 @@ impl RenderOnce for HoverToolbar {
             // --- QR code (image with QR code) ---
             if props.content_type == ContentType::Image && props.has_qr_code {
                 buttons.push((
-                    "\u{e605}",
+                    "QrCodeIcon",
                     "qr_action",
                     Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
                 ));
@@ -270,7 +272,7 @@ impl RenderOnce for HoverToolbar {
             // --- Edit (not image or file) ---
             if props.content_type != ContentType::Image && props.content_type != ContentType::File {
                 buttons.push((
-                    "\u{e679}",
+                    "EditIcon",
                     "edit",
                     Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
                 ));
@@ -278,14 +280,14 @@ impl RenderOnce for HoverToolbar {
 
             // Note
             buttons.push((
-                "\u{e6fa}",
+                "NoteIcon",
                 "edit_note",
                 Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
             ));
 
             // Tag
             buttons.push((
-                "\u{e886}",
+                "TagIcon",
                 "show_tag_picker",
                 Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
             ));
@@ -293,7 +295,7 @@ impl RenderOnce for HoverToolbar {
             // --- Open (one button for the whole family, right of tag) ---
             if let Some(open_action) = single_open_action(&props) {
                 buttons.push((
-                    "\u{e603}",
+                    "OpenIcon",
                     open_action,
                     Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
                 ));
@@ -301,9 +303,9 @@ impl RenderOnce for HoverToolbar {
 
             // --- Favorite (icon changes based on state) ---
             let fav_icon = if props.is_favorite {
-                "\u{e630}"
+                "StarIcon"
             } else {
-                "\u{e68d}"
+                "StarFilledIcon"
             };
             buttons.push((
                 fav_icon,
@@ -313,46 +315,46 @@ impl RenderOnce for HoverToolbar {
 
             // --- Delete ---
             buttons.push((
-                "\u{e696}",
+                "DeleteIcon",
                 "delete",
                 Box::new(move |hovered: bool| if hovered { danger } else { icon_color }),
             ));
         } else if is_batch && props.is_transfer {
             buttons.push((
-                "\u{e696}",
+                "DeleteIcon",
                 "batch_delete_transfer",
                 Box::new(move |hovered: bool| if hovered { danger } else { icon_color }),
             ));
         } else if is_batch {
             // --- Batch paste ---
             buttons.push((
-                "\u{e63f}",
+                "PasteIcon",
                 "batch_paste",
                 Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
             ));
             if props.can_merge_selection {
                 // --- Merge selected ---
                 buttons.push((
-                    "\u{e68a}",
+                    "FilesIcon",
                     "merge_selected",
                     Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
                 ));
             }
             // --- Batch tag ---
             buttons.push((
-                "\u{e886}",
+                "TagIcon",
                 "batch_tag",
                 Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
             ));
             // --- Batch favorite ---
             buttons.push((
-                "\u{e630}",
+                "StarIcon",
                 "batch_favorite",
                 Box::new(move |_hovered: bool| fav_color),
             ));
             // --- Batch delete ---
             buttons.push((
-                "\u{e696}",
+                "DeleteIcon",
                 "batch_delete",
                 Box::new(move |hovered: bool| if hovered { danger } else { icon_color }),
             ));
@@ -511,11 +513,7 @@ impl RenderOnce for HoverToolbar {
                         } else {
                             color_fn(false)
                         };
-                        div()
-                            .font_family("iconfont")
-                            .text_size(sc(12.))
-                            .text_color(color)
-                            .child(icon)
+                        widgets::icon(icon, sc(12.), Hsla::from(color))
                     })
                     .on_mouse_down(MouseButton::Left, {
                         let action = action.clone();
