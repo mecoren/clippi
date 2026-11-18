@@ -137,6 +137,9 @@ impl RenderOnce for BottomBar {
                             };
                             div()
                                 .id("bottom-clipboard-blacklist")
+                                .role(Role::Button)
+                                .tab_stop(true)
+                                .aria_label(tooltip_label)
                                 .size(Ctrl::Chip.scaled())
                                 .rounded(Radius::Sm.scaled())
                                 .flex()
@@ -167,6 +170,9 @@ impl RenderOnce for BottomBar {
                             let settings = settings.clone();
                             div()
                                 .id("bottom-hotkey-blacklist")
+                                .role(Role::Button)
+                                .tab_stop(true)
+                                .aria_label(I18nKey::BottomBarHotkeyBlacklist.text())
                                 .size(Ctrl::Chip.scaled())
                                 .rounded(Radius::Sm.scaled())
                                 .flex()

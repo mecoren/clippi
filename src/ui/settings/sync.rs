@@ -490,6 +490,9 @@ impl SettingsPanel {
                                 let this = cx.entity().clone();
                                 div()
                                     .id("config-sync-upload")
+                                    .role(Role::Button)
+                                    .tab_stop(!buttons_disabled)
+                                    .aria_label(I18nKey::ConfigSyncUpload.text())
                                     .flex_1()
                                     .min_w(px(0.))
                                     .h(px(28.))
@@ -527,6 +530,9 @@ impl SettingsPanel {
                                 let this = cx.entity().clone();
                                 div()
                                     .id("config-sync-download")
+                                    .role(Role::Button)
+                                    .tab_stop(!buttons_disabled)
+                                    .aria_label(I18nKey::ConfigSyncApply.text())
                                     .flex_1()
                                     .min_w(px(0.))
                                     .h(px(28.))
@@ -1153,6 +1159,9 @@ fn icon_button(
 ) -> impl IntoElement {
     div()
         .id(button_id)
+        .role(Role::Button)
+        .tab_stop(true)
+        .aria_label(tooltip)
         .w(px(24.))
         .h(px(24.))
         .rounded(px(5.))
@@ -1181,6 +1190,8 @@ fn disabled_icon_button(
 ) -> impl IntoElement {
     div()
         .id(button_id)
+        .role(Role::Button)
+        .aria_label(tooltip)
         .w(px(24.))
         .h(px(24.))
         .rounded(px(5.))

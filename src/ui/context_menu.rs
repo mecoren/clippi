@@ -682,7 +682,8 @@ impl RenderOnce for ContextMenu {
                         .flex_col()
                         .child(div().h(px(3.)))
                         .child(div().w_full().h(px(1.)).bg(sep_line))
-                        .child(div().h(px(3.)));
+                        .child(div().h(px(3.)))
+                        .into_any_element();
                 }
 
                 let is_danger = item.danger;
@@ -724,6 +725,12 @@ impl RenderOnce for ContextMenu {
                 };
 
                 div()
+                    .id(ElementId::Name(SharedString::from(format!(
+                        "context-menu-{}",
+                        action
+                    ))))
+                    .role(Role::MenuItem)
+                    .aria_label(label.clone())
                     .w(px(ITEM_WIDTH))
                     .h(px(30.))
                     .rounded(px(5.))
@@ -777,6 +784,7 @@ impl RenderOnce for ContextMenu {
                             }
                         }
                     })
+                    .into_any_element()
             }))
     }
 }

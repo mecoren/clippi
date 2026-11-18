@@ -286,6 +286,8 @@ pub fn chip(p: &Palette, id: impl Into<ElementId>, active: bool) -> Stateful<Div
     let p = *p;
     div()
         .id(id)
+        .role(Role::Button)
+        .tab_stop(true)
         .h(Ctrl::Chip.scaled())
         .flex_1()
         .min_w(px(0.))
@@ -367,6 +369,9 @@ pub fn segments(
         track = track.child(
             div()
                 .id(ElementId::Name(format!("{id}:seg:{index}").into()))
+                .role(Role::Button)
+                .tab_stop(true)
+                .aria_label(label.clone())
                 .relative()
                 .flex_1()
                 .min_w(px(0.))

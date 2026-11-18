@@ -478,6 +478,9 @@ impl RenderOnce for HoverToolbar {
 
                 div()
                     .id(action_id)
+                    .role(Role::Button)
+                    .tab_stop(true)
+                    .aria_label(tooltip.clone())
                     .w(sc(20.))
                     .h(sc(20. + extension))
                     .flex_shrink_0()

@@ -346,6 +346,7 @@ impl Render for EmojiPanel {
         {
             tabs = tabs.child(
                 filter_chip(("emoji-kind", index), self.kind == index, &p)
+                    .aria_label(label)
                     .text_size(fs(11.))
                     .font_weight(if self.kind == index {
                         FontWeight::BOLD
@@ -382,6 +383,7 @@ impl Render for EmojiPanel {
                 &p,
                 32.,
             )
+            .aria_label(label)
             .text_size(fs(12.))
             .text_color(color)
             .tooltip(move |window, cx| widgets::tooltip(label, window, cx))
@@ -474,6 +476,8 @@ impl Render for EmojiPanel {
                                 let name = entry.label().to_string();
                                 let button = div()
                                     .id(("picker-entry", index))
+                                    .role(Role::Button)
+                                    .aria_label(name.clone())
                                     .flex_1()
                                     .min_w(px(0.))
                                     .h(px(38.))

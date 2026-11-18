@@ -1379,6 +1379,7 @@ impl Render for QuickPasteView {
                                         let app_state = self.state.clone();
                                         let filter_text = if active { p.accent } else { p.ink_2 };
                                         widgets::chip(&p, ("quick-type", index), active)
+                                            .aria_label(label.clone())
                                             .justify_center()
                                             .when(icon_only, |b| b.min_w(px(0.0)))
                                             .when(!icon_only, |b| {

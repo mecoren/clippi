@@ -417,6 +417,9 @@ impl Render for SearchBox {
                         // into view instead of reflowing the text.
                         div()
                             .id("search-new-item")
+                            .role(Role::Button)
+                            .tab_stop(true)
+                            .aria_label(I18nKey::EditNewItem.text())
                             .flex()
                             .items_center()
                             .flex_shrink_0()

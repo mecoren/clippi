@@ -783,6 +783,8 @@ fn icon_btn(
 ) -> Stateful<Div> {
     div()
         .id(icon)
+        .role(Role::Button)
+        .tab_stop(true)
         .w(px(22.))
         .h(px(22.))
         .rounded(px(5.))
@@ -792,7 +794,9 @@ fn icon_btn(
         .cursor(CursorStyle::PointingHand)
         .hover(move |style| style.bg(hover_bg))
         .when_some(tooltip, |button, tip| {
-            button.tooltip(move |window, cx| widgets::tooltip(tip, window, cx))
+            button
+                .aria_label(tip)
+                .tooltip(move |window, cx| widgets::tooltip(tip, window, cx))
         })
         .child(widgets::icon(
             icon,

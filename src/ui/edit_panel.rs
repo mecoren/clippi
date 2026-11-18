@@ -1053,6 +1053,8 @@ fn icon_button(
 ) -> Stateful<Div> {
     div()
         .id(id)
+        .role(Role::Button)
+        .tab_stop(true)
         .w(Ctrl::Chip.scaled())
         .h(Ctrl::Chip.scaled())
         .rounded(Radius::Sm.scaled())
@@ -1062,7 +1064,9 @@ fn icon_button(
         .cursor(CursorStyle::PointingHand)
         .hover(move |style| style.bg(hover_bg))
         .when_some(tooltip, |button, tip| {
-            button.tooltip(move |window, cx| widgets::tooltip(tip, window, cx))
+            button
+                .aria_label(tip)
+                .tooltip(move |window, cx| widgets::tooltip(tip, window, cx))
         })
         .on_mouse_down(MouseButton::Left, move |_ev, window, cx| {
             handler(window, cx)

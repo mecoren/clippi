@@ -153,6 +153,8 @@ pub(crate) fn filter_action_slot() -> Div {
 pub(crate) fn filter_chip(id: impl Into<ElementId>, active: bool, p: &Palette) -> Stateful<Div> {
     div()
         .id(id)
+        .role(Role::Button)
+        .tab_stop(true)
         .h(Ctrl::Chip.scaled())
         .flex_1()
         .min_w(px(0.))
@@ -235,6 +237,7 @@ pub(crate) fn source_app_filter_bar(
                 chip_width,
             )
             .overflow_hidden()
+            .aria_label(label.clone())
             .text_size(typography::font(type_role::BODY))
             .text_color(if active { p.accent } else { p.ink_2 })
             .tooltip(move |window, cx| widgets::tooltip(tooltip.clone(), window, cx))
@@ -488,6 +491,7 @@ impl Render for FilterBar {
                                         });
 
                                     let button = filter_chip(("filter-type", index), is_active, &p)
+                                        .aria_label(label)
                                         .border_1()
                                         .border_color(if is_active {
                                             p.accent.opacity(0.45)
@@ -541,6 +545,9 @@ impl Render for FilterBar {
                     filter_action_slot().child(
                         div()
                             .id("filter-tags")
+                            .role(Role::Button)
+                            .tab_stop(true)
+                            .aria_label(I18nKey::FilterTagsTooltip.text())
                             .w(px(24.))
                             .h(Ctrl::Chip.scaled())
                             .flex_shrink_0()

@@ -15,11 +15,14 @@ use super::design::typography::{self, type_role};
 use super::theme::ClippiTheme;
 use super::widgets;
 
-/// Shared hit area and hover treatment for every titlebar action.
+/// Shared hit area and hover treatment for every titlebar action. Call sites
+/// add `.aria_label(...)` so the accessible name matches the tooltip.
 fn titlebar_button(id: &'static str, p: &Palette) -> Stateful<Div> {
     let p = *p;
     div()
         .id(id)
+        .role(Role::Button)
+        .tab_stop(true)
         .size(Ctrl::Input.scaled())
         .rounded(Radius::Md.scaled())
         .flex()
@@ -264,6 +267,7 @@ impl Render for Titlebar {
                                 .relative()
                                 .child(
                                     titlebar_button("titlebar-emoji", &p)
+                                        .aria_label(I18nKey::EmojiPanel.text())
                                         .when(emoji_active, |button| button.bg(accent_soft))
                                         .tooltip(|window, cx| {
                                             widgets::tooltip(I18nKey::EmojiPanel.text(), window, cx)
@@ -303,6 +307,7 @@ impl Render for Titlebar {
                                 .relative()
                                 .child(
                                     titlebar_button("titlebar-hotkeys-filter", &p)
+                                        .aria_label(I18nKey::TitlebarTooltipHotkeys.text())
                                         .tooltip(|window, cx| {
                                             widgets::tooltip(
                                                 I18nKey::TitlebarTooltipHotkeys.text(),
@@ -351,6 +356,7 @@ impl Render for Titlebar {
                                 .relative()
                                 .child(
                                     titlebar_button("titlebar-transfer-filter", &p)
+                                        .aria_label(I18nKey::TransferStation.text())
                                         .tooltip(|window, cx| {
                                             widgets::tooltip(
                                                 I18nKey::TransferStation.text(),
@@ -392,6 +398,7 @@ impl Render for Titlebar {
                                 .relative()
                                 .child(
                                     titlebar_button("titlebar-favorites-filter", &p)
+                                        .aria_label(I18nKey::TitlebarTooltipFavorites.text())
                                         .tooltip(|window, cx| {
                                             widgets::tooltip(
                                                 I18nKey::TitlebarTooltipFavorites.text(),
@@ -434,6 +441,11 @@ impl Render for Titlebar {
                     // --- Pin button (28x28) ---
                     .child(
                         titlebar_button("titlebar-pin", &p)
+                            .aria_label(if pinned {
+                                I18nKey::TitlebarTooltipUnpin.text()
+                            } else {
+                                I18nKey::TitlebarTooltipPin.text()
+                            })
                             .tooltip(move |window, cx| {
                                 let label = if pinned {
                                     I18nKey::TitlebarTooltipUnpin.text()
@@ -456,6 +468,7 @@ impl Render for Titlebar {
                     // --- Settings button (28x28) ---
                     .child(
                         titlebar_button("titlebar-settings", &p)
+                            .aria_label(I18nKey::SettingsTitle.text())
                             .tooltip(|window, cx| {
                                 widgets::tooltip(I18nKey::SettingsTitle.text(), window, cx)
                             })

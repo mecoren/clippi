@@ -2620,6 +2620,9 @@ impl Render for ClipboardListView {
             return div()
                 // Keep the focused list in the dispatch tree so root-level
                 // shortcuts and modifier releases still work with no results.
+                .id("clippi-clipboard-empty")
+                .role(Role::List)
+                .tab_stop(true)
                 .track_focus(&focus_handle)
                 .flex_1()
                 .h_full()
@@ -2656,9 +2659,12 @@ impl Render for ClipboardListView {
         let hover_view = cx.entity().downgrade();
         let hover_events_view = hover_view.clone();
         div()
+            .id("clippi-clipboard-list-root")
             .relative()
             .flex_1()
             .overflow_hidden()
+            .role(Role::List)
+            .tab_stop(true)
             .track_focus(&focus_handle)
             .on_key_down(
                 window.listener_for(&view, |this, event: &KeyDownEvent, window, cx| {
@@ -2955,6 +2961,8 @@ impl Render for ClipboardListView {
 
                                         Some(
                                             div()
+                                                .id(("clipboard-row", i))
+                                                .role(Role::ListItem)
                                                 .w_full()
                                                 .h_full()
                                                 .py(px(4.))
