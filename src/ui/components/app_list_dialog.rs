@@ -51,6 +51,9 @@ pub struct AppListDialogParams {
     pub custom_rows: Option<Vec<AnyElement>>,
     /// Override the badge without changing the number of rows or dialog geometry.
     pub configured_count: Option<usize>,
+    /// Title-bar badge text, replacing the "configured items" count. An empty
+    /// string hides the badge (dialogs whose content is not a list).
+    pub badge_label: Option<String>,
     /// Stable key for the entry list's scroll state. Must be unique per
     /// dialog instance so the three app-list popups never share or leak
     /// scroll offsets into one another.
@@ -66,6 +69,10 @@ pub struct AppListDialogParams {
 
     /// Highlight the bottom action button while shortcut recording is active.
     pub add_button_recording: bool,
+    /// Fixed popup height in unscaled px. Content-driven dialogs (release
+    /// notes) need more room than the entry-count formula gives them; the
+    /// viewport still wins.
+    pub fixed_height: Option<f32>,
     pub theme: ClippiTheme,
     /// (opacity, scale, offset, viewport_w, viewport_h)
     pub layout: (f32, f32, f32, f32, f32),
@@ -149,8 +156,17 @@ pub fn render_app_list_dialog(params: AppListDialogParams) -> impl IntoElement {
         visible_entries as f32 * ENTRY_HEIGHT
     };
     let add_section_height = if has_add { ADD_BUTTON_HEIGHT + 10. } else { 0. };
-    let popup_height = ((72. + list_content_height + add_section_height) * scale)
-        .clamp(MIN_DIALOG_HEIGHT * scale, MAX_DIALOG_HEIGHT * scale);
+    let popup_height = match params.fixed_height {
+        Some(height) => (height * scale)
+            .min((viewport_height - 16.).max(MIN_DIALOG_HEIGHT * scale))
+            .max(MIN_DIALOG_HEIGHT * scale),
+        None => ((72. + list_content_height + add_section_height) * scale)
+            .clamp(MIN_DIALOG_HEIGHT * scale, MAX_DIALOG_HEIGHT * scale),
+    };
+    let badge = params.badge_label.clone().unwrap_or_else(|| {
+        I18nKey::ClipboardAppBlacklistCount
+            .fmt(&[&params.configured_count.unwrap_or(entry_count).to_string()])
+    });
     let main_width = viewport_width.max(popup_width);
     let popup_left = ((main_width - popup_width) * 0.5).max(8.);
     let popup_top = ((viewport_height - popup_height) * 0.5).max(8.) + offset;
@@ -214,7 +230,7 @@ pub fn render_app_list_dialog(params: AppListDialogParams) -> impl IntoElement {
                 // ── Title bar ──
                 .child(render_title_bar(
                     &params.title,
-                    params.configured_count.unwrap_or(entry_count),
+                    &badge,
                     &theme,
                     scale,
                     params.help_text.clone(),
@@ -299,12 +315,13 @@ pub fn render_app_list_dialog(params: AppListDialogParams) -> impl IntoElement {
 
 fn render_title_bar(
     title: &str,
-    count: usize,
+    badge: &str,
     theme: &ClippiTheme,
     scale: f32,
     help_text: Option<String>,
     on_close: AppListAction,
 ) -> impl IntoElement {
+    let badge = badge.to_owned();
     let accent = theme.accent;
     let divider = theme.divider;
     let btn_hover = theme.btn_hover;
@@ -330,22 +347,24 @@ fn render_title_bar(
                         .text_color(text_1)
                         .child(title.to_string()),
                 )
-                .child(
-                    div()
-                        .h(px(22.))
-                        .px(px(8. * scale))
-                        .rounded(Radius::Pill.scaled())
-                        .bg(theme.accent_soft)
-                        .border(px(1.))
-                        .border_color(accent)
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .text_size(fs(10.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(accent)
-                        .child(I18nKey::ClipboardAppBlacklistCount.fmt(&[&count.to_string()])),
-                ),
+                .when(!badge.is_empty(), |row| {
+                    row.child(
+                        div()
+                            .h(px(22.))
+                            .px(px(8. * scale))
+                            .rounded(Radius::Pill.scaled())
+                            .bg(theme.accent_soft)
+                            .border(px(1.))
+                            .border_color(accent)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_size(fs(10.))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(accent)
+                            .child(badge.clone()),
+                    )
+                }),
         )
         .child(
             div()

@@ -1126,6 +1126,7 @@ impl Render for RootView {
                 panel.active_tab(),
             )
         };
+        let changelog_detail = self.settings_panel.read(cx).changelog_detail;
 
         let editing_tag_visible = {
             let app_state = self.state.read(cx);
@@ -1163,6 +1164,8 @@ impl Render for RootView {
         let local_backup_popup_visible = is_settings
             && active_settings_tab == 3
             && self.settings_panel.read(cx).local_backup_dialog.is_some();
+        let changelog_detail_visible =
+            is_settings && active_settings_tab == 5 && changelog_detail.is_some();
         let transfer_refreshing = is_clipboard && {
             let state = self.state.read(cx);
             state.transfer_filter_active && state.transfer_refreshing
@@ -1231,6 +1234,9 @@ impl Render for RootView {
         let local_backup_popup_gen =
             self.overlay_generation("local-backup-popup", local_backup_popup_visible);
         let local_backup_popup_animating = self.overlay_animating("local-backup-popup");
+        let changelog_detail_gen =
+            self.overlay_generation("changelog-detail-popup", changelog_detail_visible);
+        let changelog_detail_animating = self.overlay_animating("changelog-detail-popup");
 
         let tag_panel_animating = self.overlay_animating("tag-filter");
         let filter_config_animating = self.overlay_animating("type-filter-config");
@@ -1542,6 +1548,19 @@ impl Render for RootView {
             } else {
                 (1., 1., 0., win_w, win_h)
             };
+        let changelog_detail_popup_layout = if changelog_detail_visible
+            && changelog_detail_animating
+        {
+            (
+                Self::overlay_opacity(window, cx, changelog_detail_gen, "changelog-detail-popup"),
+                Self::overlay_scale(window, cx, changelog_detail_gen, "changelog-detail-popup"),
+                Self::overlay_offset(window, cx, changelog_detail_gen, "changelog-detail-popup"),
+                win_w,
+                win_h,
+            )
+        } else {
+            (1., 1., 0., win_w, win_h)
+        };
 
         let sidebar_for_escape = self.sidebar.clone();
         let filter_config_for_escape = self.type_filter_config_panel.clone();
@@ -1691,7 +1710,9 @@ impl Render for RootView {
                     cx.stop_propagation();
                 } else if is_settings {
                     // Close the innermost overlay first, then go back to clipboard
-                    if root_settings.read(cx).changelog_open {
+                    if root_settings.read(cx).changelog_detail.is_some() {
+                        root_settings.update(cx, |panel, cx| panel.close_changelog_entry(cx));
+                    } else if root_settings.read(cx).changelog_open {
                         root_settings.update(cx, |panel, cx| panel.close_changelog(cx));
                     } else if root_settings.read(cx).font_picker_open {
                         root_settings.update(cx, |panel, cx| panel.close_font_picker(cx));
@@ -2358,6 +2379,7 @@ impl Render for RootView {
                 root.child(render_app_list_dialog(AppListDialogParams {
                     custom_rows: None,
                     configured_count: None,
+                    badge_label: None,
                     title: I18nKey::HotkeyBlacklist.text().to_string(),
                     empty_hint: I18nKey::HotkeyBlacklistEmptyHint.text().to_string(),
                     entries,
@@ -2367,6 +2389,7 @@ impl Render for RootView {
                     help_text: None,
                     add_button_label,
                     add_button_recording: false,
+                    fixed_height: None,
                     theme: self.theme.clone(),
                     layout: (
                         hotkey_blacklist_popup_opacity,
@@ -2454,6 +2477,7 @@ impl Render for RootView {
                 root.child(render_app_list_dialog(AppListDialogParams {
                     custom_rows: None,
                     configured_count: None,
+                    badge_label: None,
                     title: I18nKey::HotkeyPasteShortcut.text().to_string(),
                     empty_hint: I18nKey::HotkeyPasteShortcutEmptyHint.text().to_string(),
                     entries,
@@ -2463,6 +2487,7 @@ impl Render for RootView {
                     help_text: Some(I18nKey::HotkeyPasteShortcutHelp.text().to_string()),
                     add_button_label,
                     add_button_recording: recording_active,
+                    fixed_height: None,
                     theme: self.theme.clone(),
                     layout: (
                         paste_shortcuts_popup_opacity,
@@ -2568,6 +2593,7 @@ impl Render for RootView {
                 root.child(render_app_list_dialog(AppListDialogParams {
                     custom_rows: None,
                     configured_count: None,
+                    badge_label: None,
                     title: I18nKey::ClipboardAppBlacklistTitle.text().to_string(),
                     empty_hint: I18nKey::ClipboardAppBlacklistEmptyHint.text().to_string(),
                     entries,
@@ -2577,6 +2603,7 @@ impl Render for RootView {
                     help_text: None,
                     add_button_label,
                     add_button_recording: false,
+                    fixed_height: None,
                     theme: self.theme.clone(),
                     layout: (
                         app_blacklist_popup_opacity,
@@ -2674,12 +2701,14 @@ impl Render for RootView {
                     custom_rows: Some(rows),
                     configured_count: Some(["secret", "phone", "email", "link"].into_iter()
                         .filter(|kind| selected.iter().any(|value| value == kind)).count()),
+                    badge_label: None,
                     scroll_key: "privacy-types-popup",
                     recording_app: None,
                     show_shortcut_column: false,
                     help_text: Some(I18nKey::PrivacyTypesHint.text().to_string()),
                     add_button_label: None,
                     add_button_recording: false,
+                    fixed_height: None,
                     theme,
                     layout: privacy_popup_layout,
                     on_close: Rc::new(move |_, cx| {
@@ -2695,6 +2724,43 @@ impl Render for RootView {
                 root.child(SettingsPanel::render_local_backup_dialog_overlay(
                     self.settings_panel.clone(), self.theme.clone(), local_backup_popup_layout, cx,
                 ))
+            })
+            // --- Changelog notes (one release, opened from the version list) ---
+            .when(changelog_detail_visible, |root| {
+                let settings = self.settings_panel.clone();
+                let version = changelog_detail.unwrap_or_default();
+                let badge = crate::core::changelog::version(version)
+                    .and_then(|entry| entry.date)
+                    .unwrap_or_default()
+                    .to_owned();
+                let notes = self
+                    .settings_panel
+                    .read(cx)
+                    .render_changelog_notes(version);
+                root.child(render_app_list_dialog(AppListDialogParams {
+                    title: format!("v{version}"),
+                    empty_hint: String::new(),
+                    entries: Vec::new(),
+                    custom_rows: Some(vec![notes]),
+                    configured_count: None,
+                    badge_label: Some(badge),
+                    scroll_key: "changelog-detail-popup",
+                    recording_app: None,
+                    show_shortcut_column: false,
+                    help_text: None,
+                    add_button_label: None,
+                    add_button_recording: false,
+                    fixed_height: Some(420.),
+                    theme: self.theme.clone(),
+                    layout: changelog_detail_popup_layout,
+                    on_close: Rc::new(move |_window, cx| {
+                        settings.update(cx, |panel, cx| panel.close_changelog_entry(cx));
+                    }),
+                    on_delete: Rc::new(|_, _, _| {}),
+                    on_shortcut_click: None,
+                    on_cancel_recording: None,
+                    on_add: None,
+                }))
             })
             // --- Root-level clear-data ConfirmDialog ---
             .when(clear_data_confirm_visible, |root| {

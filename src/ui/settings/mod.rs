@@ -95,6 +95,8 @@ pub struct SettingsPanel {
     backend_panel: Entity<AddBackendPanel>,
     /// Whether the bundled changelog page is open in place of the tab content.
     pub changelog_open: bool,
+    /// Version whose release notes are open in the changelog dialog.
+    pub changelog_detail: Option<&'static str>,
     /// Whether the latest hotkeys popup is open.
     pub latest_hotkeys_popup_open: bool,
     /// Application list popup visibility (hotkey blacklist / paste shortcuts / clipboard blacklist).
@@ -246,6 +248,7 @@ impl SettingsPanel {
             focus_handle: cx.focus_handle(),
             backend_panel,
             changelog_open: false,
+            changelog_detail: None,
             latest_hotkeys_popup_open: false,
             hotkey_blacklist_popup_open: false,
             paste_shortcuts_popup_open: false,
@@ -294,6 +297,7 @@ impl SettingsPanel {
         // The changelog is a sub-page of the version tab; any tab navigation
         // leaves it, including reopening settings straight on the version tab.
         self.changelog_open = false;
+        self.changelog_detail = None;
         if self.active_tab != index {
             self.local_backup_dialog = None;
             self.local_backup_dialog_generation =

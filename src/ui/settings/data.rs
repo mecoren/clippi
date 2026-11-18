@@ -319,6 +319,7 @@ impl SettingsPanel {
             entries: Vec::new(),
             custom_rows: Some(rows),
             configured_count: Some(dialog.selected.count()),
+            badge_label: None,
             scroll_key: "local-backup-popup",
             recording_app: None,
             show_shortcut_column: false,
@@ -332,6 +333,7 @@ impl SettingsPanel {
                 .to_owned(),
             ),
             add_button_recording: false,
+            fixed_height: None,
             theme,
             layout,
             on_close: Rc::new(move |_, cx| {
