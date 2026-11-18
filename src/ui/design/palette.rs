@@ -241,3 +241,93 @@ pub fn apply_for_window(mode: ThemeMode, accent: Option<Rgba>, window: &mut Wind
     Theme::change(mode, Some(window), cx);
     apply(mode, accent, cx);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// WCAG 2.1 相对亮度。
+    fn luminance(color: Hsla) -> f32 {
+        let rgba = color.to_rgb();
+        let channel = |c: f32| {
+            if c <= 0.039_28 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(rgba.r) + 0.7152 * channel(rgba.g) + 0.0722 * channel(rgba.b)
+    }
+
+    fn contrast(fg: Hsla, bg: Hsla) -> f32 {
+        let (fg, bg) = (luminance(fg), luminance(bg));
+        (fg.max(bg) + 0.05) / (fg.min(bg) + 0.05)
+    }
+
+    /// 把半透明面（卡片、浮层）叠到窗口底上，得到真正的底色。
+    fn flattened(dark: bool, layer: Option<&str>) -> Hsla {
+        let mut color = tokens::token("window-bg", dark);
+        if let Some(name) = layer {
+            color = color.blend(tokens::token(name, dark));
+        }
+        Hsla { a: 1., ..color }
+    }
+
+    fn assert_contrast(what: &str, fg: Hsla, bg: Hsla, min: f32) {
+        let ratio = contrast(fg, bg);
+        assert!(ratio >= min, "{what}: {ratio:.2}:1 < {min}:1");
+    }
+
+    /// FR-A11Y-03：正文 ≥ 4.5:1、辅助与图标 ≥ 3:1。底色覆盖窗口、卡片
+    /// （`layer`）与浮层（`flyout`）三层，因为同一文字会落在三者上。
+    #[test]
+    fn text_and_icon_contrast_meets_wcag() {
+        for dark in [false, true] {
+            let mode = if dark { "dark" } else { "light" };
+            let surfaces = [
+                ("window", flattened(dark, None)),
+                ("card", flattened(dark, Some("layer"))),
+                ("flyout", flattened(dark, Some("flyout"))),
+            ];
+            let ink = tokens::token("ink", dark);
+            let ink_2 = tokens::token("ink-2", dark);
+            let ink_3 = tokens::token("ink-3", dark);
+            let accent = tokens::token("accent", dark);
+            let on_accent = tokens::token("on-accent", dark);
+            let danger = tokens::token("danger", dark);
+            let on_danger = tokens::token("on-danger", dark);
+            let fav = tokens::token("fav", dark);
+
+            for (surface, bg) in surfaces {
+                assert_contrast(&format!("{mode} ink on {surface}"), ink, bg, 4.5);
+                assert_contrast(&format!("{mode} ink-2 on {surface}"), ink_2, bg, 4.5);
+                assert_contrast(&format!("{mode} ink-3 on {surface}"), ink_3, bg, 3.0);
+                assert_contrast(&format!("{mode} accent on {surface}"), accent, bg, 4.5);
+            }
+            assert_contrast(
+                &format!("{mode} on-accent on accent"),
+                on_accent,
+                accent,
+                4.5,
+            );
+            assert_contrast(
+                &format!("{mode} on-danger on danger"),
+                on_danger,
+                danger,
+                4.5,
+            );
+            assert_contrast(
+                &format!("{mode} danger on flyout"),
+                danger,
+                flattened(dark, Some("flyout")),
+                4.5,
+            );
+            assert_contrast(
+                &format!("{mode} fav icon on window"),
+                fav,
+                flattened(dark, None),
+                3.0,
+            );
+        }
+    }
+}
