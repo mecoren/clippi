@@ -418,7 +418,7 @@ impl SettingsPanel {
         let storage_operation_running = self.window_manager.read(cx).is_data_operation_running();
         // --- borrow released ---
 
-        let mut container = div().flex().flex_col().gap(px(14.)).pt(px(8.));
+        let mut container = div().flex().flex_col().gap(px(12.)).pt(px(8.));
 
         // --- Storage location (single row, no section title) ---
         let storage_rows: Vec<AnyElement> = vec![{
@@ -426,15 +426,15 @@ impl SettingsPanel {
             let this = this.clone();
             let db_path_str = db_path_str.clone();
 
-            let text_1 = self.theme.text_1;
-            let text_2 = self.theme.text_2;
-            let text_3 = self.theme.text_3;
-            let accent = self.theme.accent;
+            let text_1 = p.ink;
+            let text_2 = p.ink_2;
+            let text_3 = p.ink_3;
+            let accent = p.accent;
 
             div()
                 .h(px(76.))
-                .px(px(14.))
-                .pt(px(14.))
+                .px(px(12.))
+                .pt(px(12.))
                 .flex()
                 .flex_col()
                 .gap(px(6.))
@@ -457,9 +457,9 @@ impl SettingsPanel {
                             div()
                                 .flex_1()
                                 .h(px(28.))
-                                .rounded(px(7.))
+                                .rounded(Radius::Md.scaled())
                                 .bg(p.control_face)
-                                .px(px(10.))
+                                .px(px(8.))
                                 .flex()
                                 .items_center()
                                 .overflow_hidden()
@@ -477,8 +477,8 @@ impl SettingsPanel {
                             let this = this.clone();
                             div()
                                 .h(px(28.))
-                                .px(px(10.))
-                                .rounded(px(7.))
+                                .px(px(8.))
+                                .rounded(Radius::Md.scaled())
                                 .bg(accent)
                                 .flex()
                                 .items_center()
@@ -570,7 +570,7 @@ impl SettingsPanel {
                                 })
                                 .child(
                                     div()
-                                        .text_size(fs(11.))
+                                        .text_size(fs(12.))
                                         .font_weight(FontWeight::BOLD)
                                         .text_color(Rgba::from(p.on_accent))
                                         .child(I18nKey::BtnChange.text()),
@@ -581,8 +581,8 @@ impl SettingsPanel {
                             let this = this.clone();
                             div()
                                 .h(px(28.))
-                                .px(px(10.))
-                                .rounded(px(7.))
+                                .px(px(8.))
+                                .rounded(Radius::Md.scaled())
                                 .bg(Rgba::from(Hsla::transparent_black()))
                                 .border(px(1.))
                                 .border_color(text_3)
@@ -603,7 +603,7 @@ impl SettingsPanel {
                                 })
                                 .child(
                                     div()
-                                        .text_size(fs(11.))
+                                        .text_size(fs(12.))
                                         .font_weight(FontWeight::BOLD)
                                         .text_color(text_3)
                                         .child(I18nKey::BtnReset.text()),
@@ -645,9 +645,9 @@ impl SettingsPanel {
 
         // --- Retention ---
         let retention_rows: Vec<AnyElement> = vec![{
-            let divider = self.theme.divider;
-            let text_1 = self.theme.text_1;
-            let text_3 = self.theme.text_3;
+            let divider = p.stroke;
+            let text_1 = p.ink;
+            let text_3 = p.ink_3;
 
             div()
                 .overflow_hidden()
@@ -658,7 +658,7 @@ impl SettingsPanel {
                     let this = this.clone();
                     div()
                         .h(px(58.))
-                        .px(px(14.))
+                        .px(px(12.))
                         .flex()
                         .flex_row()
                         .items_center()
@@ -667,7 +667,7 @@ impl SettingsPanel {
                             div()
                                 .flex()
                                 .flex_col()
-                                .gap(px(1.))
+                                .gap(px(2.))
                                 .child(
                                     div()
                                         .text_size(fs(12.))
@@ -763,7 +763,7 @@ impl SettingsPanel {
                     let this = this.clone();
                     div()
                         .h(px(58.))
-                        .px(px(14.))
+                        .px(px(12.))
                         .flex()
                         .flex_row()
                         .items_center()
@@ -772,7 +772,7 @@ impl SettingsPanel {
                             div()
                                 .flex()
                                 .flex_col()
-                                .gap(px(1.))
+                                .gap(px(2.))
                                 .child(
                                     div()
                                         .text_size(fs(12.))
@@ -864,8 +864,8 @@ impl SettingsPanel {
                 // --- Exemption hint ---
                 .child(
                     div()
-                        .px(px(14.))
-                        .pb(px(10.))
+                        .px(px(12.))
+                        .pb(px(8.))
                         .text_size(fs(10.))
                         .text_color(text_3)
                         .child(I18nKey::DescRetentionExempt.text()),
@@ -882,20 +882,20 @@ impl SettingsPanel {
             let window_manager = self.window_manager.clone();
             let cleanup_interval = self.state.read(cx).settings.cleanup_interval.clone();
 
-            let divider = self.theme.divider;
-            let text_1 = self.theme.text_1;
-            let text_2 = self.theme.text_2;
-            let text_3 = self.theme.text_3;
-            let accent = self.theme.accent;
-            let btn_hover = self.theme.btn_hover;
+            let divider = p.stroke;
+            let text_1 = p.ink;
+            let text_2 = p.ink_2;
+            let text_3 = p.ink_3;
+            let accent = p.accent;
+            let btn_hover = p.hover;
 
             div()
-                .px(px(14.))
-                .pt(px(14.))
+                .px(px(12.))
+                .pt(px(12.))
                 .pb(px(12.))
                 .flex()
                 .flex_col()
-                .gap(px(10.))
+                .gap(px(8.))
                 // --- Label + description ---
                 .child(
                     div()
@@ -931,7 +931,7 @@ impl SettingsPanel {
                         .mx(px(-4.))
                         .px(px(4.))
                         .py(px(2.))
-                        .rounded(px(5.))
+                        .rounded(Radius::Md.scaled())
                         .opacity(if maintenance_running { 0.55 } else { 1.0 })
                         .cursor(if maintenance_running {
                             CursorStyle::Arrow
@@ -958,16 +958,16 @@ impl SettingsPanel {
                                 "CircleIcon"
                             },
                             fs(12.),
-                            Hsla::from(if stale_enabled { accent } else { text_3 }),
+                            if stale_enabled { accent } else { text_3 },
                         ))
                         .child(
                             div()
                                 .flex()
                                 .items_center()
-                                .gap(px(5.))
+                                .gap(px(4.))
                                 .child(
                                     div()
-                                        .text_size(fs(11.))
+                                        .text_size(fs(12.))
                                         .text_color(text_1)
                                         .child(I18nKey::SettingCleanupStaleItems.text()),
                                 )
@@ -982,7 +982,7 @@ impl SettingsPanel {
                                         .flex()
                                         .items_center()
                                         .justify_center()
-                                        .text_size(fs(9.))
+                                        .text_size(fs(10.))
                                         .font_weight(FontWeight::BOLD)
                                         .text_color(text_3)
                                         .cursor(CursorStyle::Arrow)
@@ -1031,13 +1031,9 @@ impl SettingsPanel {
                                         let btn_bg = if selected {
                                             accent
                                         } else {
-                                            Rgba::from(Hsla::transparent_black())
+                                            p.background.opacity(0.)
                                         };
-                                        let btn_text = if selected {
-                                            Rgba::from(p.on_accent)
-                                        } else {
-                                            text_2
-                                        };
+                                        let btn_text = if selected { p.on_accent } else { text_2 };
                                         let btn_weight = if selected {
                                             FontWeight::BOLD
                                         } else {
@@ -1048,7 +1044,7 @@ impl SettingsPanel {
 
                                         div()
                                             .h(px(26.))
-                                            .rounded(px(7.))
+                                            .rounded(Radius::Md.scaled())
                                             .px(px(8.))
                                             .bg(btn_bg)
                                             .when(!selected, |d| {
@@ -1079,7 +1075,7 @@ impl SettingsPanel {
                                             )
                                             .child(
                                                 div()
-                                                    .text_size(fs(11.))
+                                                    .text_size(fs(12.))
                                                     .font_weight(btn_weight)
                                                     .text_color(btn_text)
                                                     .child(*label),
@@ -1093,8 +1089,8 @@ impl SettingsPanel {
                             let window_manager = window_manager.clone();
                             div()
                                 .h(px(26.))
-                                .px(px(10.))
-                                .rounded(px(7.))
+                                .px(px(8.))
+                                .rounded(Radius::Md.scaled())
                                 .bg(if maintenance_running { divider } else { accent })
                                 .flex()
                                 .items_center()
@@ -1123,7 +1119,7 @@ impl SettingsPanel {
                                 })
                                 .child(
                                     div()
-                                        .text_size(fs(11.))
+                                        .text_size(fs(12.))
                                         .font_weight(FontWeight::BOLD)
                                         .text_color(Rgba::from(p.on_accent))
                                         .child(if storage_operation_running {
@@ -1146,14 +1142,14 @@ impl SettingsPanel {
             let this = cx.entity().clone();
             let item_count = self.state.read(cx).clearable_history_count();
 
-            let divider = self.theme.divider;
-            let text_1 = self.theme.text_1;
-            let text_3 = self.theme.text_3;
-            let danger = self.theme.danger;
+            let divider = p.stroke;
+            let text_1 = p.ink;
+            let text_3 = p.ink_3;
+            let danger = p.danger;
 
             div()
                 .h(px(58.))
-                .px(px(14.))
+                .px(px(12.))
                 .flex()
                 .flex_row()
                 .items_center()
@@ -1187,8 +1183,8 @@ impl SettingsPanel {
                     div()
                         .flex_shrink_0()
                         .h(px(26.))
-                        .px(px(10.))
-                        .rounded(px(7.))
+                        .px(px(8.))
+                        .rounded(Radius::Md.scaled())
                         .bg(if maintenance_running { divider } else { danger })
                         .flex()
                         .items_center()
@@ -1219,7 +1215,7 @@ impl SettingsPanel {
                         })
                         .child(
                             div()
-                                .text_size(fs(11.))
+                                .text_size(fs(12.))
                                 .font_weight(FontWeight::BOLD)
                                 .text_color(Rgba::from(p.on_accent))
                                 .child(if storage_operation_running {
@@ -1501,12 +1497,12 @@ impl SettingsPanel {
         };
 
         let p = self.palette;
-        let surface = self.theme.surface;
-        let accent = self.theme.accent;
-        let accent_soft = self.theme.accent_soft;
-        let text_1 = self.theme.text_1;
-        let text_3 = self.theme.text_3;
-        let divider = self.theme.divider;
+        let surface = p.layer;
+        let accent = p.accent;
+        let accent_soft = p.accent_soft();
+        let text_1 = p.ink;
+        let text_3 = p.ink_3;
+        let divider = p.stroke;
 
         let this = cx.entity().clone();
 
@@ -1527,7 +1523,7 @@ impl SettingsPanel {
                 div()
                     .w(px(300.))
                     .bg(surface)
-                    .rounded(px(12.))
+                    .rounded(Radius::Card.scaled())
                     .border(px(1.))
                     .border_color(divider)
                     .p(px(16.))
@@ -1538,7 +1534,7 @@ impl SettingsPanel {
                     // --- Title ---
                     .child(
                         div()
-                            .text_size(fs(14.))
+                            .text_size(fs(16.))
                             .font_weight(FontWeight::BOLD)
                             .text_color(text_1)
                             .child(I18nKey::BtnResetDataDir.text()),
@@ -1561,9 +1557,9 @@ impl SettingsPanel {
                             .bg(if selected {
                                 accent_soft
                             } else {
-                                Rgba::from(Hsla::transparent_black())
+                                p.background.opacity(0.)
                             })
-                            .p(px(10.))
+                            .p(px(8.))
                             .flex()
                             .flex_col()
                             .gap(px(2.))
@@ -1602,9 +1598,9 @@ impl SettingsPanel {
                             .bg(if selected {
                                 accent_soft
                             } else {
-                                Rgba::from(Hsla::transparent_black())
+                                p.background.opacity(0.)
                             })
-                            .p(px(10.))
+                            .p(px(8.))
                             .flex()
                             .flex_col()
                             .gap(px(2.))

@@ -20,6 +20,7 @@ use crate::state::app::AppState;
 
 use super::clipboard_list::ClipboardListView;
 use super::components::reorder::{ease_in_out, row_drag_position};
+use super::design::motion;
 use super::design::palette::Palette;
 use super::design::size::{Radius, Space};
 use super::design::typography::{self, type_role};
@@ -286,9 +287,9 @@ impl Render for Sidebar {
                     .or_insert(now);
             }
         }
+        // 下架行继续参与动画的窗口：慢速档（250 ms），与滑出时长同源。
         self.unchecked_unpinned_since.retain(|id, started_at| {
-            !active_or_pinned_ids.contains(id)
-                && now.duration_since(*started_at) < Duration::from_millis(300)
+            !active_or_pinned_ids.contains(id) && now.duration_since(*started_at) < motion::slow()
         });
 
         if !self.unchecked_unpinned_since.is_empty() {
@@ -375,7 +376,7 @@ impl Render for Sidebar {
         let settling = self.settling;
         if self
             .settling
-            .is_some_and(|(_, _, start)| start.elapsed() >= Duration::from_millis(140))
+            .is_some_and(|(_, _, start)| start.elapsed() >= motion::fast())
         {
             self.settling = None;
         }
@@ -404,7 +405,7 @@ impl Render for Sidebar {
         let row_border = p.stroke_strong;
         let state_for_click = self.state.clone();
         let sidebar_for_notify = cx.entity().clone();
-        let duration = Duration::from_millis(250);
+        let duration = motion::slow();
 
         div()
             .font(typography::ui_font(cx))
@@ -532,7 +533,7 @@ impl Render for Sidebar {
                     window,
                     cx,
                     ("sidebar-tag-y", tag_id as u64),
-                    Duration::from_millis(140),
+                    motion::fast(),
                     px(original_slot as f32 * ROW_HEIGHT),
                     ease_in_out,
                     px(target_slot as f32 * ROW_HEIGHT),
@@ -541,7 +542,8 @@ impl Render for Sidebar {
                     px(dragged_top)
                 } else if let Some((_, top, started)) = settling.filter(|(id, _, _)| *id == tag_id)
                 {
-                    let delta = (started.elapsed().as_secs_f32() / 0.14).min(1.);
+                    let delta =
+                        (started.elapsed().as_secs_f32() / motion::fast().as_secs_f32()).min(1.);
                     if delta < 1. {
                         window.request_animation_frame();
                     }

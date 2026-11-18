@@ -1,23 +1,30 @@
 //! --- Sync settings tab. ---
+//!
+//! 页面层只取语义色（`Palette`）与控件工厂：分组卡、行、开关、下拉、
+//! 状态胶囊、分段控件都不在这里拼样式（对齐 Argus `pages/settings.rs`）。
 
-use crate::ui::font::fs;
 use std::time::Duration;
 
 use gpui::prelude::*;
 use gpui::*;
 use gpui_kit::component::scroll::ScrollableElement;
 
-use crate::ui::transition::keyed_transition;
-
 use crate::core::i18n_keys::I18nKey;
 use crate::services::gpui_sync::format_last_sync;
 use crate::state::sync::BackendStatus;
+use crate::ui::design::motion;
 use crate::ui::design::palette::Palette;
-use crate::ui::widgets;
+use crate::ui::design::size::{Radius, Space};
+use crate::ui::design::typography::{self, type_role};
+use crate::ui::transition::keyed_transition;
+use crate::ui::widgets::{self, ButtonExt, PillTone};
 
 use super::{BackendCollapseState, SettingsPanel};
 
-const COLLAPSE_DURATION: Duration = Duration::from_millis(300);
+/// 后端卡片的高度动画时长：沿用动效令牌（250 ms），不再自定 300。
+fn collapse_duration() -> Duration {
+    motion::slow()
+}
 
 impl SettingsPanel {
     pub fn render_sync_tab(
@@ -25,17 +32,10 @@ impl SettingsPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let p = self.palette;
         let sync = self.state.read(cx).sync.clone();
         let wm = self.window_manager.clone();
         let backend_panel = self.backend_panel();
-        let p = self.palette;
-        let surface = self.theme.surface;
-        let divider = self.theme.divider;
-        let accent = self.theme.accent;
-        let accent_soft = self.theme.accent_soft;
-        let text_1 = self.theme.text_1;
-        let text_2 = self.theme.text_2;
-        let text_3 = self.theme.text_3;
         let transfer_enabled = self.state.read(cx).settings.transfer_station_enabled;
         let transfer_retention = self.state.read(cx).settings.transfer_retention_days;
         let enabled_backend_count = sync
@@ -53,653 +53,375 @@ impl SettingsPanel {
             })
             .collect();
 
-        let mut container = div().flex().flex_col().gap(px(14.)).pt(px(8.));
+        let mut container = div()
+            .flex()
+            .flex_col()
+            .gap(Space::Sm.scaled())
+            .pt(Space::Md.scaled());
 
-        // --- Sync settings ---
-        let master_rows: Vec<AnyElement> = vec![div()
-            .overflow_hidden()
-            .child(
-                div()
-                    .h(px(38.))
-                    .px(px(14.))
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.))
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .whitespace_nowrap()
-                            .text_size(fs(12.))
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(text_1)
-                            .child(I18nKey::SyncTabTitle.text()),
-                    )
-                    .child(div().flex_shrink_0().child(widgets::toggle(
-                        &p,
-                        "sync-auto-enabled",
-                        I18nKey::SyncTabTitle.text(),
-                        sync.auto_enabled,
-                        false,
-                        {
-                            let wm = wm.clone();
-                            move |_window, cx| {
-                                wm.update(cx, |wm, cx| {
-                                    wm.toggle_sync_auto_enabled(cx);
-                                });
-                            }
-                        },
-                        window,
-                        cx,
-                    ))),
-            )
-            .when(sync.auto_enabled, |card| {
-                card.child(div().h(px(1.)).bg(divider)).child(
-                    div()
-                        .h(px(38.))
-                        .px(px(14.))
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w(px(0.))
-                                .overflow_hidden()
-                                .text_ellipsis()
-                                .whitespace_nowrap()
-                                .text_size(fs(12.))
-                                .font_weight(FontWeight::BOLD)
-                                .text_color(text_1)
-                                .child(I18nKey::SyncFavoritesOnly.text()),
-                        )
-                        .child(div().flex_shrink_0().child(widgets::toggle(
-                            &p,
-                            "sync-favorites-only",
-                            I18nKey::SyncFavoritesOnly.text(),
-                            sync.favorites_only,
-                            false,
-                            {
-                                let wm = wm.clone();
-                                move |_window, cx| {
-                                    wm.update(cx, |wm, cx| {
-                                        wm.toggle_sync_favorites_only(cx);
-                                    });
-                                }
-                            },
-                            window,
-                            cx,
-                        ))),
-                )
-            })
-            .into_any_element()];
+        // --- 同步总开关 ---
+        let mut master_rows = vec![toggle_row(
+            &p,
+            "sync-auto-enabled",
+            I18nKey::SyncTabTitle.text(),
+            I18nKey::DescSyncAuto.text(),
+            sync.auto_enabled,
+            window,
+            cx,
+            {
+                let wm = wm.clone();
+                move |_window, cx| {
+                    wm.update(cx, |wm, cx| wm.toggle_sync_auto_enabled(cx));
+                }
+            },
+        )];
+        if sync.auto_enabled {
+            master_rows.push(toggle_row(
+                &p,
+                "sync-favorites-only",
+                I18nKey::SyncFavoritesOnly.text(),
+                I18nKey::DescSyncFavorites.text(),
+                sync.favorites_only,
+                window,
+                cx,
+                {
+                    let wm = wm.clone();
+                    move |_window, cx| {
+                        wm.update(cx, |wm, cx| wm.toggle_sync_favorites_only(cx));
+                    }
+                },
+            ));
+        }
         container =
             container.child(self.settings_group(I18nKey::GroupSyncMaster.text(), master_rows));
 
-        // --- Synced content (only while sync is on) ---
+        // --- 同步内容（仅在同步开启时出现） ---
         if sync.auto_enabled {
-            let mut build_options = |container: Div| {
-                container.child(
-                    div()
-                        .overflow_hidden()
-                        .child(
-                            div()
-                                .h(px(38.))
-                                .px(px(14.))
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w(px(0.))
-                                        .overflow_hidden()
-                                        .text_ellipsis()
-                                        .whitespace_nowrap()
-                                        .text_size(fs(12.))
-                                        .font_weight(FontWeight::BOLD)
-                                        .text_color(text_1)
-                                        .child(I18nKey::SyncIncludeImages.text()),
-                                )
-                                .child(div().flex_shrink_0().child(widgets::toggle(
-                                    &p,
-                                    "sync-include-images",
-                                    I18nKey::SyncIncludeImages.text(),
-                                    sync.include_images,
-                                    false,
-                                    {
-                                        let wm = wm.clone();
-                                        move |_window, cx| {
-                                            wm.update(cx, |wm, cx| {
-                                                wm.toggle_sync_include_images(cx);
-                                            });
-                                        }
-                                    },
-                                    window,
-                                    cx,
-                                ))),
-                        )
-                        .when(sync.include_images, |card| {
-                            card.child(div().h(px(1.)).bg(divider)).child(
-                                div()
-                                    .h(px(38.))
-                                    .px(px(14.))
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w(px(0.))
-                                            .mr(px(8.))
-                                            .overflow_hidden()
-                                            .text_ellipsis()
-                                            .whitespace_nowrap()
-                                            .text_size(fs(12.))
-                                            .font_weight(FontWeight::BOLD)
-                                            .text_color(text_1)
-                                            .child(I18nKey::SyncCompressImages.text()),
-                                    )
-                                    .child(div().flex_shrink_0().child(widgets::toggle(
-                                        &p,
-                                        "sync-compress-images",
-                                        I18nKey::SyncCompressImages.text(),
-                                        sync.compress_images,
-                                        false,
-                                        {
-                                            let wm = wm.clone();
-                                            move |_window, cx| {
-                                                wm.update(cx, |wm, cx| {
-                                                    wm.toggle_sync_compress_images(cx);
-                                                });
-                                            }
-                                        },
-                                        window,
-                                        cx,
-                                    ))),
-                            )
-                        }),
-                )
-            };
-            let option_rows: Vec<AnyElement> = vec![build_options(div()).into_any_element()];
+            let mut option_rows = vec![toggle_row(
+                &p,
+                "sync-include-images",
+                I18nKey::SyncIncludeImages.text(),
+                I18nKey::DescSyncIncludeImages.text(),
+                sync.include_images,
+                window,
+                cx,
+                {
+                    let wm = wm.clone();
+                    move |_window, cx| {
+                        wm.update(cx, |wm, cx| wm.toggle_sync_include_images(cx));
+                    }
+                },
+            )];
+            if sync.include_images {
+                option_rows.push(toggle_row(
+                    &p,
+                    "sync-compress-images",
+                    I18nKey::SyncCompressImages.text(),
+                    I18nKey::DescSyncCompressImages.text(),
+                    sync.compress_images,
+                    window,
+                    cx,
+                    {
+                        let wm = wm.clone();
+                        move |_window, cx| {
+                            wm.update(cx, |wm, cx| wm.toggle_sync_compress_images(cx));
+                        }
+                    },
+                ));
+            }
             container =
                 container.child(self.settings_group(I18nKey::GroupSyncOptions.text(), option_rows));
         }
 
-        // --- Transfer station (single row, no section title) ---
-        let transfer_rows: Vec<AnyElement> = vec![div()
-            .overflow_hidden()
-            .child(
-                div()
-                    .h(px(38.))
-                    .px(px(14.))
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(6.))
-                            .child(
-                                div()
-                                    .text_size(fs(12.))
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(text_1)
-                                    .child(I18nKey::TransferStation.text()),
-                            )
-                            .when(enabled_backend_count == 0, |row| {
-                                row.child(
-                                    div()
-                                        .text_size(fs(10.))
-                                        .text_color(text_2)
-                                        .child(I18nKey::TransferNoBackend.text()),
-                                )
-                            }),
-                    )
-                    .child(widgets::toggle(
-                        &p,
-                        "transfer-station-enabled",
-                        I18nKey::TransferStation.text(),
-                        transfer_enabled,
-                        false,
-                        {
-                            let wm = wm.clone();
-                            move |_window, cx| {
-                                wm.update(cx, |wm, cx| {
-                                    wm.toggle_transfer_station(cx);
-                                });
-                            }
-                        },
-                        window,
-                        cx,
-                    )),
-            )
-            .when(transfer_enabled, |card| {
-                card.child(div().h(px(1.)).bg(divider)).child(
-                    div()
-                        .h(px(38.))
-                        .px(px(14.))
-                        .flex()
-                        .items_center()
-                        .gap(px(4.))
-                        .child(
-                            div()
-                                .w(px(76.))
-                                .text_size(fs(11.))
-                                .text_color(text_2)
-                                .child(I18nKey::TransferRetention.text()),
-                        )
-                        .children([0_u32, 1, 3, 7, 30].into_iter().map(|days| {
-                            let selected = transfer_retention == days;
-                            let wm = wm.clone();
-                            let label = if days == 0 {
-                                I18nKey::TransferKeepForever.text().to_string()
-                            } else {
-                                I18nKey::TransferRetentionDays.fmt(&[&days.to_string()])
-                            };
-                            div()
-                                .flex_1()
-                                .h(px(22.))
-                                .rounded(px(6.))
-                                .bg(if selected {
-                                    accent
-                                } else {
-                                    Rgba::from(Hsla::transparent_black())
-                                })
-                                .text_size(fs(10.))
-                                .text_color(if selected {
-                                    Rgba::from(p.on_accent)
-                                } else {
-                                    text_2
-                                })
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .cursor(CursorStyle::PointingHand)
-                                .hover(move |style| {
-                                    if selected {
-                                        style.opacity(0.88)
-                                    } else {
-                                        style.bg(accent_soft)
-                                    }
-                                })
-                                .on_mouse_down(MouseButton::Left, move |_event, _window, cx| {
-                                    wm.update(cx, |wm, cx| {
-                                        wm.set_transfer_retention_days(days, cx);
-                                    });
-                                })
-                                .child(label)
-                        })),
-                )
-            })
-            .into_any_element()];
+        // --- 文件中转站 ---
+        let mut transfer_rows = vec![toggle_row(
+            &p,
+            "transfer-station-enabled",
+            I18nKey::TransferStation.text(),
+            if enabled_backend_count == 0 {
+                I18nKey::TransferNoBackend.text()
+            } else {
+                I18nKey::DescTransferStation.text()
+            },
+            transfer_enabled,
+            window,
+            cx,
+            {
+                let wm = wm.clone();
+                move |_window, cx| {
+                    wm.update(cx, |wm, cx| wm.toggle_transfer_station(cx));
+                }
+            },
+        )];
+        if transfer_enabled {
+            transfer_rows.push(self.render_retention_row(transfer_retention, window, cx));
+        }
         container =
             container.child(self.settings_group(I18nKey::GroupTransfer.text(), transfer_rows));
 
-        // --- Config sync (single row, no section title) ---
-        let config_rows: Vec<AnyElement> = vec![{
-                // ── Config sync card ──
-                let sync = self.state.read(cx).sync.clone();
-                let config_backends: Vec<BackendStatus> = sync
-                    .backends
-                    .iter()
-                    .filter(|b| b.config.backend_type == "local_folder" || b.config.backend_type == "webdav")
-                    .cloned()
-                    .collect();
+        // --- 配置同步 ---
+        container = container.child(self.render_config_sync_group(window, cx));
 
-                if self.config_sync_backend_id.is_none() {
-                    self.config_sync_backend_id = config_backends.first().map(|b| b.config.id.clone());
-                }
-
-                // Revalidate the selected backend every render: if it was
-                // deleted, fall back to the first available one so the buttons
-                // never silently operate on a stale ID.
-                let selected_still_exists = self
-                    .config_sync_backend_id
-                    .as_ref()
-                    .is_some_and(|id| config_backends.iter().any(|b| &b.config.id == id));
-                if !selected_still_exists {
-                    self.config_sync_backend_id =
-                        config_backends.first().map(|b| b.config.id.clone());
-                }
-
-                let selected_id = self.config_sync_backend_id.clone();
-                let no_backends = config_backends.is_empty();
-                let busy = wm.read(cx).is_config_sync_busy();
-                let buttons_disabled = no_backends || busy;
-
-                let selected_name = config_backends
-                    .iter()
-                    .find(|b| Some(&b.config.id) == selected_id.as_ref())
-                    .map(|b| b.config.name.clone())
-                    .unwrap_or_default();
-
-                let ids: Vec<String> = config_backends.iter().map(|b| b.config.id.clone()).collect();
-                let names: Vec<String> = config_backends.iter().map(|b| b.config.name.clone()).collect();
-                let menu_open = self.config_sync_menu_open && ids.len() > 1;
-
-                div()
-                    .relative()
-                    .rounded(px(10.))
-                    .bg(surface)
-                    .border(px(1.))
-                    .border_color(divider)
-                    .child(
-                        div()
-                            .h(px(40.))
-                            .px(px(14.))
-                            .flex()
-                            .items_center()
-                            .gap(px(6.))
-                            .child(
-                                div()
-                                    .flex_shrink_0()
-                                    .text_size(fs(12.))
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(text_1)
-                                    .child(I18nKey::ConfigSyncTitle.text()),
-                            )
-                            .child(
-                                div()
-                                    .min_w(px(0.))
-                                    .overflow_hidden()
-                                    .text_ellipsis()
-                                    .whitespace_nowrap()
-                                    .text_size(fs(10.))
-                                    .text_color(text_2)
-                                    .child(I18nKey::ConfigSyncDesc.text()),
-                            ),
-                    )
-                    .child(div().h(px(1.)).bg(divider))
-                    .child({
-                        div()
-                            .px(px(14.))
-                            .py(px(8.))
-                            .flex()
-                            .items_center()
-                            .gap(px(6.))
-                            .child({
-                                let this = cx.entity().clone();
-                                div()
-                                    .flex_shrink_0()
-                                    .w(relative(0.5))
-                                    .h(px(28.))
-                                    .px(px(10.))
-                                    .rounded(px(6.))
-                                    .border(px(1.))
-                                    .border_color(if menu_open { accent } else { divider })
-                                    .bg(surface)
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .text_size(fs(10.))
-                                    .text_color(if no_backends { text_3 } else { accent })
-                                    .cursor(if ids.len() <= 1 { CursorStyle::Arrow } else { CursorStyle::PointingHand })
-                                    .opacity(if no_backends { 0.45 } else { 1.0 })
-                                    .child(
-                                        div()
-                                            .flex_shrink_0()
-                                            .pr(px(9.))
-                                            .mr(px(9.))
-                                            .border_r(px(1.))
-                                            .border_color(divider)
-                                            .text_color(text_2)
-                                            .child(I18nKey::ConfigSyncTargetBackend.text()),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w(px(0.))
-                                            .overflow_hidden()
-                                            .text_ellipsis()
-                                            .whitespace_nowrap()
-                                            .child(if no_backends {
-                                                I18nKey::ConfigSyncNoBackend.text().to_string()
-                                            } else {
-                                                selected_name.clone()
-                                            }),
-                                    )
-                                    .when(ids.len() > 1, |el| {
-                                        el.child(widgets::icon(
-                                            "ChevronDownIcon",
-                                            fs(8.),
-                                            Hsla::from(text_3),
-                                        ))
-                                    })
-                                    .on_mouse_down(MouseButton::Left, {
-                                        let ids = ids.clone();
-                                        let this = this.clone();
-                                        move |_ev, _window, cx| {
-                                            if ids.len() <= 1 {
-                                                return;
-                                            }
-                                            this.update(cx, |panel, cx| {
-                                                panel.config_sync_menu_open = !panel.config_sync_menu_open;
-                                                cx.notify();
-                                            });
-                                        }
-                                    })
-                            })
-                            .child({
-                                let _wm = wm.clone();
-                                let selected = selected_id.clone();
-                                let backend_name = selected_name.clone();
-                                let this = cx.entity().clone();
-                                div()
-                                    .id("config-sync-upload")
-                                    .role(Role::Button)
-                                    .tab_stop(!buttons_disabled)
-                                    .aria_label(I18nKey::ConfigSyncUpload.text())
-                                    .flex_1()
-                                    .min_w(px(0.))
-                                    .h(px(28.))
-                                    .rounded(px(6.))
-                                    .bg(accent)
-                                    .text_size(fs(10.))
-                                    .text_color(Rgba::from(p.on_accent))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .cursor(if buttons_disabled { CursorStyle::Arrow } else { CursorStyle::PointingHand })
-                                    .opacity(if buttons_disabled { 0.45 } else { 1.0 })
-                                    .tooltip(|window, cx| {
-                                        widgets::tooltip(I18nKey::ConfigSyncUpload.text(), window, cx)
-                                    })
-                                    .child(I18nKey::ConfigSyncUpload.text())
-                                    .on_mouse_down(MouseButton::Left, move |_ev, _window, cx| {
-                                        if buttons_disabled {
-                                            return;
-                                        }
-                                        if let Some(ref _id) = selected {
-                                            this.update(cx, |panel, cx| {
-                                                panel.config_sync_upload_confirm = Some(backend_name.clone());
-                                                panel.config_sync_upload_confirm_gen = panel
-                                                    .config_sync_upload_confirm_gen
-                                                    .wrapping_add(1);
-                                                cx.notify();
-                                            });
-                                        }
-                                    })
-                            })
-                            .child({
-                                let wm = wm.clone();
-                                let selected = selected_id.clone();
-                                let this = cx.entity().clone();
-                                div()
-                                    .id("config-sync-download")
-                                    .role(Role::Button)
-                                    .tab_stop(!buttons_disabled)
-                                    .aria_label(I18nKey::ConfigSyncApply.text())
-                                    .flex_1()
-                                    .min_w(px(0.))
-                                    .h(px(28.))
-                                    .rounded(px(6.))
-                                    .bg(accent_soft)
-                                    .text_size(fs(10.))
-                                    .text_color(accent)
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .cursor(if buttons_disabled { CursorStyle::Arrow } else { CursorStyle::PointingHand })
-                                    .opacity(if buttons_disabled { 0.45 } else { 1.0 })
-                                    .tooltip(|window, cx| {
-                                        widgets::tooltip(I18nKey::ConfigSyncApply.text(), window, cx)
-                                    })
-                                    .child(I18nKey::ConfigSyncApply.text())
-                                    .on_mouse_down(MouseButton::Left, move |_ev, _window, cx| {
-                                        if buttons_disabled {
-                                            return;
-                                        }
-                                        if let Some(ref id) = selected {
-                                            let backends = this.read(cx).state.read(cx).settings.sync_backends.clone();
-                                            if let Some(cfg) = backends.iter().find(|b| &b.id == id) {
-                                                if let Some(backend) = crate::services::backends::create_config_snapshot_backend(cfg) {
-                                                    wm.update(cx, |wm, _cx| {
-                                                        wm.start_config_download(backend);
-                                                    });
-                                                }
-                                            }
-                                            this.update(cx, |_panel, cx| {
-                                                cx.notify();
-                                            });
-                                        }
-                                    })
-                            })
-                    })
-                    .when(menu_open, |card| {
-                        let ids = ids.clone();
-                        let names = names.clone();
-                        let selected = selected_id.clone();
-                        let this = cx.entity().clone();
-                        card.child(
-                            deferred(
-                                div()
-                                    .absolute()
-                                    .top(px(79.))
-                                    .left(px(14.))
-                                    .right(relative(0.5))
-                                    .rounded(px(8.))
-                                    .border(px(1.))
-                                    .border_color(divider)
-                                    .bg(surface)
-                                    .shadow_lg()
-                                    .p(px(5.))
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(2.))
-                                    .occlude()
-                                    .children(ids.iter().enumerate().map(|(i, id)| {
-                                    let name = names[i].clone();
-                                    let id = id.clone();
-                                    let active = Some(&id) == selected.as_ref();
-                                    let this = this.clone();
-                                    div()
-                                        .h(px(28.))
-                                        .rounded(px(5.))
-                                        .px(px(10.))
-                                        .flex()
-                                        .items_center()
-                                        .justify_between()
-                                        .text_size(fs(10.))
-                                        .text_color(if active { accent } else { text_1 })
-                                        .bg(if active { accent_soft } else { Rgba::from(Hsla::transparent_black()) })
-                                        .cursor(CursorStyle::PointingHand)
-                                        .hover(move |style| {
-                                            if !active {
-                                                style.bg(accent_soft)
-                                            } else {
-                                                style
-                                            }
-                                        })
-                                        .on_mouse_down(MouseButton::Left, move |_ev, _window, cx| {
-                                            this.update(cx, |panel, cx| {
-                                                panel.config_sync_backend_id = Some(id.clone());
-                                                panel.config_sync_menu_open = false;
-                                                cx.notify();
-                                            });
-                                        })
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .min_w(px(0.))
-                                                .overflow_hidden()
-                                                .text_ellipsis()
-                                                .whitespace_nowrap()
-                                                .child(name),
-                                        )
-                                        .when(active, |row| {
-                                            row.child(
-                                                div()
-                                                    .ml(px(6.))
-                                                    .flex_shrink_0()
-                                                    .child(widgets::icon(
-                                                        "CheckIcon",
-                                                        fs(10.),
-                                                        Hsla::from(accent),
-                                                    )),
-                                            )
-                                        })
-                                })),
-                            )
-                            .with_priority(1),
-                        )
-                    })
-            }.into_any_element()];
-        container =
-            container.child(self.settings_group(I18nKey::GroupConfigSync.text(), config_rows));
-
-        // --- Backends ---
-        let backend_rows: Vec<AnyElement> = vec![div()
-            .overflow_hidden()
+        // --- 同步后端 ---
+        let mut backend_rows: Vec<AnyElement> = vec![div()
+            .px(Space::Sm.scaled())
+            .py(Space::Sm.scaled())
             .child(
-                div()
-                    .h(px(40.))
-                    .rounded(px(10.))
-                    .bg(self.theme.titlebar_bg)
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .gap(px(6.))
-                    .when(sync.auto_enabled, |button| {
-                        button
-                            .cursor(CursorStyle::PointingHand)
-                            .hover(move |style| style.bg(accent_soft))
-                            .on_mouse_down(MouseButton::Left, move |_ev, _window, cx| {
-                                backend_panel.update(cx, |panel, cx| {
-                                    panel.open_add(_window, cx);
-                                });
-                            })
-                    })
-                    .when(!sync.auto_enabled, |button| {
-                        button.opacity(0.45).cursor(CursorStyle::Arrow)
-                    })
-                    .child(div().text_size(fs(14.)).text_color(accent).child("+"))
-                    .child(
-                        div()
-                            .text_size(fs(12.))
-                            .text_color(text_2)
-                            .child(I18nKey::SyncAddBackend.text()),
-                    ),
-            )
-            .when(!backend_cards.is_empty(), |card| {
-                card.child(
-                    div()
-                        .max_h(px(270.))
-                        .overflow_y_scrollbar()
-                        .p(px(8.))
-                        .flex()
-                        .flex_col()
-                        .children(backend_cards),
+                widgets::btn(
+                    &p,
+                    "sync-add-backend",
+                    I18nKey::SyncAddBackend.text(),
+                    Some("PlusIcon"),
+                    widgets::Tone::Plain,
                 )
-            })
+                .w_full()
+                .justify_center()
+                .inert_dimmed(!sync.auto_enabled)
+                .on_click(move |_, window, cx| {
+                    backend_panel.update(cx, |panel, cx| panel.open_add(window, cx));
+                }),
+            )
             .into_any_element()];
+        if !backend_cards.is_empty() {
+            backend_rows.push(
+                div()
+                    .max_h(px(320.))
+                    .overflow_y_scrollbar()
+                    .px(Space::Sm.scaled())
+                    .pb(Space::Sm.scaled())
+                    .flex()
+                    .flex_col()
+                    .children(backend_cards)
+                    .into_any_element(),
+            );
+        }
         container =
             container.child(self.settings_group(I18nKey::GroupBackends.text(), backend_rows));
 
         container
+    }
+
+    /// 中转站的自动过期：0/1/3/7/30 天，分段控件（滑块 250 ms 滑移）。
+    fn render_retention_row(
+        &self,
+        retention: u32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let p = self.palette;
+        let wm = self.window_manager.clone();
+        let days = [0u32, 1, 3, 7, 30];
+        let labels: Vec<(SharedString, bool)> = days
+            .iter()
+            .map(|days| (retention_label(*days).into(), retention == *days))
+            .collect();
+        let segments = widgets::segments(
+            &p,
+            "transfer-retention",
+            labels,
+            move |index, _window, cx| {
+                let days = days[index.min(days.len() - 1)];
+                wm.update(cx, |wm, cx| wm.set_transfer_retention_days(days, cx));
+            },
+            window,
+            cx,
+        );
+        self.row_shell()
+            .child(self.row_text(
+                I18nKey::TransferRetention.text(),
+                I18nKey::DescTransferRetention.text(),
+            ))
+            .child(div().w(px(220.)).flex_shrink_0().child(segments))
+            .into_any_element()
+    }
+
+    /// 配置同步：标题行 + 「后端下拉 + 上传 + 应用」一行。
+    fn render_config_sync_group(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let p = self.palette;
+        let wm = self.window_manager.clone();
+        let this = cx.entity().clone();
+        let sync = self.state.read(cx).sync.clone();
+        let config_backends: Vec<BackendStatus> = sync
+            .backends
+            .iter()
+            .filter(|backend| {
+                backend.config.backend_type == "local_folder"
+                    || backend.config.backend_type == "webdav"
+            })
+            .cloned()
+            .collect();
+
+        if self.config_sync_backend_id.is_none() {
+            self.config_sync_backend_id = config_backends.first().map(|b| b.config.id.clone());
+        }
+        // 每帧复核：选中的后端被删掉时回落到第一个，按钮不会操作陈旧 ID。
+        let selected_still_exists = self
+            .config_sync_backend_id
+            .as_ref()
+            .is_some_and(|id| config_backends.iter().any(|b| &b.config.id == id));
+        if !selected_still_exists {
+            self.config_sync_backend_id = config_backends.first().map(|b| b.config.id.clone());
+        }
+
+        let selected_id = self.config_sync_backend_id.clone();
+        let no_backends = config_backends.is_empty();
+        let busy = wm.read(cx).is_config_sync_busy();
+        let buttons_disabled = no_backends || busy;
+        let names: Vec<String> = config_backends
+            .iter()
+            .map(|backend| backend.config.name.clone())
+            .collect();
+        let selected_index = config_backends
+            .iter()
+            .position(|backend| Some(&backend.config.id) == selected_id.as_ref());
+        let selected_name = selected_index
+            .and_then(|index| names.get(index))
+            .cloned()
+            .unwrap_or_default();
+        let open = self.config_sync_menu_open && names.len() > 1;
+
+        let select = widgets::select(
+            &p,
+            "config-sync-backend",
+            I18nKey::ConfigSyncTargetBackend.text(),
+            &names,
+            selected_index,
+            open,
+            no_backends,
+            {
+                let this = this.clone();
+                move |_window, cx| {
+                    this.update(cx, |panel, cx| {
+                        panel.config_sync_menu_open = !panel.config_sync_menu_open;
+                        cx.notify();
+                    });
+                }
+            },
+        );
+
+        let mut select_area = div()
+            .relative()
+            .flex_shrink_0()
+            .child(select.max_w(px(170.)).when(no_backends, |button| {
+                button.child(
+                    div()
+                        .text_size(typography::font(type_role::CAPTION))
+                        .text_color(p.ink_3)
+                        .child(I18nKey::ConfigSyncNoBackend.text()),
+                )
+            }));
+        if open {
+            select_area = select_area.child(
+                deferred(div().absolute().top(px(38.)).left_0().w(px(190.)).child(
+                    widgets::select_list(&p, "config-sync-backend-list", &names, selected_index, {
+                        let this = this.clone();
+                        move |index, _window, cx| {
+                            let id = config_backends
+                                .get(index)
+                                .map(|backend| backend.config.id.clone());
+                            this.update(cx, |panel, cx| {
+                                panel.config_sync_backend_id = id;
+                                panel.config_sync_menu_open = false;
+                                cx.notify();
+                            });
+                        }
+                    }),
+                ))
+                .with_priority(1),
+            );
+        }
+
+        let upload = {
+            let this = this.clone();
+            let backend_name = selected_name.clone();
+            widgets::btn(
+                &p,
+                "config-sync-upload",
+                I18nKey::ConfigSyncUpload.text(),
+                Some("UploadIcon"),
+                widgets::Tone::Accent,
+            )
+            .flex_1()
+            .justify_center()
+            .inert_dimmed(buttons_disabled)
+            .on_click(move |_, _window, cx| {
+                if buttons_disabled {
+                    return;
+                }
+                this.update(cx, |panel, cx| {
+                    panel.config_sync_upload_confirm = Some(backend_name.clone());
+                    panel.config_sync_upload_confirm_gen =
+                        panel.config_sync_upload_confirm_gen.wrapping_add(1);
+                    cx.notify();
+                });
+            })
+        };
+
+        let apply = {
+            let this = this.clone();
+            let wm = wm.clone();
+            widgets::btn(
+                &p,
+                "config-sync-download",
+                I18nKey::ConfigSyncApply.text(),
+                Some("DownloadIcon"),
+                widgets::Tone::Plain,
+            )
+            .flex_1()
+            .justify_center()
+            .inert_dimmed(buttons_disabled)
+            .on_click(move |_, _window, cx| {
+                if buttons_disabled {
+                    return;
+                }
+                let Some(id) = selected_id.as_ref() else {
+                    return;
+                };
+                let backends = this.read(cx).state.read(cx).settings.sync_backends.clone();
+                if let Some(config) = backends.iter().find(|backend| &backend.id == id) {
+                    if let Some(backend) =
+                        crate::services::backends::create_config_snapshot_backend(config)
+                    {
+                        wm.update(cx, |wm, _cx| wm.start_config_download(backend));
+                    }
+                }
+                this.update(cx, |_panel, cx| cx.notify());
+            })
+        };
+
+        let card = div()
+            .rounded(Radius::Card.scaled())
+            .bg(p.layer)
+            .border_1()
+            .border_color(p.stroke)
+            .flex()
+            .flex_col()
+            .child(self.row_header(
+                I18nKey::ConfigSyncTitle.text(),
+                I18nKey::ConfigSyncDesc.text(),
+            ))
+            .child(div().h(px(1.)).bg(p.stroke))
+            .child(
+                div()
+                    .px(Space::Lg.scaled())
+                    .py(Space::Md.scaled())
+                    .flex()
+                    .items_center()
+                    .gap(Space::Sm.scaled())
+                    .child(select_area)
+                    .child(upload)
+                    .child(apply),
+            );
+
+        self.settings_group(
+            I18nKey::GroupConfigSync.text(),
+            vec![card.into_any_element()],
+        )
+        .into_any_element()
     }
 
     fn render_backend_card(
@@ -781,23 +503,17 @@ impl SettingsPanel {
             main_opacity(enabled),
         );
 
-        let surface = self.theme.titlebar_bg;
-        let divider = self.theme.divider;
-        let accent = self.theme.accent;
-        let accent_soft = self.theme.accent_soft;
-        let text_1 = self.theme.text_1;
-        let text_2 = self.theme.text_2;
-        let text_3 = self.theme.text_3;
-        let danger = self.theme.danger;
         let auto_enabled = self.state.read(cx).sync.auto_enabled;
         let wm = self.window_manager.clone();
         let backend_panel = self.backend_panel();
-        let status_color = match backend.status.as_str() {
-            "online" => Rgba::from(p.ok),
-            // 同步中沿用蓝色，与「已完成」的绿色分开；`pin` 是调色板里唯一的蓝。
-            "syncing" => Rgba::from(p.pin),
-            "error" => danger,
-            _ => Rgba::from(p.ink_3),
+        let (tone, status_text) = if backend.syncing {
+            (PillTone::Busy, I18nKey::SyncSyncing.text())
+        } else {
+            match backend.status.as_str() {
+                "online" => (PillTone::Ok, I18nKey::SyncStatusOnline.text()),
+                "error" => (PillTone::Warn, I18nKey::SyncStatusError.text()),
+                _ => (PillTone::Idle, I18nKey::SyncStatusOffline.text()),
+            }
         };
         let interval = backend.config.sync_interval_secs.unwrap_or_else(|| {
             if backend.config.backend_type == "webdav" {
@@ -814,25 +530,140 @@ impl SettingsPanel {
             backend.config.last_tag_count,
             I18nKey::SyncStatsTags.text()
         );
+        let this = cx.entity().clone();
+
+        let mut transfer_button = widgets::tool_icon_btn(
+            &p,
+            ("sync-transfer", key),
+            "CloudIcon",
+            if transfer_selected { p.accent } else { p.ink_3 },
+            if transfer_selected {
+                I18nKey::BackendTooltipTransferActive.text()
+            } else {
+                I18nKey::BackendTooltipSetTransfer.text()
+            },
+            !(auto_enabled && enabled && transfer_station_enabled),
+            {
+                let id = id.clone();
+                let wm = wm.clone();
+                move |_window, cx| {
+                    wm.update(cx, |wm, cx| wm.set_transfer_backend(&id, cx));
+                }
+            },
+        );
+        // 中转开关未开时提示先开启，而不是留一个无反应的按钮。
+        if !transfer_station_enabled {
+            transfer_button = widgets::tool_icon_btn(
+                &p,
+                ("sync-transfer", key),
+                "CloudIcon",
+                p.ink_3,
+                I18nKey::BackendTooltipEnableTransfer.text(),
+                true,
+                |_, _| {},
+            );
+        }
+
+        let edit_button = widgets::tool_icon_btn(
+            &p,
+            ("sync-edit", key),
+            "EditIcon",
+            p.ink_3,
+            I18nKey::BackendTooltipEdit.text(),
+            !auto_enabled,
+            {
+                let config = backend.config.clone();
+                let backend_panel = backend_panel.clone();
+                move |window, cx| {
+                    backend_panel.update(cx, |panel, cx| panel.open_edit(&config, window, cx));
+                }
+            },
+        );
+        let delete_button = widgets::tool_icon_btn(
+            &p,
+            ("sync-delete", key),
+            "DeleteIcon",
+            p.danger,
+            I18nKey::BackendTooltipDelete.text(),
+            !auto_enabled,
+            {
+                let id = id.clone();
+                let this = this.clone();
+                move |_window, cx| {
+                    this.update(cx, |panel, cx| {
+                        panel.delete_backend_confirm = Some(id.clone());
+                        panel.delete_backend_confirm_gen =
+                            panel.delete_backend_confirm_gen.wrapping_add(1);
+                        panel.delete_backend_confirm_started = Some(std::time::Instant::now());
+                        cx.notify();
+                    });
+                }
+            },
+        );
+
+        let toggle = widgets::toggle(
+            &p,
+            format!("sync-backend-{id}"),
+            id.clone(),
+            enabled,
+            !auto_enabled,
+            {
+                let id = id.clone();
+                let wm = wm.clone();
+                move |_window, cx| {
+                    wm.update(cx, |wm, cx| wm.toggle_sync_backend(&id, cx));
+                }
+            },
+            window,
+            cx,
+        );
+
+        // --- 同步间隔：分段控件 ---
+        let intervals = [
+            (30_u64, I18nKey::SyncInterval30s.text()),
+            (60, I18nKey::SyncInterval1m.text()),
+            (600, I18nKey::SyncInterval10m.text()),
+            (1800, I18nKey::SyncInterval30m.text()),
+        ];
+        let labels: Vec<(SharedString, bool)> = intervals
+            .iter()
+            .map(|(secs, label)| ((*label).into(), interval == *secs))
+            .collect();
+        let segments = widgets::segments(
+            &p,
+            format!("sync-backend-interval-{id}"),
+            labels,
+            {
+                let id = id.clone();
+                let wm = wm.clone();
+                move |index, _window, cx| {
+                    let secs = intervals[index.min(intervals.len() - 1)].0;
+                    wm.update(cx, |wm, cx| wm.set_backend_sync_interval(&id, secs, cx));
+                }
+            },
+            window,
+            cx,
+        );
 
         div()
-            .mb(px(8.))
+            .mb(Space::Md.scaled())
             .h(px(height))
-            .rounded(px(8.))
-            .border(px(1.))
-            .border_color(divider)
-            .bg(surface)
+            .rounded(Radius::Lg.scaled())
+            .border_1()
+            .border_color(p.stroke)
+            .bg(p.layer)
             .overflow_hidden()
             .flex()
             .flex_col()
             .child(
                 div()
-                    .h(px(60.))
+                    .h(px(64.))
                     .flex_shrink_0()
-                    .px(px(12.))
+                    .px(Space::Lg.scaled())
                     .flex()
                     .items_center()
                     .justify_between()
+                    .gap(Space::Md.scaled())
                     .child(
                         div()
                             .flex_1()
@@ -840,391 +671,140 @@ impl SettingsPanel {
                             .opacity(content_opacity)
                             .flex()
                             .flex_col()
-                            .gap(px(8.))
+                            .gap(Space::Sm.scaled())
                             .child(
                                 div()
                                     .flex()
                                     .items_center()
-                                    .gap(px(6.))
-                                    .child(div().flex_shrink_0().child(widgets::icon(
-                                        "CircleCheckIcon",
-                                        fs(12.),
-                                        Hsla::from(status_color),
-                                    )))
+                                    .gap(Space::Md.scaled())
                                     .child(
                                         div()
-                                            .min_w(px(0.))
                                             .flex_1()
+                                            .min_w(px(0.))
                                             .overflow_hidden()
                                             .text_ellipsis()
                                             .whitespace_nowrap()
-                                            .text_size(fs(12.))
-                                            .font_weight(FontWeight::BOLD)
-                                            .text_color(text_1)
+                                            .text_size(typography::font(type_role::BASE))
+                                            .font_weight(typography::LABEL_WEIGHT)
+                                            .text_color(p.ink)
                                             .child(backend.config.name.clone()),
-                                    ),
+                                    )
+                                    .child(widgets::state_pill(
+                                        &p,
+                                        ("backend-status", key),
+                                        status_text,
+                                        tone,
+                                    )),
                             )
                             .child(
-                                div().flex().items_center().child(
-                                    div()
-                                        .h(px(16.))
-                                        .max_w(px(150.))
-                                        .px(px(5.))
-                                        .rounded(px(3.))
-                                        .bg(accent_soft)
-                                        .overflow_hidden()
-                                        .text_ellipsis()
-                                        .whitespace_nowrap()
-                                        .text_size(fs(10.))
-                                        .text_color(accent)
-                                        .flex()
-                                        .items_center()
-                                        .child(backend.service_label.clone()),
-                                ),
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(Space::Sm.scaled())
+                                    .child(
+                                        div()
+                                            .h(px(18.))
+                                            .max_w(px(150.))
+                                            .px(Space::Sm.scaled())
+                                            .rounded(Radius::Sm.scaled())
+                                            .bg(p.tag_bg)
+                                            .overflow_hidden()
+                                            .text_ellipsis()
+                                            .whitespace_nowrap()
+                                            .text_size(typography::font(type_role::CAPTION))
+                                            .text_color(p.tag_ink)
+                                            .flex()
+                                            .items_center()
+                                            .child(backend.service_label.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .min_w(px(0.))
+                                            .overflow_hidden()
+                                            .text_ellipsis()
+                                            .whitespace_nowrap()
+                                            .text_size(typography::font(type_role::CAPTION))
+                                            .text_color(p.ink_3)
+                                            .child(stats),
+                                    ),
                             ),
                     )
                     .child(
                         div()
+                            .flex_shrink_0()
                             .opacity(content_opacity)
                             .flex()
-                            .flex_col()
-                            .items_end()
-                            .gap(px(8.))
+                            .items_center()
+                            .gap(Space::Xs.scaled())
+                            .child(transfer_button)
+                            .child(edit_button)
+                            .child(delete_button)
                             .child(
                                 div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(4.))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap(px(4.))
-                                            .child(
-                                                if auto_enabled
-                                                    && enabled
-                                                    && transfer_station_enabled
-                                                {
-                                                    icon_button(
-                                                        ("sync-transfer", key),
-                                                        "CloudIcon",
-                                                        if transfer_selected {
-                                                            accent
-                                                        } else {
-                                                            text_3
-                                                        },
-                                                        accent,
-                                                        Rgba::from(p.hover),
-                                                        if transfer_selected {
-                                                            I18nKey::BackendTooltipTransferActive
-                                                                .text()
-                                                        } else {
-                                                            I18nKey::BackendTooltipSetTransfer
-                                                                .text()
-                                                        },
-                                                        {
-                                                            let id = id.clone();
-                                                            let wm = wm.clone();
-                                                            move |_window, cx| {
-                                                                wm.update(cx, |wm, cx| {
-                                                                    wm.set_transfer_backend(
-                                                                        &id, cx,
-                                                                    );
-                                                                });
-                                                            }
-                                                        },
-                                                    )
-                                                    .into_any_element()
-                                                } else {
-                                                    disabled_icon_button(
-                                                        ("sync-transfer", key),
-                                                        "CloudIcon",
-                                                        text_3,
-                                                        if transfer_station_enabled {
-                                                            I18nKey::BackendTooltipSetTransfer
-                                                                .text()
-                                                        } else {
-                                                            I18nKey::BackendTooltipEnableTransfer
-                                                                .text()
-                                                        },
-                                                    )
-                                                    .into_any_element()
-                                                },
-                                            )
-                                            .child(if auto_enabled {
-                                                icon_button(
-                                                    ("sync-edit", key),
-                                                    "EditIcon",
-                                                    text_3,
-                                                    accent,
-                                                    Rgba::from(p.hover),
-                                                    I18nKey::BackendTooltipEdit.text(),
-                                                    {
-                                                        let config = backend.config.clone();
-                                                        let backend_panel = backend_panel.clone();
-                                                        move |window, cx| {
-                                                            backend_panel.update(
-                                                                cx,
-                                                                |panel, cx| {
-                                                                    panel.open_edit(
-                                                                        &config, window, cx,
-                                                                    );
-                                                                },
-                                                            );
-                                                        }
-                                                    },
-                                                )
-                                                .into_any_element()
-                                            } else {
-                                                disabled_icon_button(
-                                                    ("sync-edit", key),
-                                                    "EditIcon",
-                                                    text_3,
-                                                    I18nKey::BackendTooltipEdit.text(),
-                                                )
-                                                .into_any_element()
-                                            })
-                                            .child(if auto_enabled {
-                                                icon_button(
-                                                    ("sync-delete", key),
-                                                    "DeleteIcon",
-                                                    text_3,
-                                                    danger,
-                                                    Rgba::from(p.hover),
-                                                    I18nKey::BackendTooltipDelete.text(),
-                                                    {
-                                                        let id = id.clone();
-                                                        let this = cx.entity().clone();
-                                                        move |_window, cx| {
-                                                            this.update(cx, |panel, cx| {
-                                                            panel.delete_backend_confirm =
-                                                                Some(id.clone());
-                                                            panel.delete_backend_confirm_gen =
-                                                                panel
-                                                                    .delete_backend_confirm_gen
-                                                                    .wrapping_add(1);
-                                                            panel.delete_backend_confirm_started =
-                                                                Some(std::time::Instant::now());
-                                                            cx.notify();
-                                                        });
-                                                        }
-                                                    },
-                                                )
-                                                .into_any_element()
-                                            } else {
-                                                disabled_icon_button(
-                                                    ("sync-delete", key),
-                                                    "DeleteIcon",
-                                                    text_3,
-                                                    I18nKey::BackendTooltipDelete.text(),
-                                                )
-                                                .into_any_element()
-                                            }),
-                                    )
-                                    .child(if auto_enabled {
-                                        widgets::toggle(
-                                            &p,
-                                            format!("sync-backend-{id}"),
-                                            id.clone(),
-                                            enabled,
-                                            false,
-                                            {
-                                                let id = id.clone();
-                                                let wm = wm.clone();
-                                                move |_window, cx| {
-                                                    wm.update(cx, |wm, cx| {
-                                                        wm.toggle_sync_backend(&id, cx);
-                                                    });
-                                                }
-                                            },
-                                            window,
-                                            cx,
-                                        )
-                                        .into_any_element()
-                                    } else {
-                                        disabled_toggle(&p, enabled).into_any_element()
-                                    }),
-                            )
-                            .child(
-                                div()
-                                    .max_w(px(210.))
-                                    .text_size(fs(10.))
-                                    .text_color(text_3)
-                                    .overflow_hidden()
-                                    .text_ellipsis()
-                                    .whitespace_nowrap()
-                                    .child(stats),
+                                    .when(!auto_enabled, |toggle| toggle.opacity(0.45))
+                                    .child(toggle),
                             ),
                     ),
             )
             .child(
                 div()
-                    .h(px(31.))
+                    .h(px(40.))
                     .flex_shrink_0()
                     .opacity(footer_opacity)
                     .border_t(px(1.))
-                    .border_color(divider)
-                    .px(px(10.))
+                    .border_color(p.stroke)
+                    .px(Space::Md.scaled())
                     .flex()
                     .items_center()
-                    .gap(px(4.))
-                    .children(
-                        [
-                            (30, I18nKey::SyncInterval30s.text()),
-                            (60, I18nKey::SyncInterval1m.text()),
-                            (600, I18nKey::SyncInterval10m.text()),
-                            (1800, I18nKey::SyncInterval30m.text()),
-                        ]
-                        .into_iter()
-                        .map(|(secs, label)| {
-                            let selected = interval == secs;
-                            let id = id.clone();
-                            let wm = wm.clone();
-                            div()
-                                .flex_1()
-                                .h(px(20.))
-                                .rounded(px(6.))
-                                .bg(if selected {
-                                    accent
-                                } else {
-                                    Rgba::from(Hsla::transparent_black())
-                                })
-                                .text_size(fs(10.))
-                                .font_weight(FontWeight::BOLD)
-                                .text_color(if selected {
-                                    Rgba::from(p.on_accent)
-                                } else {
-                                    text_2
-                                })
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .cursor(CursorStyle::PointingHand)
-                                .hover(move |style| {
-                                    if selected {
-                                        style.opacity(0.88)
-                                    } else {
-                                        style.bg(accent_soft)
-                                    }
-                                })
-                                .on_mouse_down(MouseButton::Left, move |_ev, _window, cx| {
-                                    wm.update(cx, |wm, cx| {
-                                        wm.set_backend_sync_interval(&id, secs, cx);
-                                    });
-                                })
-                                .child(label)
-                        }),
-                    )
+                    .gap(Space::Sm.scaled())
+                    .child(div().flex_1().min_w(px(0.)).child(segments))
                     .child(
-                        div()
-                            .w(px(62.))
-                            .h(px(20.))
-                            .rounded(px(6.))
-                            .bg(accent)
-                            .text_size(fs(10.))
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(Rgba::from(p.on_accent))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .cursor(CursorStyle::PointingHand)
-                            .hover(|style| style.opacity(0.85))
-                            .on_mouse_down(MouseButton::Left, {
-                                let id = id.clone();
-                                let wm = wm.clone();
-                                move |_ev, _window, cx| {
-                                    wm.update(cx, |wm, cx| {
-                                        wm.sync_backend_now(&id, cx);
-                                    });
-                                }
-                            })
-                            .child(if backend.syncing {
+                        widgets::btn_small(
+                            &p,
+                            ("sync-now", key),
+                            if backend.syncing {
                                 I18nKey::SyncSyncing.text()
                             } else {
                                 I18nKey::SyncNow.text()
-                            }),
+                            },
+                            None,
+                            widgets::Tone::Accent,
+                        )
+                        .inert(backend.syncing)
+                        .on_click({
+                            let id = id.clone();
+                            let wm = wm.clone();
+                            move |_, _window, cx| {
+                                wm.update(cx, |wm, cx| wm.sync_backend_now(&id, cx));
+                            }
+                        }),
                     ),
             )
     }
 }
 
-fn icon_button(
-    button_id: (&'static str, u64),
-    icon: &'static str,
-    color: Rgba,
-    hover_color: Rgba,
-    hover_bg: Rgba,
-    tooltip: &'static str,
-    on_click: impl Fn(&mut Window, &mut App) + 'static,
-) -> impl IntoElement {
-    div()
-        .id(button_id)
-        .role(Role::Button)
-        .tab_stop(true)
-        .aria_label(tooltip)
-        .w(px(24.))
-        .h(px(24.))
-        .rounded(px(5.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .cursor(CursorStyle::PointingHand)
-        .hover(move |style| style.bg(hover_bg))
-        .tooltip(move |window, cx| widgets::tooltip(tooltip, window, cx))
-        .on_mouse_down(MouseButton::Left, move |_ev, window, cx| {
-            on_click(window, cx);
-        })
-        .child(widgets::icon_hover(
-            icon,
-            fs(12.),
-            Hsla::from(color),
-            Hsla::from(hover_color),
-        ))
+/// 一行「标题 + 说明 + 开关」；设置页所有布尔项共用这一形状。
+#[allow(clippy::too_many_arguments)]
+fn toggle_row(
+    p: &Palette,
+    id: &'static str,
+    label: &str,
+    desc: &str,
+    value: bool,
+    window: &mut Window,
+    cx: &mut Context<SettingsPanel>,
+    on_change: impl Fn(&mut Window, &mut App) + 'static,
+) -> AnyElement {
+    let control = widgets::toggle(p, id, label.to_owned(), value, false, on_change, window, cx);
+    widgets::settings_row(p, label, desc, control).into_any_element()
 }
 
-fn disabled_icon_button(
-    button_id: (&'static str, u64),
-    icon: &'static str,
-    color: Rgba,
-    tooltip: &'static str,
-) -> impl IntoElement {
-    div()
-        .id(button_id)
-        .role(Role::Button)
-        .aria_label(tooltip)
-        .w(px(24.))
-        .h(px(24.))
-        .rounded(px(5.))
-        .opacity(0.35)
-        .flex()
-        .items_center()
-        .justify_center()
-        .cursor(CursorStyle::Arrow)
-        .tooltip(move |window, cx| widgets::tooltip(tooltip, window, cx))
-        .child(widgets::icon(icon, fs(12.), Hsla::from(color)))
-}
-
-/// 禁用态开关：形状与 [`widgets::toggle`] 一致，但整体压暗且不响应指针。
-/// `widgets::toggle` 的 `disabled` 只拦截点击，视觉不变，所以这里单独画一份。
-fn disabled_toggle(p: &Palette, value: bool) -> impl IntoElement {
-    let knob_x = if value { 20.0 } else { 2.0 };
-    div()
-        .w(px(40.))
-        .h(px(22.))
-        .rounded(px(11.))
-        .bg(p.stroke)
-        .opacity(0.45)
-        .flex()
-        .items_center()
-        .cursor(CursorStyle::Arrow)
-        .child(
-            div()
-                .w(px(18.))
-                .h(px(18.))
-                .rounded(px(9.))
-                .bg(p.on_accent)
-                .ml(px(knob_x)),
-        )
+fn retention_label(days: u32) -> String {
+    if days == 0 {
+        I18nKey::TransferKeepForever.text().to_string()
+    } else {
+        I18nKey::TransferRetentionDays.fmt(&[&days.to_string()])
+    }
 }
 
 fn transition_f32(
@@ -1238,9 +818,9 @@ fn transition_f32(
         window,
         cx,
         key,
-        COLLAPSE_DURATION,
+        collapse_duration(),
         initial,
-        ease_out,
+        motion::ease_out,
         target,
     )
 }
@@ -1253,9 +833,9 @@ fn hash_key(value: &str) -> u64 {
 
 fn card_height(enabled: bool) -> f32 {
     if enabled {
-        91.0
+        105.0
     } else {
-        60.0
+        64.0
     }
 }
 
@@ -1273,8 +853,4 @@ fn main_opacity(enabled: bool) -> f32 {
     } else {
         0.45
     }
-}
-
-fn ease_out(delta: f32) -> f32 {
-    1.0 - (1.0 - delta).powi(3)
 }

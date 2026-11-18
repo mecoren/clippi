@@ -58,7 +58,7 @@ impl SettingsPanel {
         let text_1 = theme.text_1;
         let text_3 = theme.text_3;
 
-        let mut container = div().flex().flex_col().gap(px(14.)).pt(px(8.));
+        let mut container = div().flex().flex_col().gap(px(12.)).pt(px(8.));
 
         let capture_rows: Vec<AnyElement> = vec![
             self.render_toggle_row(
@@ -574,7 +574,7 @@ impl SettingsPanel {
                                 .min_w(px(0.))
                                 .flex()
                                 .flex_col()
-                                .gap(px(3.))
+                                .gap(px(4.))
                                 .child(
                                     div()
                                         .max_w_full()
@@ -639,7 +639,7 @@ impl SettingsPanel {
                         .opacity(footer_opacity)
                         .border_t(px(1.))
                         .border_color(divider)
-                        .px(px(14.))
+                        .px(px(12.))
                         .flex()
                         .items_center()
                         .child(

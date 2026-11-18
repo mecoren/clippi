@@ -21,7 +21,9 @@ use crate::core::i18n_keys::I18nKey;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 
+use crate::ui::design::motion;
 use crate::ui::design::palette::Palette;
+use crate::ui::design::size::Radius;
 use crate::ui::theme::ClippiTheme;
 use crate::ui::transition::keyed_transition;
 use crate::ui::widgets;
@@ -34,7 +36,10 @@ struct DialogOption {
     on_toggle: DialogHandler,
 }
 
-const DIALOG_ANIM_DURATION: Duration = Duration::from_millis(150);
+/// 对话框入场：慢速档 `t-slow`（250 ms，`ease_out`）。
+fn dialog_anim_duration() -> Duration {
+    motion::slow()
+}
 
 // --- Component ---
 
@@ -247,7 +252,7 @@ impl ConfirmDialog {
                 window,
                 cx,
                 ("cd-opacity", generation),
-                DIALOG_ANIM_DURATION,
+                dialog_anim_duration(),
                 0.0_f32,
                 linear,
                 1.0,
@@ -256,7 +261,7 @@ impl ConfirmDialog {
                 window,
                 cx,
                 ("cd-scale", generation),
-                DIALOG_ANIM_DURATION,
+                dialog_anim_duration(),
                 0.96_f32,
                 linear,
                 1.0,
@@ -281,7 +286,7 @@ impl ConfirmDialog {
         }
 
         crate::ui::components::modal_overlay::modal_overlay()
-            .rounded(px(12.))
+            .rounded(Radius::Card.scaled())
             .flex()
             .items_center()
             .justify_center()
@@ -319,14 +324,14 @@ impl ConfirmDialog {
                 div()
                     .w(px(280. * scale))
                     .bg(theme.panel_surface)
-                    .rounded(px(12.))
+                    .rounded(Radius::Card.scaled())
                     .border(px(1.))
                     .border_color(theme.panel_sep_line)
                     .p(px(16. * scale))
                     .occlude()
                     .child(
                         div()
-                            .text_size(fs(14.))
+                            .text_size(fs(16.))
                             .font_weight(FontWeight::BOLD)
                             .text_color(theme.text_1)
                             .child(title),

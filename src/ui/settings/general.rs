@@ -57,7 +57,7 @@ impl SettingsPanel {
             "remember" => 2,
             _ => 0,
         };
-        let mut container = div().flex().flex_col().gap(px(14.)).pt(px(8.));
+        let mut container = div().flex().flex_col().gap(px(12.)).pt(px(8.));
         // --- Startup ---
         // Elevated builds auto-start through a logon task (a `Run` value cannot
         // elevate at logon), so the row says which mechanism is in use.

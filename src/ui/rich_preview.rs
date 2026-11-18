@@ -461,7 +461,7 @@ pub fn render_styled_html_lines(
     div()
         .flex()
         .flex_col()
-        .gap(px(1.))
+        .gap(px(2.))
         .children(lines.into_iter().map(|line| {
             div()
                 .flex()

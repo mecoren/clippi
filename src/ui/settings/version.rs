@@ -8,6 +8,7 @@ use gpui_kit::component::text::{TextView, TextViewStyle};
 
 use crate::core::i18n_keys::I18nKey;
 use crate::services::update::UpdatePhase;
+use crate::ui::design::size::Radius;
 use crate::ui::widgets;
 
 use super::SettingsPanel;
@@ -44,13 +45,13 @@ impl SettingsPanel {
         // Fill the tab so the page itself never scrolls: with the bottom bar in
         // place the content area is shorter, and an unbounded page plus the
         // notes' own scrollbar would give two scrollbars.
-        let mut container = div().flex().flex_col().gap(px(14.)).pt(px(8.)).h_full();
+        let mut container = div().flex().flex_col().gap(px(12.)).pt(px(8.)).h_full();
 
         // --- Updates (release notes appear in the same card when present) ---
         let mut update_rows: Vec<AnyElement> = vec![div()
             .relative()
             .flex_shrink_0()
-            .px(px(10.))
+            .px(px(8.))
             .py(px(8.))
             .flex()
             .flex_col()
@@ -116,7 +117,7 @@ impl SettingsPanel {
                             .child(widgets::icon(check_icon, fs(12.), Hsla::from(check_color)))
                             .child(
                                 div()
-                                    .text_size(fs(11.))
+                                    .text_size(fs(12.))
                                     .text_color(text_3)
                                     .child(I18nKey::SettingAutoCheckUpdate.text()),
                             )
@@ -125,7 +126,7 @@ impl SettingsPanel {
                     .child({
                         let mut btn = div()
                             .h(px(28.))
-                            .rounded(px(7.))
+                            .rounded(Radius::Md.scaled())
                             .px(px(12.))
                             .bg(if btn_disabled { divider } else { accent })
                             .flex()
@@ -133,7 +134,7 @@ impl SettingsPanel {
                             .justify_center()
                             .child(
                                 div()
-                                    .text_size(fs(11.))
+                                    .text_size(fs(12.))
                                     .font_weight(FontWeight::BOLD)
                                     .text_color(if btn_disabled {
                                         text_3
@@ -208,14 +209,14 @@ impl SettingsPanel {
                         .child(
                             // Title inside the box
                             div()
-                                .px(px(10.))
+                                .px(px(8.))
                                 .pt(px(8.))
                                 .pb(px(4.))
                                 .border_b(px(1.))
                                 .border_color(divider)
                                 .child(
                                     div()
-                                        .text_size(fs(11.))
+                                        .text_size(fs(12.))
                                         .font_weight(FontWeight::BOLD)
                                         .text_color(text_1)
                                         .child(I18nKey::VersionReleaseNotes.text()),
@@ -236,10 +237,10 @@ impl SettingsPanel {
                             div()
                                 .flex_1()
                                 .min_h(px(0.))
-                                .px(px(10.))
+                                .px(px(8.))
                                 .py(px(6.))
                                 .overflow_y_scrollbar()
-                                .text_size(fs(11.))
+                                .text_size(fs(12.))
                                 .text_color(text_2)
                                 .child(
                                     TextView::markdown("version-release-notes", notes)
@@ -372,14 +373,14 @@ fn render_progress_bar(progress: u8, fill_color: Rgba, track_color: Rgba) -> imp
     div()
         .w_full()
         .h(px(4.))
-        .rounded(px(2.))
+        .rounded(Radius::Sm.scaled())
         .bg(track_color)
         .overflow_hidden()
         .child(
             div()
                 .h_full()
                 .w(relative(pct as f32 / 100.0))
-                .rounded(px(2.))
+                .rounded(Radius::Sm.scaled())
                 .bg(fill_color),
         )
 }

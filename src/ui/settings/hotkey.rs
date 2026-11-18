@@ -19,8 +19,8 @@ use crate::core::settings::LatestHotkeyEntry;
 use crate::platform::hotkey::hotkey_display;
 use crate::state::app::AppState;
 use crate::ui::design::palette::Palette;
+use crate::ui::design::size::Radius;
 use crate::ui::font::fs;
-use crate::ui::theme::ClippiTheme;
 use crate::ui::window_manager::{WinVTakeoverStatus, WindowManager};
 
 /// Confirm action for hotkey settings operations.
@@ -74,10 +74,10 @@ struct RecordingCardOptions {
     /// Idle-state description shown in place of `HotkeyRecordingIdle`
     /// (AC-12). `None` keeps the legacy "点击开始录制" text.
     idle_desc: Option<I18nKey>,
-    /// Render the clear affordance as a neutral (non-`theme.danger`) text
+    /// Render the clear affordance as a neutral (non-`p.danger`) text
     /// button ("重置"/"清空") to the LEFT of the record button, shown only
     /// while recording (AC-13). `false` keeps the legacy right-side
-    /// `theme.danger` red X. The clear callback semantics are unchanged in
+    /// `p.danger` red X. The clear callback semantics are unchanged in
     /// both modes.
     neutral_clear: bool,
 }
@@ -95,41 +95,40 @@ impl SettingsPanel {
         hotkey_display: SharedString,
         recording: bool,
         pending_single: Option<String>,
-        theme: &ClippiTheme,
         p: &Palette,
         on_click: impl Fn(&mut Window, &mut App) + 'static,
         on_clear: Option<AppCallback>,
         options: RecordingCardOptions,
     ) -> impl IntoElement {
         let waiting = pending_single.is_some();
-        let waiting_color = Rgba::from(p.warn);
+        let waiting_color = p.warn;
         // The row sits inside a settings group, so its recording state shows as
         // a background tint rather than its own card chrome.
         let row_tint = if waiting {
-            Rgba::from(p.warn.opacity(0.13))
+            p.warn.opacity(0.13)
         } else {
-            theme.accent_soft
+            p.accent_soft()
         };
         let recording_btn_bg = if waiting {
-            Rgba::from(p.warn.opacity(0.13))
+            p.warn.opacity(0.13)
         } else if recording {
-            theme.accent_soft
+            p.accent_soft()
         } else {
-            theme.accent
+            p.accent
         };
         let recording_btn_text = if waiting {
             waiting_color
         } else if recording {
-            theme.accent
+            p.accent
         } else {
-            Rgba::from(p.on_accent)
+            p.on_accent
         };
         let desc_color = if waiting {
             waiting_color
         } else if recording {
-            theme.accent
+            p.accent
         } else {
-            theme.text_3
+            p.ink_3
         };
         let desc_text = if waiting {
             I18nKey::HotkeySingleAwaiting.text()
@@ -160,7 +159,7 @@ impl SettingsPanel {
         div()
             .h(px(66.))
             .when(recording || waiting, |row| row.bg(row_tint))
-            .px(px(14.))
+            .px(px(12.))
             .flex()
             .flex_row()
             .items_center()
@@ -178,7 +177,7 @@ impl SettingsPanel {
                         div()
                             .text_size(fs(12.))
                             .font_weight(FontWeight::BOLD)
-                            .text_color(theme.text_1)
+                            .text_color(p.ink)
                             .child(title.text()),
                     )
                     .child(
@@ -203,12 +202,12 @@ impl SettingsPanel {
                     // still runs the exact same clear callback.
                     .when(options.neutral_clear, |row| {
                         row.when_some(clear_btn.clone(), |d, clear| {
-                            let neutral = theme.text_2;
+                            let neutral = p.ink_2;
                             d.child(
                                 div()
                                     .h(px(28.))
-                                    .px(px(10.))
-                                    .rounded(px(7.))
+                                    .px(px(8.))
+                                    .rounded(Radius::Md.scaled())
                                     .flex_shrink_0()
                                     .flex()
                                     .items_center()
@@ -221,7 +220,7 @@ impl SettingsPanel {
                                     })
                                     .child(
                                         div()
-                                            .text_size(fs(11.))
+                                            .text_size(fs(12.))
                                             .font_weight(FontWeight::BOLD)
                                             .text_color(neutral)
                                             .child(I18nKey::BtnReset.text()),
@@ -233,7 +232,7 @@ impl SettingsPanel {
                         div()
                             .h(px(28.))
                             .w(px(80.))
-                            .rounded(px(7.))
+                            .rounded(Radius::Md.scaled())
                             .bg(recording_btn_bg)
                             .flex()
                             .items_center()
@@ -250,7 +249,7 @@ impl SettingsPanel {
                             })
                             .child(
                                 div()
-                                    .text_size(fs(11.))
+                                    .text_size(fs(12.))
                                     .font_weight(FontWeight::BOLD)
                                     .text_color(recording_btn_text)
                                     .child(if pending_single.is_some() {
@@ -261,15 +260,15 @@ impl SettingsPanel {
                             ),
                     )
                     // Legacy clear (X) — right of the record button, red
-                    // `theme.danger` style; the default for existing callers.
+                    // `p.danger` style; the default for existing callers.
                     .when(!options.neutral_clear, |row| {
                         row.when_some(clear_btn, |d, clear| {
-                            let danger = theme.danger;
+                            let danger = p.danger;
                             d.child(
                                 div()
                                     .w(px(22.))
                                     .h(px(28.))
-                                    .rounded(px(7.))
+                                    .rounded(Radius::Md.scaled())
                                     .flex_shrink_0()
                                     .flex()
                                     .items_center()
@@ -280,7 +279,7 @@ impl SettingsPanel {
                                         cx.stop_propagation();
                                         clear(window, cx);
                                     })
-                                    .child(widgets::icon("CloseIcon", fs(9.), Hsla::from(danger))),
+                                    .child(widgets::icon("CloseIcon", fs(9.), danger)),
                             )
                         })
                     }),
@@ -292,7 +291,6 @@ impl SettingsPanel {
     fn render_latest_slot_cell(
         index: usize,
         latest: &[LatestHotkeyEntry],
-        theme: ClippiTheme,
         p: &Palette,
         recording: bool,
         on_record: AppCallback,
@@ -310,36 +308,36 @@ impl SettingsPanel {
             I18nKey::LatestHotkeyClickRecord.text().to_string()
         };
         let text_color = if has_hotkey || recording {
-            theme.accent
+            p.accent
         } else {
-            theme.text_3
+            p.ink_3
         };
         let border_color = if has_hotkey || recording {
-            theme.accent
+            p.accent
         } else {
-            theme.divider
+            p.stroke
         };
         let bg_color = if has_hotkey || recording {
-            theme.accent_soft
+            p.accent_soft()
         } else {
-            theme.surface
+            p.layer
         };
         let badge_bg = if has_hotkey || recording {
-            theme.accent
+            p.accent
         } else {
-            theme.titlebar_bg
+            p.background
         };
         let badge_text = if has_hotkey || recording {
-            Rgba::from(p.on_accent)
+            p.on_accent
         } else {
-            theme.text_3
+            p.ink_3
         };
         let hover_bg = if has_hotkey || recording {
-            theme.accent_soft
+            p.accent_soft()
         } else {
-            theme.btn_hover
+            p.hover
         };
-        let danger = theme.danger;
+        let danger = p.danger;
         let rec = on_record.clone();
 
         div()
@@ -347,7 +345,7 @@ impl SettingsPanel {
             .flex_shrink_0()
             .min_w(px(0.))
             .h(px(44.))
-            .rounded(px(7.))
+            .rounded(Radius::Md.scaled())
             .bg(bg_color)
             .border(px(if recording { 2. } else { 1. }))
             .border_color(border_color)
@@ -355,7 +353,7 @@ impl SettingsPanel {
             .flex_row()
             .items_center()
             .gap(px(8.))
-            .px(px(9.))
+            .px(px(8.))
             .cursor(CursorStyle::PointingHand)
             .hover(move |style| style.bg(hover_bg))
             .on_mouse_down(MouseButton::Left, move |_ev, window, cx| {
@@ -385,7 +383,7 @@ impl SettingsPanel {
                     .min_w(px(0.))
                     .overflow_hidden()
                     .text_ellipsis()
-                    .text_size(fs(11.))
+                    .text_size(fs(12.))
                     .font_weight(if has_hotkey {
                         FontWeight::MEDIUM
                     } else {
@@ -399,7 +397,7 @@ impl SettingsPanel {
                     div()
                         .w(px(22.))
                         .h(px(22.))
-                        .rounded(px(5.))
+                        .rounded(Radius::Md.scaled())
                         .flex_shrink_0()
                         .flex()
                         .items_center()
@@ -413,7 +411,7 @@ impl SettingsPanel {
                                 clr(window, cx);
                             }
                         })
-                        .child(widgets::icon("CloseIcon", fs(9.), Hsla::from(danger))),
+                        .child(widgets::icon("CloseIcon", fs(9.), danger)),
                 )
             })
     }
@@ -425,7 +423,6 @@ impl SettingsPanel {
         wm: Entity<WindowManager>,
         latest: Vec<LatestHotkeyEntry>,
         recording_slot: Option<usize>,
-        theme: ClippiTheme,
         p: &Palette,
         layout: (f32, f32, f32, f32, f32),
     ) -> impl IntoElement {
@@ -442,7 +439,7 @@ impl SettingsPanel {
         let close_panel = panel_entity.clone();
 
         crate::ui::components::modal_overlay::modal_overlay()
-            .rounded(px(12.))
+            .rounded(Radius::Card.scaled())
             .opacity(opacity)
             .cursor(CursorStyle::PointingHand)
             .on_mouse_down(MouseButton::Left, move |_ev, _window, cx| {
@@ -459,10 +456,10 @@ impl SettingsPanel {
                     .w(px(popup_width))
                     .max_w(px(popup_width))
                     .rounded(px(8.))
-                    .bg(theme.surface)
+                    .bg(p.layer)
                     .border(px(1.))
-                    .border_color(theme.divider)
-                    .shadow_lg()
+                    .border_color(p.stroke)
+                    .shadow_none()
                     .p(px(12. * scale))
                     .occlude()
                     .flex()
@@ -483,34 +480,34 @@ impl SettingsPanel {
                                     .flex()
                                     .flex_1()
                                     .items_center()
-                                    .gap(px(14.))
+                                    .gap(px(12.))
                                     .child(
                                         div()
                                             .text_size(fs(13.))
                                             .font_weight(FontWeight::BOLD)
-                                            .text_color(theme.text_1)
+                                            .text_color(p.ink)
                                             .child(I18nKey::LatestHotkeysTitle.text()),
                                     )
                                     .child(
                                         div()
                                             .h(px(22.))
                                             .px(px(8.))
-                                            .rounded(px(11.))
-                                            .bg(theme.accent_soft)
+                                            .rounded(Radius::Pill.scaled())
+                                            .bg(p.accent_soft())
                                             .border(px(1.))
-                                            .border_color(theme.accent)
+                                            .border_color(p.accent)
                                             .flex()
                                             .items_center()
                                             .justify_center()
                                             .text_size(fs(10.))
                                             .font_weight(FontWeight::MEDIUM)
-                                            .text_color(theme.accent)
+                                            .text_color(p.accent)
                                             .child(format!("{}/10", configured)),
                                     ),
                             )
                             .child({
                                 let close = panel_entity.clone();
-                                let close_text = theme.text_2;
+                                let close_text = p.ink_2;
                                 div()
                                     .w(px(26.))
                                     .h(px(26.))
@@ -527,14 +524,10 @@ impl SettingsPanel {
                                             cx.notify();
                                         });
                                     })
-                                    .child(widgets::icon(
-                                        "CloseIcon",
-                                        fs(13.),
-                                        Hsla::from(close_text),
-                                    ))
+                                    .child(widgets::icon("CloseIcon", fs(13.), close_text))
                             }),
                     )
-                    .child(div().h(px(1.)).bg(theme.divider))
+                    .child(div().h(px(1.)).bg(p.stroke))
                     .child(
                         div().w_full().flex().justify_center().child(
                             div()
@@ -589,7 +582,6 @@ impl SettingsPanel {
                                             Self::render_latest_slot_cell(
                                                 left,
                                                 &latest_l,
-                                                theme.clone(),
                                                 p,
                                                 recording_slot == Some(left),
                                                 rec,
@@ -628,7 +620,6 @@ impl SettingsPanel {
                                             Self::render_latest_slot_cell(
                                                 right,
                                                 &latest_r,
-                                                theme.clone(),
                                                 p,
                                                 recording_slot == Some(right),
                                                 rec,
@@ -702,8 +693,8 @@ impl SettingsPanel {
             WinVTakeoverStatus::RegistryError | WinVTakeoverStatus::RegistryUpdateRequired
         );
 
-        let accent = self.theme.accent;
-        let text_3 = self.theme.text_3;
+        let accent = self.palette.accent;
+        let text_3 = self.palette.ink_3;
 
         let state_toggle = self.state.clone();
         let this_toggle = cx.entity().clone();
@@ -742,14 +733,14 @@ impl SettingsPanel {
                         .flex_row()
                         .items_center()
                         .justify_end()
-                        .px(px(14.))
-                        .pb(px(10.))
+                        .px(px(12.))
+                        .pb(px(8.))
                         .when(show_recheck, move |row| {
                             row.child(
                                 div()
                                     .px(px(8.))
-                                    .py(px(3.))
-                                    .rounded(px(5.))
+                                    .py(px(4.))
+                                    .rounded(Radius::Md.scaled())
                                     .bg(accent)
                                     .text_size(fs(10.))
                                     .text_color(on_accent)
@@ -770,7 +761,7 @@ impl SettingsPanel {
                             row.child(
                                 div()
                                     .px(px(6.))
-                                    .py(px(3.))
+                                    .py(px(4.))
                                     .text_size(fs(10.))
                                     .text_color(text_3)
                                     .cursor(CursorStyle::PointingHand)
@@ -821,13 +812,9 @@ impl SettingsPanel {
         let takeover_active =
             cfg!(target_os = "windows") && takeover_status != WinVTakeoverStatus::Disabled;
 
-        // 借用本地克隆而不是 `self.theme`：下面的行构造闭包会捕获这个引用并活到函数尾部，
-        // 与后面 `&mut self` 的行构造（Win+V 接管行）冲突。
         let p = self.palette;
-        let theme_owned = self.theme.clone();
-        let theme = &theme_owned;
 
-        let mut container = div().flex().flex_col().gap(px(14.)).pt(px(8.));
+        let mut container = div().flex().flex_col().gap(px(12.)).pt(px(8.));
 
         // --- Global hotkeys ---
         let mut hotkey_rows: Vec<AnyElement> = vec![{
@@ -838,11 +825,11 @@ impl SettingsPanel {
             #[cfg(target_os = "windows")]
             if takeover_active {
                 // --- Managed by takeover: show "Win+V" fixed, disable recording ---
-                let theme_text_1 = theme.text_1;
-                let theme_text_3 = theme.text_3;
+                let theme_text_1 = p.ink;
+                let theme_text_3 = p.ink_3;
                 div()
                     .h(px(66.))
-                    .px(px(14.))
+                    .px(px(12.))
                     .flex()
                     .flex_row()
                     .items_center()
@@ -870,16 +857,16 @@ impl SettingsPanel {
                         div()
                             .h(px(28.))
                             .w(px(80.))
-                            .rounded(px(7.))
-                            .bg(theme.accent_soft)
+                            .rounded(Radius::Md.scaled())
+                            .bg(p.accent_soft())
                             .flex()
                             .items_center()
                             .justify_center()
                             .child(
                                 div()
-                                    .text_size(fs(11.))
+                                    .text_size(fs(12.))
                                     .font_weight(FontWeight::BOLD)
-                                    .text_color(theme.accent)
+                                    .text_color(p.accent)
                                     .child("Win+V"),
                             ),
                     )
@@ -890,7 +877,6 @@ impl SettingsPanel {
                     main_hotkey_display.clone().into(),
                     recording,
                     pending_single.clone().filter(|_| recording),
-                    theme,
                     &p,
                     move |_window, cx| {
                         if state.read(cx).hotkey_recording
@@ -918,7 +904,6 @@ impl SettingsPanel {
                     main_hotkey_display.clone().into(),
                     recording,
                     pending_single.clone().filter(|_| recording),
-                    theme,
                     &p,
                     move |_window, cx| {
                         if state.read(cx).hotkey_recording
@@ -950,14 +935,12 @@ impl SettingsPanel {
                 let state = state.clone();
                 let wm = wm.clone();
                 let this = this.clone();
-                let theme = theme.clone();
                 move |parent: Div| {
                     parent.child(Self::render_recording_card(
                         I18nKey::QuickHotkeyLabel,
                         quick_hotkey.into(),
                         quick_recording,
                         pending_single.filter(|_| quick_recording),
-                        &theme,
                         &p,
                         move |_window, cx| {
                             if state.read(cx).recording_quick_hotkey
@@ -984,7 +967,6 @@ impl SettingsPanel {
                 let state = state.clone();
                 let wm = wm.clone();
                 let this = this.clone();
-                let theme = theme.clone();
                 // Empty state display mirrors the has_hotkey empty style
                 // (muted "点击录制" label instead of a blank button).
                 let display: SharedString = if has_paste_plain_hotkey {
@@ -1006,7 +988,6 @@ impl SettingsPanel {
                     display,
                     recording_paste_plain,
                     pending_single.clone().filter(|_| recording_paste_plain),
-                    &theme,
                     &p,
                     move |_window, cx| {
                         if state.read(cx).recording_paste_plain_hotkey

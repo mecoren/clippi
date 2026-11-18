@@ -14,17 +14,25 @@ use gpui::*;
 
 use crate::core::i18n_keys::I18nKey;
 use crate::state::app::AppState;
+use crate::ui::design::motion;
 use crate::ui::design::palette::Palette;
+use crate::ui::design::size::Radius;
 use crate::ui::design::typography;
 use crate::ui::transition::keyed_transition;
 use crate::ui::window_manager::{WindowManager, WindowManagerEvent};
 
-/// Toast enter / exit animation duration.
-const TOAST_ANIM_DURATION: Duration = Duration::from_millis(220);
-/// Main content view transition duration.
-const VIEW_ANIM_DURATION: Duration = Duration::from_millis(180);
-/// Floating panel / dialog enter animation duration.
-const OVERLAY_ANIM_DURATION: Duration = Duration::from_millis(150);
+/// Toast 进出时长（`t-fast`）：AC-6 只允许 167 / 250 ms，不再自定 220。
+fn toast_anim_duration() -> Duration {
+    motion::fast()
+}
+/// 主视图切换时长（`t-fast`）。
+fn view_anim_duration() -> Duration {
+    motion::fast()
+}
+/// 浮层/对话框入场时长（`t-fast`）。
+fn overlay_anim_duration() -> Duration {
+    motion::fast()
+}
 
 use super::bottom_bar::BottomBar;
 use super::clipboard_list::{ClipboardListEvent, ClipboardListView, ConfirmDialogState};
@@ -1112,14 +1120,14 @@ impl Render for RootView {
             .update(cx, |list, cx| list.set_hover_blocked(hover_blocked, cx));
 
         let view_animating =
-            Self::animation_running(self.view_transition_started, VIEW_ANIM_DURATION);
+            Self::animation_running(self.view_transition_started, view_anim_duration());
         let view_key = self.view_transition_generation;
         let view_opacity = if view_animating {
             Self::transition_f32(
                 window,
                 cx,
                 ("root-view-opacity", view_key),
-                VIEW_ANIM_DURATION,
+                view_anim_duration(),
                 0.0,
                 1.0,
             )
@@ -1131,7 +1139,7 @@ impl Render for RootView {
                 window,
                 cx,
                 ("root-view-offset", view_key),
-                VIEW_ANIM_DURATION,
+                view_anim_duration(),
                 6.0,
                 0.0,
             )
@@ -1416,7 +1424,7 @@ impl Render for RootView {
                     );
                     let dur = expiry
                         .checked_duration_since(std::time::Instant::now())
-                        .map(|d| d.saturating_sub(TOAST_ANIM_DURATION))
+                        .map(|d| d.saturating_sub(toast_anim_duration()))
                         .unwrap_or(Duration::from_secs(0));
                     if dur > Duration::from_secs(0) {
                         // Bump generation so the enter animation replays for a new message.
@@ -1434,7 +1442,7 @@ impl Render for RootView {
                                     // --- Cleanup after the exit transition finishes, plus a ---
                                     // --- small grace period so the visual zero point is stable. ---
                                     cx.background_executor()
-                                        .timer(TOAST_ANIM_DURATION + Duration::from_millis(60))
+                                        .timer(toast_anim_duration() + Duration::from_millis(60))
                                         .await;
                                     if let Some(this) = weak_self.upgrade() {
                                         this.update(cx, |root, root_cx| {
@@ -1717,7 +1725,7 @@ impl Render for RootView {
                                                         .right(px(12.))
                                                         .bottom(px(12.))
                                                         .size(px(22.))
-                                                        .rounded(px(11.))
+                                                        .rounded(Radius::Pill.scaled())
                                                         .bg(theme.toast_bg)
                                                         .border(px(1.))
                                                         .border_color(theme.divider)
@@ -2264,7 +2272,6 @@ impl Render for RootView {
                     self.window_manager.clone(),
                     latest_hotkeys,
                     latest_hotkeys_recording_slot,
-                    self.theme.clone(),
                     &Palette::current(cx),
                     (
                         latest_hotkeys_popup_opacity,
@@ -3105,7 +3112,6 @@ impl Render for RootView {
                         .toast_message
                         .clone()
                         .unwrap_or_default();
-                    let theme = self.theme.clone();
                     let toast_visible = self.state.read(cx).toast_message.is_some();
 
                     // --- Animated opacity & slide ---
@@ -3125,9 +3131,9 @@ impl Render for RootView {
                         window,
                         cx,
                         ("toast-opacity", toast_key),
-                        TOAST_ANIM_DURATION,
+                        toast_anim_duration(),
                         1.0_f32 - opacity_target,
-                        RootView::toast_ease_out,
+                        motion::ease_out,
                         opacity_target,
                     );
 
@@ -3135,9 +3141,9 @@ impl Render for RootView {
                         window,
                         cx,
                         ("toast-slide-y", toast_key),
-                        TOAST_ANIM_DURATION,
+                        toast_anim_duration(),
                         12.0_f32,
-                        RootView::toast_ease_out,
+                        motion::ease_out,
                         slide_target,
                     );
 
@@ -3176,7 +3182,10 @@ impl Render for RootView {
                                         } else {
                                             super::components::toast::ToastKind::Info
                                         };
-                                        Toast::new(message).theme(theme).actions(actions).kind(kind)
+                                        Toast::new(message)
+                                            .palette(Palette::current(cx))
+                                            .actions(actions)
+                                            .kind(kind)
                                     }),
                             ),
                     )
@@ -3187,10 +3196,11 @@ impl Render for RootView {
                     div().absolute().left(px(PANEL_OFFSET_X + 4.))
                         .top(px(y.min((win_h - 32.).max(0.))))
                         .max_w(px((win_w - PANEL_OFFSET_X - 8.).max(1.)))
-                        .px(px(7.)).py(px(4.)).rounded(px(4.))
+                        .px(px(8.)).py(px(4.)).rounded(px(4.))
                         .bg(self.theme.bg).border_1().border_color(panel_border)
                         .text_color(self.theme.text_1).text_size(super::font::fs(10.))
-                        .shadow_sm().child(label)
+                        // 提示层不投影：Mica 合成下会起光晕（Argus AGENTS.md 第 8 条）。
+                        .shadow_none().child(label)
                 )
             })
     }
@@ -3380,7 +3390,7 @@ impl RootView {
             .get(key)
             .and_then(|state| state.started_at)
             .is_some_and(|started_at| {
-                Self::animation_running(Some(started_at), OVERLAY_ANIM_DURATION)
+                Self::animation_running(Some(started_at), overlay_anim_duration())
             })
     }
 
@@ -3399,7 +3409,7 @@ impl RootView {
             window,
             cx,
             (key, generation.wrapping_add(10_000)),
-            OVERLAY_ANIM_DURATION,
+            overlay_anim_duration(),
             0.0,
             1.0,
         )
@@ -3415,7 +3425,7 @@ impl RootView {
             window,
             cx,
             (key, generation.wrapping_add(20_000)),
-            OVERLAY_ANIM_DURATION,
+            overlay_anim_duration(),
             5.0,
             0.0,
         )
@@ -3431,7 +3441,7 @@ impl RootView {
             window,
             cx,
             (key, generation.wrapping_add(30_000)),
-            OVERLAY_ANIM_DURATION,
+            overlay_anim_duration(),
             0.96,
             1.0,
         )
@@ -3453,23 +3463,7 @@ impl RootView {
         initial: f32,
         target: f32,
     ) -> f32 {
-        keyed_transition(
-            window,
-            cx,
-            key,
-            duration,
-            initial,
-            RootView::ease_out,
-            target,
-        )
-    }
-
-    fn ease_out(delta: f32) -> f32 {
-        1.0 - (1.0 - delta).powi(3)
-    }
-
-    fn toast_ease_out(_delta: f32) -> f32 {
-        1.0 - (1.0 - _delta).powi(3)
+        keyed_transition(window, cx, key, duration, initial, motion::ease_out, target)
     }
 }
 

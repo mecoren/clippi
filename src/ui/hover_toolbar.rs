@@ -2,7 +2,6 @@
 
 use std::cell::Cell;
 use std::rc::Rc;
-use std::time::Duration;
 
 use crate::ui::font::sc;
 
@@ -468,9 +467,9 @@ impl RenderOnce for HoverToolbar {
                     window,
                     cx,
                     SharedString::from(format!("toolbar-button-extend-{item_id}-{action_id}")),
-                    Duration::from_millis(110),
+                    motion::fast(),
                     0.0_f32,
-                    |t| 1.0 - (1.0 - t).powi(3),
+                    motion::ease_out,
                     if is_hovered { 1.0 } else { 0.0 },
                 );
 

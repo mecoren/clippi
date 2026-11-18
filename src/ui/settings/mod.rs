@@ -12,14 +12,12 @@
 use crate::ui::font::fs;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_kit::component::input::InputState;
 use gpui_kit::component::scroll::{Scrollbar, ScrollbarAxis, ScrollbarMode};
-
-use crate::ui::transition::keyed_transition;
 
 mod changelog;
 mod clipboard;
@@ -28,8 +26,6 @@ mod general;
 pub mod hotkey;
 mod sync;
 mod version;
-
-const TAB_ANIM_DURATION: Duration = Duration::from_millis(160);
 
 use data::LocalBackupDialog;
 use data::ResetDataDirState;
@@ -42,6 +38,7 @@ use crate::ui::components::confirm_dialog::ConfirmDialog;
 use crate::ui::components::slider::{
     SliderDetent, SliderDragState, SteppedSlider, SteppedSliderColors,
 };
+use crate::ui::design::motion;
 use crate::ui::design::palette::Palette;
 use crate::ui::design::size::{Ctrl, IconSize, Radius, Space};
 use crate::ui::design::typography::{self, type_role};
@@ -91,8 +88,8 @@ pub struct SettingsPanel {
     palette: Palette,
     scroll_handle: ScrollHandle,
     backend_collapse_states: HashMap<String, BackendCollapseState>,
-    tab_transition_generation: u64,
-    tab_transition_started: Option<Instant>,
+    /// Tab 内容进场（Argus `enter / hold_entrance / page_entering` 的载体）。
+    page_entrance: widgets::PageEntrance,
     backend_panel: Entity<AddBackendPanel>,
     /// Whether the bundled changelog page is open in place of the tab content.
     pub changelog_open: bool,
@@ -196,8 +193,7 @@ impl SettingsPanel {
         let max_items_input = cx.new(|cx| gpui_kit::component::input::InputState::new(window, cx));
         let retention_days_input =
             cx.new(|cx| gpui_kit::component::input::InputState::new(window, cx));
-        let backend_panel =
-            cx.new(|cx| AddBackendPanel::new(window_manager.clone(), theme.clone(), window, cx));
+        let backend_panel = cx.new(|cx| AddBackendPanel::new(window_manager.clone(), window, cx));
 
         // --- Subscribe to focus-out on the max-items InputState. ---
         // --- When the input loses focus, save and exit editing. ---
@@ -244,8 +240,7 @@ impl SettingsPanel {
             palette: Palette::current(cx),
             scroll_handle: ScrollHandle::default(),
             backend_collapse_states: HashMap::new(),
-            tab_transition_generation: 0,
-            tab_transition_started: None,
+            page_entrance: widgets::PageEntrance::settled(),
             focus_handle: cx.focus_handle(),
             backend_panel,
             changelog_open: false,
@@ -288,9 +283,7 @@ impl SettingsPanel {
 
     /// Reload theme from the computed ClippiTheme (called by RootView after ThemeChanged).
     pub fn reload_theme(&mut self, theme: ClippiTheme, cx: &mut Context<Self>) {
-        self.theme = theme.clone();
-        self.backend_panel
-            .update(cx, |panel, cx| panel.set_theme(theme, cx));
+        self.theme = theme;
         cx.notify();
     }
 
@@ -304,8 +297,7 @@ impl SettingsPanel {
             self.local_backup_dialog_generation =
                 self.local_backup_dialog_generation.wrapping_add(1);
             self.active_tab = index;
-            self.tab_transition_generation = self.tab_transition_generation.wrapping_add(1);
-            self.tab_transition_started = Some(Instant::now());
+            self.page_entrance.arm();
         }
     }
 
@@ -554,19 +546,6 @@ impl Render for SettingsPanel {
         let changelog_open = self.changelog_open;
         let theme = &self.theme;
         let this = cx.entity().clone();
-        let tab_key = ((active as u64) << 32).wrapping_add(self.tab_transition_generation);
-        let tab_animating = Self::animation_running(self.tab_transition_started);
-        let tab_opacity = if tab_animating {
-            Self::transition_f32(window, cx, ("settings-tab-opacity", tab_key), 0.0, 1.0)
-        } else {
-            1.0
-        };
-        let tab_offset = if tab_animating {
-            Self::transition_f32(window, cx, ("settings-tab-offset", tab_key), 4.0, 0.0)
-        } else {
-            0.0
-        };
-
         let focus_handle = self.focus_handle.clone();
 
         div()
@@ -613,10 +592,10 @@ impl Render for SettingsPanel {
                             })
                             .child(widgets::icon("BackIcon", fs(16.), Hsla::from(theme.text_2))),
                     )
-                    // --- Title (14px, 700 weight, text_1) ---
+                    // --- Title（TITLE 档 16px，700 weight，text_1） ---
                     .child(
                         div()
-                            .text_size(fs(14.))
+                            .text_size(fs(16.))
                             .font_weight(FontWeight::BOLD)
                             .text_color(theme.text_1)
                             .child(if changelog_open {
@@ -711,43 +690,52 @@ impl Render for SettingsPanel {
                                     .size_full()
                                     .overflow_y_scroll()
                                     .track_scroll(&self.scroll_handle)
-                                    .child(
+                                    .child({
+                                        let content: AnyElement = if changelog_open {
+                                            self.render_changelog(window, cx).into_any_element()
+                                        } else {
+                                            match active {
+                                                0 => self
+                                                    .render_general_tab(window, cx)
+                                                    .into_any_element(),
+                                                1 => self
+                                                    .render_clipboard_tab(window, cx)
+                                                    .into_any_element(),
+                                                2 => self
+                                                    .render_hotkey_tab(window, cx)
+                                                    .into_any_element(),
+                                                3 => self
+                                                    .render_data_tab(window, cx)
+                                                    .into_any_element(),
+                                                4 => self
+                                                    .render_sync_tab(window, cx)
+                                                    .into_any_element(),
+                                                5 => self
+                                                    .render_version_tab(window, cx)
+                                                    .into_any_element(),
+                                                _ => div().into_any_element(),
+                                            }
+                                        };
                                         div()
                                             .w_full()
                                             .flex()
                                             .flex_col()
                                             .px(px(8.))
-                                            .opacity(tab_opacity)
-                                            .mt(px(tab_offset))
+                                            // 页脚固定悬浮（44 高），留白 = 24+24+8：
+                                            // 最后一行停在页脚之上，且全为 4pt 档位。
                                             .when(active != 5 || changelog_open, |el| {
-                                                el.pb(px(56.))
+                                                el.pb(Space::Xxl.scaled()
+                                                    + Space::Xxl.scaled()
+                                                    + Space::Md.scaled())
                                             })
-                                            .child(if changelog_open {
-                                                self.render_changelog(window, cx).into_any_element()
-                                            } else {
-                                                match active {
-                                                    0 => self
-                                                        .render_general_tab(window, cx)
-                                                        .into_any_element(),
-                                                    1 => self
-                                                        .render_clipboard_tab(window, cx)
-                                                        .into_any_element(),
-                                                    2 => self
-                                                        .render_hotkey_tab(window, cx)
-                                                        .into_any_element(),
-                                                    3 => self
-                                                        .render_data_tab(window, cx)
-                                                        .into_any_element(),
-                                                    4 => self
-                                                        .render_sync_tab(window, cx)
-                                                        .into_any_element(),
-                                                    5 => self
-                                                        .render_version_tab(window, cx)
-                                                        .into_any_element(),
-                                                    _ => div().into_any_element(),
-                                                }
-                                            }),
-                                    ),
+                                            .child(widgets::enter(
+                                                &mut self.page_entrance,
+                                                content,
+                                                widgets::EntranceAxis::Vertical,
+                                                window,
+                                                cx,
+                                            ))
+                                    }),
                             )
                             .child(
                                 div()
@@ -769,12 +757,7 @@ impl Render for SettingsPanel {
 // --- Reusable control helpers ---
 
 impl SettingsPanel {
-    fn animation_running(started_at: Option<Instant>) -> bool {
-        started_at.is_some_and(|started_at| {
-            started_at.elapsed() <= TAB_ANIM_DURATION + Duration::from_millis(24)
-        })
-    }
-
+    /// 卡片展开/收起这类高度与不透明度的帧间过渡（时长与曲线取动效令牌）。
     fn transition_f32(
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -782,19 +765,15 @@ impl SettingsPanel {
         initial: f32,
         target: f32,
     ) -> f32 {
-        keyed_transition(
+        crate::ui::transition::keyed_transition(
             window,
             cx,
             key,
-            TAB_ANIM_DURATION,
+            motion::fast(),
             initial,
-            Self::ease_out,
+            motion::ease_out,
             target,
         )
-    }
-
-    fn ease_out(delta: f32) -> f32 {
-        1.0 - (1.0 - delta).powi(3)
     }
 
     /// A labelled group of settings rows.
@@ -1129,13 +1108,6 @@ impl SettingsPanel {
             return div().into_any_element();
         }
         let p = self.palette;
-        let theme = &self.theme;
-        let surface = theme.surface;
-        let divider = theme.divider;
-        let accent = theme.accent;
-        let text_1 = theme.text_1;
-        let text_2 = theme.text_2;
-        let text_3 = theme.text_3;
         let hover_bg = Rgba::from(p.hover);
         let fonts = self.available_fonts.clone().unwrap_or_default();
         let current = crate::ui::font::family();
@@ -1184,8 +1156,8 @@ impl SettingsPanel {
             });
         }
 
-        let row_bg_transparent = Rgba::from(Hsla::transparent_black());
-        let row_text_selected = Rgba::from(p.on_accent);
+        let row_bg_transparent = p.background.opacity(0.);
+        let row_text_selected = p.on_accent;
         let mk_entry =
             |family: String, display: String, preview_family: SharedString| -> AnyElement {
                 let selected = family == current;
@@ -1198,14 +1170,18 @@ impl SettingsPanel {
                     .id(SharedString::from(id))
                     .h(px(34.))
                     .flex_shrink_0()
-                    .px(px(10.))
-                    .mx(px(4.))
-                    .rounded(px(6.))
+                    .px(Space::Md.scaled())
+                    .mx(Space::Xs.scaled())
+                    .rounded(Radius::Md.scaled())
                     .flex()
                     .flex_row()
                     .items_center()
                     .justify_between()
-                    .bg(if selected { accent } else { row_bg_transparent })
+                    .bg(if selected {
+                        p.accent
+                    } else {
+                        row_bg_transparent
+                    })
                     .cursor(CursorStyle::PointingHand)
                     .when(!selected, |d| d.hover(move |s| s.bg(hover_bg)))
                     .on_mouse_down(MouseButton::Left, {
@@ -1223,17 +1199,17 @@ impl SettingsPanel {
                             .text_ellipsis()
                             .whitespace_nowrap()
                             .font_family(preview_family.clone())
-                            .text_size(fs(13.))
-                            .text_color(if selected { row_text_selected } else { text_2 })
+                            .text_size(typography::font(type_role::BASE))
+                            .text_color(if selected { row_text_selected } else { p.ink_2 })
                             .child(display),
                     )
                     .child(
                         div()
                             .flex_shrink_0()
-                            .ml(px(8.))
+                            .ml(Space::Md.scaled())
                             .font_family(preview_family)
-                            .text_size(fs(11.))
-                            .text_color(if selected { row_text_selected } else { text_3 })
+                            .text_size(typography::font(type_role::CAPTION))
+                            .text_color(if selected { row_text_selected } else { p.ink_3 })
                             .child(sample),
                     )
                     .into_any_element()
@@ -1264,19 +1240,11 @@ impl SettingsPanel {
                 }
             })
             .child(
-                div()
+                widgets::dialog_panel(&p)
                     .w_full()
                     .max_w(px(320.))
                     .h_full()
                     .max_h(px(460.))
-                    .rounded(px(10.))
-                    .bg(surface)
-                    .border(px(1.))
-                    .border_color(divider)
-                    .shadow_lg()
-                    .flex()
-                    .flex_col()
-                    .overflow_hidden()
                     .cursor(CursorStyle::Arrow)
                     .on_mouse_down(MouseButton::Left, |_ev, _window, cx| cx.stop_propagation())
                     // --- Header ---
@@ -1284,23 +1252,23 @@ impl SettingsPanel {
                         div()
                             .h(px(44.))
                             .flex_shrink_0()
-                            .px(px(14.))
+                            .px(px(12.))
                             .flex()
                             .flex_row()
                             .items_center()
                             .justify_between()
                             .child(
                                 div()
-                                    .text_size(fs(13.))
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(text_1)
+                                    .text_size(typography::font(type_role::BASE))
+                                    .font_weight(typography::LABEL_WEIGHT)
+                                    .text_color(p.ink)
                                     .child(I18nKey::FontFamilyPicker.text()),
                             )
                             .child(
                                 div()
-                                    .w(px(24.))
-                                    .h(px(24.))
-                                    .rounded(px(6.))
+                                    .w(Ctrl::Small.scaled())
+                                    .h(Ctrl::Small.scaled())
+                                    .rounded(Radius::Md.scaled())
                                     .flex()
                                     .items_center()
                                     .justify_center()
@@ -1313,10 +1281,14 @@ impl SettingsPanel {
                                             });
                                         }
                                     })
-                                    .child(widgets::icon("CloseIcon", fs(12.), Hsla::from(text_2))),
+                                    .child(widgets::icon(
+                                        "CloseIcon",
+                                        IconSize::Sm.scaled(),
+                                        p.ink_2,
+                                    )),
                             ),
                     )
-                    .child(div().h(px(1.)).flex_shrink_0().bg(divider))
+                    .child(div().h(px(1.)).flex_shrink_0().bg(p.stroke))
                     // --- Scrollable family list + vertical scrollbar ---
                     .child(
                         div()

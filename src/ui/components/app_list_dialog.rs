@@ -9,6 +9,7 @@ use std::rc::Rc;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 
+use crate::ui::design::size::Radius;
 use crate::ui::widgets;
 use gpui_kit::component::scroll::{Scrollbar, ScrollbarAxis};
 
@@ -181,7 +182,7 @@ pub fn render_app_list_dialog(params: AppListDialogParams) -> impl IntoElement {
     };
 
     crate::ui::components::modal_overlay::modal_overlay()
-        .rounded(px(12.))
+        .rounded(Radius::Card.scaled())
         .opacity(opacity)
         .cursor(CursorStyle::PointingHand)
         .on_mouse_down(MouseButton::Left, {
@@ -200,7 +201,7 @@ pub fn render_app_list_dialog(params: AppListDialogParams) -> impl IntoElement {
                 .bg(surface)
                 .border(px(1.))
                 .border_color(divider)
-                .shadow_lg()
+                .shadow_none()
                 .p(px(12. * scale))
                 .occlude()
                 .flex()
@@ -232,7 +233,7 @@ pub fn render_app_list_dialog(params: AppListDialogParams) -> impl IntoElement {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .text_size(fs(11.))
+                            .text_size(fs(12.))
                             .text_color(text_3)
                             .child(params.empty_hint.clone())
                             .into_any_element()]
@@ -269,7 +270,7 @@ pub fn render_app_list_dialog(params: AppListDialogParams) -> impl IntoElement {
                         card.child(div().h(px(1.)).bg(divider)).child(
                             div()
                                 .h(px(ADD_BUTTON_HEIGHT * scale))
-                                .rounded(px(7.))
+                                .rounded(Radius::Md.scaled())
                                 .bg(add_button_bg)
                                 .border(px(1.))
                                 .border_color(add_button_border)
@@ -277,7 +278,7 @@ pub fn render_app_list_dialog(params: AppListDialogParams) -> impl IntoElement {
                                 .items_center()
                                 .justify_center()
                                 .gap(px(6.))
-                                .text_size(fs(11.))
+                                .text_size(fs(12.))
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(add_button_text)
                                 .cursor(CursorStyle::PointingHand)
@@ -321,7 +322,7 @@ fn render_title_bar(
                 .flex()
                 .flex_1()
                 .items_center()
-                .gap(px(14.))
+                .gap(px(12.))
                 .child(
                     div()
                         .text_size(fs(13.))
@@ -333,7 +334,7 @@ fn render_title_bar(
                     div()
                         .h(px(22.))
                         .px(px(8. * scale))
-                        .rounded(px(11.))
+                        .rounded(Radius::Pill.scaled())
                         .bg(theme.accent_soft)
                         .border(px(1.))
                         .border_color(accent)
@@ -438,7 +439,7 @@ fn render_entry(
                         .w(px(18. * scale))
                         .h(px(18. * scale)),
                 )
-                .text_size(fs(11.))
+                .text_size(fs(12.))
                 .text_color(text_1)
                 .child(
                     div()

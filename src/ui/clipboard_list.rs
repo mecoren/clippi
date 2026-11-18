@@ -2645,7 +2645,7 @@ impl Render for ClipboardListView {
                 )
                 .child(
                     div()
-                        .text_size(fs(11.))
+                        .text_size(fs(12.))
                         .text_color(text_3)
                         .child(I18nKey::ListEmptyHint.text()),
                 )
@@ -2855,7 +2855,7 @@ impl Render for ClipboardListView {
                         )
                         .child(
                             div()
-                                .text_size(fs(11.))
+                                .text_size(fs(12.))
                                 .text_color(text_3)
                                 .child(I18nKey::ListEmptyHint.text()),
                         ),

@@ -7,7 +7,6 @@ use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
 use super::design::palette::Palette;
 use super::filter_bar::{filter_chip, filter_toolbar};
 use super::font::fs;
-use super::theme::ClippiTheme;
 use super::widgets;
 use crate::core::emoji::{self, EmojiEntry};
 use crate::core::i18n_keys::I18nKey;
@@ -314,8 +313,6 @@ impl EmojiPanel {
 
 impl Render for EmojiPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme =
-            ClippiTheme::from_settings(&self.state.read(cx).settings, Some(window.appearance()));
         let p = Palette::current(cx);
         let columns = ((f32::from(window.viewport_size().width) - 54.)
             / if self.kind == 1 { 125. } else { 40. })
@@ -334,8 +331,8 @@ impl Render for EmojiPanel {
             });
         }
         let categories = self.categories();
-        let text_2 = theme.text_2;
-        let mut tabs = filter_toolbar().gap(px(3.)).mb(px(4.));
+        let text_2 = p.ink_2;
+        let mut tabs = filter_toolbar().gap(px(4.)).mb(px(4.));
         for (index, label) in [
             "Emoji",
             I18nKey::EmojiKaomoji.text(),
@@ -347,16 +344,16 @@ impl Render for EmojiPanel {
             tabs = tabs.child(
                 filter_chip(("emoji-kind", index), self.kind == index, &p)
                     .aria_label(label)
-                    .text_size(fs(11.))
+                    .text_size(fs(12.))
                     .font_weight(if self.kind == index {
                         FontWeight::BOLD
                     } else {
                         FontWeight::default()
                     })
                     .text_color(if self.kind == index {
-                        theme.accent
+                        p.accent
                     } else {
-                        theme.text_2
+                        p.ink_2
                     })
                     .on_mouse_down(
                         MouseButton::Left,
@@ -373,9 +370,9 @@ impl Render for EmojiPanel {
         for (index, &(zh, en, icon)) in categories.iter().enumerate() {
             let label = if crate::core::i18n::is_en() { en } else { zh };
             let color = if self.category == index {
-                theme.accent
+                p.accent
             } else {
-                theme.text_2
+                p.ink_2
             };
             let mut button = super::components::scroll_filter_bar::scroll_filter_chip(
                 ("emoji-cat", index),
@@ -392,7 +389,7 @@ impl Render for EmojiPanel {
                 cx.listener(move |this, _, window, cx| this.choose_category(index, window, cx)),
             );
             if self.kind == 0 || index == 0 {
-                button = button.child(widgets::icon(icon, fs(12.), Hsla::from(color)));
+                button = button.child(widgets::icon(icon, fs(12.), color));
             } else {
                 button = button.child(icon);
             }
@@ -429,7 +426,6 @@ impl Render for EmojiPanel {
             rows.push(Some(index..(index + self.columns).min(self.entries.len())));
         }
         let row_count = rows.len();
-        let list_theme = theme.clone();
         let content: AnyElement = if self.entries.is_empty() {
             div()
                 .flex_1()
@@ -437,8 +433,8 @@ impl Render for EmojiPanel {
                 .items_center()
                 .justify_center()
                 .px(px(16.))
-                .text_size(fs(11.))
-                .text_color(theme.text_2)
+                .text_size(fs(12.))
+                .text_color(p.ink_2)
                 .child(if self.category == 0 && self.query.is_empty() {
                     I18nKey::EmojiRecentEmpty.text()
                 } else {
@@ -457,13 +453,13 @@ impl Render for EmojiPanel {
                                 .h(px(42.))
                                 .flex()
                                 .px(px(8.))
-                                .pr(px(18.))
+                                .pr(px(16.))
                                 .gap(px(2.))
                                 .items_center();
                             let Some(range) = rows[row_index].clone() else {
                                 return row
-                                    .text_size(fs(11.))
-                                    .text_color(list_theme.text_2)
+                                    .text_size(fs(12.))
+                                    .text_color(p.ink_2)
                                     .child(this.category_label());
                             };
                             for index in range {
@@ -482,7 +478,7 @@ impl Render for EmojiPanel {
                                     .justify_center()
                                     .overflow_hidden()
                                     .cursor_pointer()
-                                    .text_color(list_theme.text_1)
+                                    .text_color(p.ink)
                                     .text_size(fs(if this.kind == 1 { 12. } else { 24. }))
                                     .when(this.kind == 0, |button| {
                                         button.font_family(if cfg!(target_os = "windows") {
@@ -491,17 +487,17 @@ impl Render for EmojiPanel {
                                             "Apple Color Emoji"
                                         })
                                     })
-                                    .when(this.kind == 1, |button| button.bg(list_theme.surface))
+                                    .when(this.kind == 1, |button| button.bg(p.layer))
                                     .border(px(1.))
                                     .border_color(if index == this.selected {
-                                        list_theme.accent
+                                        p.accent
                                     } else {
-                                        Rgba::from(Hsla::transparent_black())
+                                        p.background.opacity(0.)
                                     })
                                     .when(index == this.selected, |button| {
-                                        button.bg(list_theme.accent_soft)
+                                        button.bg(p.accent_soft())
                                     })
-                                    .hover(|style| style.bg(list_theme.btn_hover))
+                                    .hover(move |style| style.bg(p.hover))
                                     .tooltip(move |window, cx| {
                                         widgets::tooltip(name.clone(), window, cx)
                                     })
@@ -549,8 +545,8 @@ impl Render for EmojiPanel {
             .child(
                 div()
                     .px(px(12.))
-                    .py(px(5.))
-                    .text_size(fs(11.))
+                    .py(px(4.))
+                    .text_size(fs(12.))
                     .text_color(text_2)
                     .child(title),
             )

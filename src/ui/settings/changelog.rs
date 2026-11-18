@@ -61,7 +61,7 @@ impl SettingsPanel {
         let mut list = div().flex().flex_col().pt(px(2.));
         for (index, entry) in changelog::versions().iter().enumerate() {
             if index > 0 {
-                list = list.child(div().h(px(1.)).mt(px(14.)).mb(px(12.)).bg(divider));
+                list = list.child(div().h(px(1.)).mt(px(12.)).mb(px(12.)).bg(divider));
             }
             list = list.child(
                 div()
@@ -84,11 +84,11 @@ impl SettingsPanel {
                             .when(entry.version == current_version, |row| {
                                 row.child(
                                     div()
-                                        .px(px(5.))
-                                        .py(px(1.))
+                                        .px(px(4.))
+                                        .py(px(2.))
                                         .rounded(px(4.))
                                         .bg(accent_soft)
-                                        .text_size(fs(9.))
+                                        .text_size(fs(10.))
                                         .text_color(accent)
                                         .child(I18nKey::ChangelogCurrent.text()),
                                 )
@@ -97,7 +97,7 @@ impl SettingsPanel {
                     .child(
                         // The version string doubles as the element id: entries
                         // are unique and never reordered within a build.
-                        div().text_size(fs(11.)).text_color(text_2).child(
+                        div().text_size(fs(12.)).text_color(text_2).child(
                             TextView::markdown(entry.version, entry.body)
                                 .style(body_style.clone())
                                 .selectable(false),

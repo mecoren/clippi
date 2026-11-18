@@ -10,7 +10,6 @@
 
 use std::rc::Rc;
 use std::sync::Mutex;
-use std::time::Duration;
 
 use base64::Engine;
 use gpui::prelude::FluentBuilder;
@@ -22,6 +21,7 @@ use gpui_kit::component::text::{TextView, TextViewStyle};
 
 use crate::ui::transition::keyed_transition;
 
+use super::design::motion;
 use crate::core::color::detect_color;
 use crate::core::frontend::PANEL_OFFSET_X;
 use crate::core::html_text;
@@ -873,7 +873,7 @@ fn render_path_like_preview(
         preview.child(
             div()
                 .w_full()
-                .text_size(sc(11.))
+                .text_size(sc(12.))
                 .line_height(sc(14.))
                 .text_color(subtitle_color)
                 .whitespace_nowrap()
@@ -1622,9 +1622,9 @@ impl RenderOnce for ClipboardCard {
         };
         let color_swatch = swatch_color(full_text, accent);
 
-        let border_color = if selected { accent } else { divider };
         // 卡片不用阴影：靠 1 px 描边 + `layer` 面与窗口底做亮度差分层
-        // （Argus 的 Fluent 分层）。选中态在面与描边上同时强调。
+        // （Argus 的 Fluent 分层）。选中态 = 强调色 15% 底 + 左侧 3 px 竖条
+        // （FR-STATE-03），描边保持常态，不再整圈换成强调色。
         let card_face: Rgba = if selected {
             p.accent_soft().into()
         } else {
@@ -1641,12 +1641,23 @@ impl RenderOnce for ClipboardCard {
             })
             .bg(card_face)
             .border(sc(1.))
-            .border_color(border_color)
+            .border_color(divider)
             .rounded(Radius::Card.scaled())
             .flex()
             .flex_row()
-            .p(sc(10.))
-            .gap(sc(10.));
+            .p(sc(8.))
+            .gap(sc(8.))
+            .when(selected, |card| {
+                card.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .bottom_0()
+                        .left_0()
+                        .w(px(3.))
+                        .bg(accent),
+                )
+            });
 
         // --- Wire click handler ---
         let base = if let Some(handler) = on_click {
@@ -1677,7 +1688,7 @@ impl RenderOnce for ClipboardCard {
                 .flex()
                 .flex_col()
                 .items_center()
-                .gap(sc(3.))
+                .gap(sc(4.))
                 .child(
                     div()
                         .w(sc(36.))
@@ -1712,7 +1723,7 @@ impl RenderOnce for ClipboardCard {
                     div()
                         .w(sc(36.))
                         .h(sc(14.))
-                        .rounded(sc(3.))
+                        .rounded(Radius::Sm.scaled())
                         .bg(color_swatch)
                         .border(sc(1.))
                         .border_color(color_border)
@@ -1720,15 +1731,21 @@ impl RenderOnce for ClipboardCard {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .child(div().w_full().h_full().rounded(sc(1.)).bg(color_swatch))
+                        .child(
+                            div()
+                                .w_full()
+                                .h_full()
+                                .rounded(Radius::Pill.scaled())
+                                .bg(color_swatch),
+                        )
                         .into_any_element()
                 } else {
                     div()
                         .w(sc(36.))
                         .h(sc(14.))
-                        .rounded(sc(3.))
+                        .rounded(Radius::Sm.scaled())
                         .bg(tag_bg)
-                        .px(sc(3.))
+                        .px(sc(4.))
                         .flex()
                         .items_center()
                         .justify_center()
@@ -1746,7 +1763,7 @@ impl RenderOnce for ClipboardCard {
                 .flex()
                 .flex_col()
                 .items_center()
-                .gap(sc(3.))
+                .gap(sc(4.))
                 .child(
                     div()
                         .w(sc(36.))
@@ -1775,9 +1792,9 @@ impl RenderOnce for ClipboardCard {
                     div()
                         .w(sc(36.))
                         .h(sc(14.))
-                        .rounded(sc(3.))
+                        .rounded(Radius::Sm.scaled())
                         .bg(tag_bg)
-                        .px(sc(3.))
+                        .px(sc(4.))
                         .flex()
                         .items_center()
                         .justify_center()
@@ -1813,7 +1830,7 @@ impl RenderOnce for ClipboardCard {
                     .flex()
                     .flex_col()
                     .items_center()
-                    .gap(sc(3.))
+                    .gap(sc(4.))
                     .child(
                         div()
                             .w(sc(36.))
@@ -1846,9 +1863,9 @@ impl RenderOnce for ClipboardCard {
                         div()
                             .w(sc(36.))
                             .h(sc(14.))
-                            .rounded(sc(3.))
+                            .rounded(Radius::Sm.scaled())
                             .bg(tag_bg)
-                            .px(sc(3.))
+                            .px(sc(4.))
                             .flex()
                             .items_center()
                             .justify_center()
@@ -1882,7 +1899,7 @@ impl RenderOnce for ClipboardCard {
                     .flex()
                     .flex_col()
                     .items_center()
-                    .gap(sc(3.))
+                    .gap(sc(4.))
                     .child(
                         div()
                             .w(sc(36.))
@@ -1911,9 +1928,9 @@ impl RenderOnce for ClipboardCard {
                         div()
                             .w(sc(36.))
                             .h(sc(14.))
-                            .rounded(sc(3.))
+                            .rounded(Radius::Sm.scaled())
                             .bg(tag_bg)
-                            .px(sc(3.))
+                            .px(sc(4.))
                             .flex()
                             .items_center()
                             .justify_center()
@@ -1931,7 +1948,7 @@ impl RenderOnce for ClipboardCard {
                 .flex()
                 .flex_col()
                 .items_center()
-                .gap(sc(3.))
+                .gap(sc(4.))
                 .child(
                     div()
                         .w(sc(36.))
@@ -1960,9 +1977,9 @@ impl RenderOnce for ClipboardCard {
                     div()
                         .w(sc(36.))
                         .h(sc(14.))
-                        .rounded(sc(3.))
+                        .rounded(Radius::Sm.scaled())
                         .bg(tag_bg)
-                        .px(sc(3.))
+                        .px(sc(4.))
                         .flex()
                         .items_center()
                         .justify_center()
@@ -2024,7 +2041,7 @@ impl RenderOnce for ClipboardCard {
                                 let handler = format_handler.clone();
                                 div()
                                     .h(sc(18.))
-                                    .rounded(sc(9.))
+                                    .rounded(Radius::Pill.scaled())
                                     .bg(if selected { accent } else { pill_bg })
                                     .border(sc(1.))
                                     .border_color(if selected { accent } else { pill_border })
@@ -2047,7 +2064,7 @@ impl RenderOnce for ClipboardCard {
                                     })
                                     .child(
                                         div()
-                                            .text_size(sc(9.))
+                                            .text_size(sc(10.))
                                             .text_color(if selected { on_accent } else { text_2 })
                                             .child(hotkey_paste_format_label(format)),
                                     )
@@ -2323,10 +2340,11 @@ impl RenderOnce for ClipboardCard {
                                     // --- since GPUI overflow_hidden does not clip img elements ---
                                     // --- Negative inset makes the overlay extend outward so the ---
                                     // --- border (which draws inward) covers the image corners.  ---
+                                    // --- 外半径 = 图像半径（8）+ 外扩（2），两者都在档位上。      ---
                                     div()
                                         .absolute()
-                                        .inset(sc(-3.))
-                                        .rounded(sc(11.))
+                                        .inset(sc(-2.))
+                                        .rounded(Radius::Card.scaled())
                                         .border(sc(4.))
                                         .border_color(surface),
                                 )
@@ -2396,7 +2414,7 @@ impl RenderOnce for ClipboardCard {
                                                 .child(
                                                     div()
                                                         .max_w_full()
-                                                        .text_size(sc(11.))
+                                                        .text_size(sc(12.))
                                                         .line_height(sc(14.))
                                                         .text_color(text_3)
                                                         .overflow_hidden()
@@ -2549,7 +2567,7 @@ impl RenderOnce for ClipboardCard {
                                 .flex_1()
                                 .flex()
                                 .flex_col()
-                                .gap(sc(3.))
+                                .gap(sc(4.))
                                 .overflow_hidden()
                                 .child(
                                     div()
@@ -2579,7 +2597,7 @@ impl RenderOnce for ClipboardCard {
                                 .flex_1()
                                 .flex()
                                 .flex_col()
-                                .gap(sc(3.))
+                                .gap(sc(4.))
                                 .overflow_hidden()
                                 .children(files.iter().take(4).map(|fi| {
                                     let stem_len = if fi.is_dir {
@@ -2632,7 +2650,7 @@ impl RenderOnce for ClipboardCard {
                                                         )
                                                         .w(sc(14.))
                                                         .h(sc(14.))
-                                                        .rounded(sc(2.))
+                                                        .rounded(Radius::Sm.scaled())
                                                         .into_any_element()
                                                 } else {
                                                     widgets::icon(
@@ -2884,7 +2902,7 @@ impl RenderOnce for ClipboardCard {
                 el.child(
                     div()
                         .h(sc(18.))
-                        .rounded(sc(9.))
+                        .rounded(Radius::Pill.scaled())
                         .bg(pill_bg)
                         .shadow(vec![BoxShadow {
                             color: if is_dark {
@@ -2900,12 +2918,12 @@ impl RenderOnce for ClipboardCard {
                         }])
                         .border(sc(1.))
                         .border_color(pill_border)
-                        .px(sc(5.))
+                        .px(sc(4.))
                         .flex()
                         .items_center()
                         .child(
                             div()
-                                .text_size(sc(9.))
+                                .text_size(sc(10.))
                                 .text_color(text_2)
                                 .child(format!("+{hidden_tag_count}")),
                         ),
@@ -2915,7 +2933,7 @@ impl RenderOnce for ClipboardCard {
                 let tag_color = color_from_hex(&tag.color, text_2);
                 div()
                     .h(sc(18.))
-                    .rounded(sc(9.))
+                    .rounded(Radius::Pill.scaled())
                     .bg(pill_bg)
                     .shadow(vec![BoxShadow {
                         color: if is_dark {
@@ -2931,12 +2949,12 @@ impl RenderOnce for ClipboardCard {
                     }])
                     .border(sc(1.))
                     .border_color(tag_color)
-                    .px(sc(5.))
+                    .px(sc(4.))
                     .flex()
                     .items_center()
                     .child(
                         div()
-                            .text_size(sc(9.))
+                            .text_size(sc(10.))
                             .text_color(tag_color)
                             .child(tag.name.clone()),
                     )
@@ -2945,7 +2963,7 @@ impl RenderOnce for ClipboardCard {
                 el.child(
                     div()
                         .size(sc(18.))
-                        .rounded(sc(9.))
+                        .rounded(Radius::Pill.scaled())
                         .bg(pill_bg)
                         .shadow(vec![BoxShadow {
                             color: if is_dark {
@@ -2971,7 +2989,7 @@ impl RenderOnce for ClipboardCard {
                 el.child(
                     div()
                         .h(sc(18.))
-                        .rounded(sc(9.))
+                        .rounded(Radius::Pill.scaled())
                         .bg(pill_bg)
                         .shadow(vec![BoxShadow {
                             color: if is_dark {
@@ -2987,12 +3005,12 @@ impl RenderOnce for ClipboardCard {
                         }])
                         .border(sc(1.))
                         .border_color(accent)
-                        .px(sc(5.))
+                        .px(sc(4.))
                         .flex()
                         .items_center()
                         .gap(sc(HOTKEY_PILL_ICON_GAP))
                         .child(widgets::icon("KeyboardIcon", sc(9.), Hsla::from(accent)))
-                        .child(div().text_size(sc(9.)).text_color(accent).child(hk)),
+                        .child(div().text_size(sc(10.)).text_color(accent).child(hk)),
                 )
             })
             .when_some(transfer_pill, |el, (label, kind)| {
@@ -3005,7 +3023,7 @@ impl RenderOnce for ClipboardCard {
                 el.child(
                     div()
                         .h(sc(18.))
-                        .rounded(sc(9.))
+                        .rounded(Radius::Pill.scaled())
                         .bg(pill_bg)
                         .shadow(vec![BoxShadow {
                             color: if is_dark {
@@ -3021,7 +3039,7 @@ impl RenderOnce for ClipboardCard {
                         }])
                         .border(sc(1.))
                         .border_color(pill_border)
-                        .px(sc(5.))
+                        .px(sc(4.))
                         .flex()
                         .items_center()
                         .gap(sc(2.))
@@ -3042,7 +3060,7 @@ impl RenderOnce for ClipboardCard {
                         })
                         .child(
                             div()
-                                .text_size(sc(9.))
+                                .text_size(sc(10.))
                                 .text_color(pill_text_color)
                                 .child(label),
                         ),
@@ -3054,7 +3072,7 @@ impl RenderOnce for ClipboardCard {
                 el.child(
                     div()
                         .size(sc(18.))
-                        .rounded(sc(9.))
+                        .rounded(Radius::Pill.scaled())
                         .bg(pill_bg)
                         .shadow(vec![BoxShadow {
                             color: if is_dark {
@@ -3092,7 +3110,7 @@ impl RenderOnce for ClipboardCard {
                 el.child(
                     div()
                         .h(sc(18.))
-                        .rounded(sc(9.))
+                        .rounded(Radius::Pill.scaled())
                         .bg(pill_bg)
                         .shadow(vec![BoxShadow {
                             color: if is_dark {
@@ -3108,12 +3126,12 @@ impl RenderOnce for ClipboardCard {
                         }])
                         .border(sc(1.))
                         .border_color(pill_border)
-                        .px(sc(5.))
+                        .px(sc(4.))
                         .flex()
                         .items_center()
                         .child(
                             div()
-                                .text_size(sc(9.))
+                                .text_size(sc(10.))
                                 .text_color(pill_text_color)
                                 .child(label),
                         ),
@@ -3122,7 +3140,7 @@ impl RenderOnce for ClipboardCard {
             .child(
                 div()
                     .h(sc(18.))
-                    .rounded(sc(9.))
+                    .rounded(Radius::Pill.scaled())
                     .bg(pill_bg)
                     .shadow(vec![BoxShadow {
                         color: if is_dark {
@@ -3138,12 +3156,12 @@ impl RenderOnce for ClipboardCard {
                     }])
                     .border(sc(1.))
                     .border_color(pill_border)
-                    .px(sc(7.))
+                    .px(sc(8.))
                     .flex()
                     .items_center()
                     .child(
                         div()
-                            .text_size(sc(9.))
+                            .text_size(sc(10.))
                             .text_color(time_pill_color)
                             .child(time_str),
                     ),
@@ -3168,7 +3186,7 @@ impl RenderOnce for ClipboardCard {
                     .top(sc(4.))
                     .bottom(sc(4.))
                     .w(sc(3.))
-                    .rounded(sc(2.))
+                    .rounded(Radius::Pill.scaled())
                     .bg(theme.transfer_pin_color),
             )
         } else if is_fav {
@@ -3179,7 +3197,7 @@ impl RenderOnce for ClipboardCard {
                     .top(sc(4.))
                     .bottom(sc(4.))
                     .w(sc(3.))
-                    .rounded(sc(2.))
+                    .rounded(Radius::Pill.scaled())
                     .bg(fav_color),
             )
         } else {
@@ -3203,7 +3221,7 @@ impl RenderOnce for ClipboardCard {
                     .justify_center()
                     .child(
                         div()
-                            .text_size(sc(8.))
+                            .text_size(sc(10.))
                             .font_weight(FontWeight::BOLD)
                             .text_color(on_accent)
                             .child(format!("{}", selection_order)),
@@ -3224,9 +3242,9 @@ impl RenderOnce for ClipboardCard {
             window,
             cx,
             SharedString::from(format!("card-toolbar-{}", item.id)),
-            Duration::from_millis(160),
+            motion::fast(),
             0.0_f32,
-            |t| 1.0 - (1.0 - t).powi(3),
+            motion::ease_out,
             if toolbar_visible { 1.0 } else { 0.0 },
         );
         // The wrapper allows tabs to extend above the clipped card without

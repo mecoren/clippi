@@ -217,7 +217,8 @@ impl Render for TypeFilterConfigPanel {
             .border_color(panel_border)
             .border(px(1.))
             .rounded(px(8.))
-            .shadow_lg()
+            // 浮层面板不投影（Argus：菜单、列表、提示都没有）。
+            .shadow_none()
             .p(px(8.))
             .gap(px(4.))
             // --- Title row ---

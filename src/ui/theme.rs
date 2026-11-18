@@ -2,7 +2,7 @@
 //! `design::tokens`（`assets/theme.json`）派生。逐屏改写（M2+）期间两者
 //! 并存：新代码走 `design::Palette`，旧代码继续读这里的字段。
 
-use gpui::{rgb, Rgba, WindowAppearance};
+use gpui::{Hsla, Rgba, WindowAppearance};
 
 use super::design::{motion, tokens};
 
@@ -14,7 +14,6 @@ pub struct ClippiTheme {
     pub bg: Rgba,
     pub surface: Rgba,
     pub surface_press: Rgba,
-    pub titlebar_bg: Rgba,
 
     // --- Text ---
     pub text_1: Rgba,
@@ -41,7 +40,7 @@ pub struct ClippiTheme {
     // --- Toast ---
     pub toast_bg: Rgba,
 
-    /// 当前是否为暗色模式（旧代码曾用 `bg == rgb(0x191a1b)` 判断，令牌换值后会失效）。
+    /// 当前是否为暗色模式（旧代码曾用窗口底色字面量判断，令牌换值后会失效）。
     pub dark: bool,
 }
 
@@ -66,7 +65,6 @@ impl ClippiTheme {
             bg,
             surface: tokens::on_card("layer", dark),
             surface_press: tokens::on_card("press", dark),
-            titlebar_bg: bg,
 
             text_1: color("ink"),
             text_2: color("ink-2"),
@@ -153,9 +151,9 @@ impl ClippiTheme {
 
     pub fn accent_highlight_text(&self) -> Rgba {
         if self.dark {
-            rgb(0xffffff)
+            Hsla::white().into()
         } else {
-            rgb(0x000000)
+            Hsla::black().into()
         }
     }
 }
@@ -207,7 +205,7 @@ mod tests {
         let light = ClippiTheme::light();
         assert!((light.accent_highlight().a - 0x4d as f32 / 255.0).abs() < 1e-6);
         for mut theme in [ClippiTheme::light(), ClippiTheme::dark()] {
-            theme.accent = rgb(0x0067c0);
+            theme.accent = gpui::rgb(0x0067c0);
             let overlay = theme.accent_overlay();
             let highlight = theme.accent_highlight();
             assert_eq!(

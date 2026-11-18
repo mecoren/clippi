@@ -792,7 +792,7 @@ impl Render for EditPanel {
                                     div()
                                         .w(px(32.))
                                         .h(px(3.))
-                                        .rounded(px(2.))
+                                        .rounded(Radius::Sm.scaled())
                                         .bg(divider)
                                         .hover(|style| style.bg(accent)),
                                 ),
@@ -806,7 +806,7 @@ impl Render for EditPanel {
                                 .border_color(divider)
                                 .bg(surface)
                                 .overflow_y_scrollbar()
-                                .child(div().pt(px(8.)).pb(px(8.)).pl(px(8.)).pr(px(14.)).child(
+                                .child(div().pt(px(8.)).pb(px(8.)).pl(px(8.)).pr(px(12.)).child(
                                     render_rich_preview(
                                         &selected_type,
                                         &content_text,

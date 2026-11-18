@@ -8,6 +8,7 @@
 //! --- - Single and batch mode variants with conditional items ---
 //! --- - Position clamping to container bounds ---
 
+use crate::ui::design::size::Radius;
 use crate::ui::font::fs;
 use std::rc::Rc;
 
@@ -655,7 +656,8 @@ impl RenderOnce for ContextMenu {
             .bg(surface)
             .border(px(1.))
             .border_color(sep_line)
-            .shadow_lg()
+            // 菜单不投影：层级靠 `flyout` 面 + 描边（Argus 只给对话框阴影）。
+            .shadow_none()
             .p(px(4.))
             .flex()
             .flex_col()
@@ -733,7 +735,7 @@ impl RenderOnce for ContextMenu {
                     .aria_label(label.clone())
                     .w(px(ITEM_WIDTH))
                     .h(px(30.))
-                    .rounded(px(5.))
+                    .rounded(Radius::Md.scaled())
                     .flex()
                     .flex_row()
                     .items_center()

@@ -1,6 +1,9 @@
 //! Add/edit sync backend dialog.
+//!
+//! 外壳与字段全部来自控件工厂（`dialog_panel` / `text_field` / `btn` /
+//! `tool_icon_btn`），页面只负责排版与事件；颜色取 `Palette`，不再读
+//! `ClippiTheme`。
 
-use crate::ui::font::fs;
 use std::time::{Duration, Instant};
 
 use gpui::prelude::FluentBuilder;
@@ -12,13 +15,14 @@ use crate::core::i18n_keys::I18nKey;
 use crate::core::settings::{compose_webdav_url, BackendConfig};
 use crate::services::backends::local_folder::detect_presets;
 use crate::services::gpui_sync::test_webdav_connection;
+use crate::ui::design::motion;
 use crate::ui::design::palette::Palette;
-use crate::ui::theme::ClippiTheme;
+use crate::ui::design::size::{IconSize, Radius, Space};
+use crate::ui::design::typography::{self, type_role};
 use crate::ui::transition::keyed_transition;
-use crate::ui::widgets;
+use crate::ui::widgets::{self, ButtonExt, Tone};
 use crate::ui::window_manager::{WebDavBackendForm, WindowManager};
 
-const BACKEND_PANEL_ANIM_DURATION: Duration = Duration::from_millis(150);
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum EditorStep {
     SelectType,
@@ -32,7 +36,6 @@ pub struct AddBackendPanel {
     animation_started: Option<Instant>,
     edit_id: Option<String>,
     step: EditorStep,
-    theme: ClippiTheme,
     window_manager: Entity<WindowManager>,
     presets: Vec<(&'static str, String)>,
     name_input: Entity<InputState>,
@@ -53,7 +56,6 @@ pub struct AddBackendPanel {
 impl AddBackendPanel {
     pub fn new(
         window_manager: Entity<WindowManager>,
-        theme: ClippiTheme,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -63,7 +65,6 @@ impl AddBackendPanel {
             animation_started: None,
             edit_id: None,
             step: EditorStep::SelectType,
-            theme,
             window_manager,
             presets: detect_presets(),
             name_input: cx
@@ -111,11 +112,6 @@ impl AddBackendPanel {
 
     pub fn is_visible(&self) -> bool {
         self.visible
-    }
-
-    pub fn set_theme(&mut self, theme: ClippiTheme, cx: &mut Context<Self>) {
-        self.theme = theme;
-        cx.notify();
     }
 
     pub fn open_add(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -210,15 +206,11 @@ impl AddBackendPanel {
             window,
             cx,
             key,
-            BACKEND_PANEL_ANIM_DURATION,
+            motion::fast(),
             initial,
-            Self::ease_out,
+            motion::ease_out,
             target,
         )
-    }
-
-    fn ease_out(delta: f32) -> f32 {
-        1.0 - (1.0 - delta).powi(3)
     }
 
     fn start_webdav_test(&mut self, cx: &mut Context<Self>) {
@@ -269,33 +261,21 @@ impl AddBackendPanel {
 
     fn render_type_picker(&self, cx: &mut Context<Self>) -> AnyElement {
         let this = cx.entity().clone();
-        let accent = self.theme.accent;
-        let text_1 = self.theme.text_1;
-        let text_3 = self.theme.text_3;
-        let card_bg = Rgba::from(Palette::current(cx).on_card("layer"));
+        let p = Palette::current(cx);
 
         div()
             .flex()
             .flex_col()
-            .gap(px(8.))
-            .child(
-                div()
-                    .text_size(fs(11.))
-                    .font_weight(FontWeight::BOLD)
-                    .text_color(self.theme.text_2)
-                    .child(I18nKey::BackendSelectType.text()),
-            )
+            .gap(Space::Md.scaled())
+            .child(field_label(&p, I18nKey::BackendSelectType.text()))
             .child(
                 div()
                     .flex()
-                    .gap(px(10.))
+                    .gap(Space::Md.scaled())
                     .child(type_card(
+                        &p,
                         I18nKey::BackendLocalFolder.text(),
                         I18nKey::BackendLocalDesc.text(),
-                        accent,
-                        card_bg,
-                        text_1,
-                        text_3,
                         {
                             let this = this.clone();
                             move |_window, cx| {
@@ -307,12 +287,9 @@ impl AddBackendPanel {
                         },
                     ))
                     .child(type_card(
+                        &p,
                         I18nKey::BackendWebdav.text(),
                         I18nKey::BackendWebdavDesc.text(),
-                        accent,
-                        card_bg,
-                        text_1,
-                        text_3,
                         move |window, cx| {
                             this.update(cx, |panel, cx| {
                                 panel.step = EditorStep::WebDav;
@@ -331,141 +308,123 @@ impl AddBackendPanel {
 
     fn render_local_form(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let editing = self.edit_id.is_some();
-        let accent = self.theme.accent;
-        let accent_soft = self.theme.accent_soft;
-        let divider = self.theme.divider;
-        let text_2 = self.theme.text_2;
-        let text_1 = self.theme.text_1;
-        let card_bg = Rgba::from(Palette::current(cx).on_card("layer"));
+        let p = Palette::current(cx);
         let this = cx.entity().clone();
 
         div()
             .flex()
             .flex_col()
-            .gap(px(12.))
+            .gap(Space::Lg.scaled())
             .when(!editing && !self.presets.is_empty(), |form| {
-                form.child(field_label(I18nKey::BackendQuickAdd.text(), text_2))
-                    .child(div().flex().gap(px(8.)).children(self.presets.iter().map(
-                        |(name, path)| {
-                            let name = (*name).to_string();
-                            let input_name = name.clone();
-                            let path = path.clone();
-                            let name_input = self.name_input.clone();
-                            let folder_input = self.folder_input.clone();
-                            div()
-                                .h(px(34.))
-                                .px(px(12.))
-                                .rounded(px(7.))
-                                .bg(card_bg)
-                                .border(px(1.))
-                                .border_color(divider)
-                                .flex()
-                                .items_center()
-                                .gap(px(6.))
-                                .cursor(CursorStyle::PointingHand)
-                                .hover(move |style| style.border_color(accent))
-                                .on_mouse_down(MouseButton::Left, move |_ev, window, cx| {
-                                    if name_input.read(cx).value().is_empty() {
-                                        name_input.update(cx, |input, cx| {
-                                            input.set_value(&input_name, window, cx)
-                                        });
-                                    }
-                                    folder_input
-                                        .update(cx, |input, cx| input.set_value(&path, window, cx));
-                                })
-                                .child({
-                                    let icon = match name.as_str() {
-                                        "OneDrive" => "CloudIcon",
-                                        "iCloud" => "CloudIcon",
-                                        _ => "HelpIcon",
-                                    };
-                                    widgets::icon(icon, fs(14.), Hsla::from(text_2))
-                                })
-                                .child(
-                                    div()
-                                        .text_size(fs(12.))
-                                        .font_weight(FontWeight::BOLD)
-                                        .text_color(self.theme.text_1)
-                                        .child(name.clone()),
-                                )
-                        },
-                    )))
+                let presets: Vec<AnyElement> = self
+                    .presets
+                    .iter()
+                    .map(|(name, path)| {
+                        let input_name = (*name).to_string();
+                        let path = path.clone();
+                        let name_input = self.name_input.clone();
+                        let folder_input = self.folder_input.clone();
+                        let glyph = if matches!(*name, "OneDrive" | "iCloud") {
+                            "CloudIcon"
+                        } else {
+                            "HelpIcon"
+                        };
+                        widgets::btn_small(
+                            &p,
+                            ElementId::Name(format!("backend-preset-{name}").into()),
+                            *name,
+                            Some(glyph),
+                            Tone::Plain,
+                        )
+                        .on_click(move |_, window, cx| {
+                            if name_input.read(cx).value().is_empty() {
+                                name_input.update(cx, |input, cx| {
+                                    input.set_value(&input_name, window, cx)
+                                });
+                            }
+                            folder_input.update(cx, |input, cx| input.set_value(&path, window, cx));
+                        })
+                        .into_any_element()
+                    })
+                    .collect();
+                form.child(field_label(&p, I18nKey::BackendQuickAdd.text()))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap(Space::Sm.scaled())
+                            .children(presets),
+                    )
             })
             .when(!editing && !self.presets.is_empty(), |form| {
-                form.child(div().h(px(1.)).bg(divider))
+                form.child(div().h(px(1.)).bg(p.stroke))
             })
-            .child(field_label(I18nKey::BackendFolder.text(), text_2))
+            .child(field_label(&p, I18nKey::BackendFolder.text()))
             .child(
                 div()
                     .flex()
-                    .gap(px(6.))
+                    .items_center()
+                    .gap(Space::Sm.scaled())
+                    .child(div().flex_1().min_w(px(0.)).child(input_box(
+                        &p,
+                        &self.folder_input,
+                        window,
+                        cx,
+                    )))
                     .child(
-                        div()
-                            .flex_1()
-                            .child(input_box(&self.folder_input, window, cx)),
-                    )
-                    .child(
-                        div()
-                            .w(px(58.))
-                            .h(px(30.))
-                            .rounded(px(6.))
-                            .bg(card_bg)
-                            .text_size(fs(11.))
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(text_2)
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .cursor(CursorStyle::PointingHand)
-                            .hover(move |style| style.bg(divider).text_color(text_1))
-                            .on_mouse_down(MouseButton::Left, {
-                                let folder_input = self.folder_input.clone();
-                                let this = this.clone();
-                                move |_ev, window, cx| {
-                                    let input = folder_input.clone();
-                                    let window_handle = window.window_handle();
-                                    let dialog_guard = this
-                                        .read(cx)
-                                        .window_manager
-                                        .read(cx)
-                                        .suspend_auto_hide_for_dialog();
-                                    let dialog = rfd::AsyncFileDialog::new().pick_folder();
-                                    let task = cx.spawn(async move |cx| {
-                                        let selected = dialog.await;
-                                        drop(dialog_guard);
-                                        if let Some(path) = selected {
-                                            let path = path.path().to_string_lossy().to_string();
-                                            let _ =
-                                                cx.update_window(window_handle, |_, window, cx| {
-                                                    input.update(cx, |input, cx| {
-                                                        input.set_value(&path, window, cx);
-                                                    });
-                                                });
-                                        }
-                                    });
-                                    this.update(cx, |panel, _cx| {
-                                        panel._folder_dialog_task = Some(task);
-                                    });
-                                }
-                            })
-                            .child(I18nKey::BackendBrowse.text()),
+                        widgets::btn_small(
+                            &p,
+                            "backend-browse",
+                            I18nKey::BackendBrowse.text(),
+                            None,
+                            Tone::Plain,
+                        )
+                        .on_click({
+                            let folder_input = self.folder_input.clone();
+                            let this = this.clone();
+                            move |_window, window, cx| {
+                                let input = folder_input.clone();
+                                let window_handle = window.window_handle();
+                                let dialog_guard = this
+                                    .read(cx)
+                                    .window_manager
+                                    .read(cx)
+                                    .suspend_auto_hide_for_dialog();
+                                let dialog = rfd::AsyncFileDialog::new().pick_folder();
+                                let task = cx.spawn(async move |cx| {
+                                    let selected = dialog.await;
+                                    drop(dialog_guard);
+                                    if let Some(path) = selected {
+                                        let path = path.path().to_string_lossy().to_string();
+                                        let _ = cx.update_window(window_handle, |_, window, cx| {
+                                            input.update(cx, |input, cx| {
+                                                input.set_value(&path, window, cx);
+                                            });
+                                        });
+                                    }
+                                });
+                                this.update(cx, |panel, _cx| {
+                                    panel._folder_dialog_task = Some(task);
+                                });
+                            }
+                        }),
                     ),
             )
-            .child(div().h(px(1.)).bg(divider))
+            .child(div().h(px(1.)).bg(p.stroke))
             .child(primary_button(
+                &p,
+                "backend-save-local",
                 if editing {
                     I18nKey::BackendSave.text()
                 } else {
                     I18nKey::BackendAddTitle.text()
                 },
-                accent,
-                accent_soft,
-                Rgba::from(Palette::current(cx).on_accent),
                 {
                     let name_input = self.name_input.clone();
                     let folder_input = self.folder_input.clone();
                     let edit_id = self.edit_id.clone();
                     let wm = self.window_manager.clone();
+                    let this = this.clone();
                     move |window, cx| {
                         let name = name_input.read(cx).value().to_string();
                         if name.trim().is_empty() {
@@ -497,71 +456,87 @@ impl AddBackendPanel {
 
     fn render_webdav_form(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let editing = self.edit_id.is_some();
-        let accent = self.theme.accent;
-        let accent_soft = self.theme.accent_soft;
-        let divider = self.theme.divider;
-        let text_2 = self.theme.text_2;
-        let _text_1 = self.theme.text_1;
-
+        let p = Palette::current(cx);
         let this = cx.entity().clone();
+
+        let test_color = if self.test_pending {
+            p.ink
+        } else if self.test_ok {
+            p.ok
+        } else if !self.test_error.is_empty() {
+            p.danger
+        } else {
+            p.ink
+        };
+        let test_label = if self.test_pending {
+            I18nKey::BackendTesting.text()
+        } else if self.test_ok {
+            I18nKey::BackendTestSuccess.text()
+        } else if !self.test_error.is_empty() {
+            I18nKey::BackendTestFailed.text()
+        } else {
+            I18nKey::BackendTest.text()
+        };
 
         div()
             .flex()
             .flex_col()
-            .gap(px(12.))
+            .gap(Space::Lg.scaled())
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(5.))
-                    .child(field_label(I18nKey::BackendServerUrl.text(), text_2))
-                    .child(input_box(&self.url_input, window, cx)),
+                    .gap(Space::Xs.scaled())
+                    .child(field_label(&p, I18nKey::BackendServerUrl.text()))
+                    .child(input_box(&p, &self.url_input, window, cx)),
             )
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(5.))
-                    .child(field_label(I18nKey::BackendWebdavPath.text(), text_2))
-                    .child(input_box(&self.webdav_path_input, window, cx)),
+                    .gap(Space::Xs.scaled())
+                    .child(field_label(&p, I18nKey::BackendWebdavPath.text()))
+                    .child(input_box(&p, &self.webdav_path_input, window, cx)),
             )
             .child(
                 div()
                     .flex()
-                    .gap(px(7.))
+                    .gap(Space::Md.scaled())
                     .child(
                         div()
                             .flex_1()
+                            .min_w(px(0.))
                             .flex()
                             .flex_col()
-                            .gap(px(5.))
-                            .child(field_label(I18nKey::BackendUsername.text(), text_2))
-                            .child(input_box(&self.username_input, window, cx)),
+                            .gap(Space::Xs.scaled())
+                            .child(field_label(&p, I18nKey::BackendUsername.text()))
+                            .child(input_box(&p, &self.username_input, window, cx)),
                     )
                     .child(
                         div()
                             .flex_1()
+                            .min_w(px(0.))
                             .flex()
                             .flex_col()
-                            .gap(px(5.))
-                            .child(field_label(I18nKey::BackendPassword.text(), text_2))
-                            .child(input_box(&self.password_input, window, cx)),
+                            .gap(Space::Xs.scaled())
+                            .child(field_label(&p, I18nKey::BackendPassword.text()))
+                            .child(input_box(&p, &self.password_input, window, cx)),
                     ),
             )
-            .child(div().h(px(1.)).bg(divider))
+            .child(div().h(px(1.)).bg(p.stroke))
             .child(
                 div()
                     .flex()
-                    .gap(px(7.))
-                    .child(div().flex_1().child(primary_button(
+                    .items_center()
+                    .gap(Space::Sm.scaled())
+                    .child(div().flex_1().min_w(px(0.)).child(primary_button(
+                        &p,
+                        "backend-save-webdav",
                         if editing {
                             I18nKey::BackendSave.text()
                         } else {
                             I18nKey::BackendAddTitle.text()
                         },
-                        accent,
-                        accent_soft,
-                        Rgba::from(Palette::current(cx).on_accent),
                         {
                             let this = this.clone();
                             let name_input = self.name_input.clone();
@@ -620,48 +595,19 @@ impl AddBackendPanel {
                         },
                     )))
                     .child(
-                        div()
-                            .flex_1()
-                            .h(px(34.))
-                            .rounded(px(7.))
-                            .bg(self.theme.surface_press)
-                            .text_size(fs(12.))
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(self.theme.text_1)
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .gap(px(10.))
-                            .cursor(CursorStyle::PointingHand)
-                            .hover({
-                                let hover = self.theme.divider;
-                                move |style| style.bg(hover)
-                            })
-                            .on_mouse_down(MouseButton::Left, move |_ev, _window, cx| {
-                                this.update(cx, |panel, cx| panel.start_webdav_test(cx));
-                            })
-                            .child(
-                                div()
-                                    .line_height(fs(14.))
-                                    .text_color(if self.test_pending {
-                                        self.theme.text_1
-                                    } else if self.test_ok {
-                                        Rgba::from(Palette::current(cx).ok)
-                                    } else if !self.test_error.is_empty() {
-                                        self.theme.danger
-                                    } else {
-                                        self.theme.text_1
-                                    })
-                                    .child(if self.test_pending {
-                                        I18nKey::BackendTesting.text()
-                                    } else if self.test_ok {
-                                        I18nKey::BackendTestSuccess.text()
-                                    } else if !self.test_error.is_empty() {
-                                        I18nKey::BackendTestFailed.text()
-                                    } else {
-                                        I18nKey::BackendTest.text()
-                                    }),
-                            ),
+                        div().flex_1().min_w(px(0.)).child(
+                            widgets::btn(&p, "backend-test", test_label, None, Tone::Plain)
+                                .w_full()
+                                .justify_center()
+                                .text_color(test_color)
+                                .inert(self.test_pending)
+                                .on_click({
+                                    let this = this.clone();
+                                    move |_, _window, cx| {
+                                        this.update(cx, |panel, cx| panel.start_webdav_test(cx));
+                                    }
+                                }),
+                        ),
                     ),
             )
             .into_any_element()
@@ -699,16 +645,17 @@ impl Render for AddBackendPanel {
         }
 
         let this = cx.entity().clone();
-        let hover_bg = Rgba::from(Palette::current(cx).hover);
+        let p = Palette::current(cx);
         let show_back = self.edit_id.is_none() && self.step != EditorStep::SelectType;
         let content = match self.step {
             EditorStep::SelectType => self.render_type_picker(cx),
             EditorStep::LocalFolder => self.render_local_form(window, cx),
             EditorStep::WebDav => self.render_webdav_form(window, cx),
         };
-        let scale = if self.animation_started.is_some_and(|started| {
-            started.elapsed() <= BACKEND_PANEL_ANIM_DURATION + Duration::from_millis(24)
-        }) {
+        let scale = if self
+            .animation_started
+            .is_some_and(|started| started.elapsed() <= motion::fast() + Duration::from_millis(24))
+        {
             self.transition_f32(
                 window,
                 cx,
@@ -719,9 +666,11 @@ impl Render for AddBackendPanel {
         } else {
             1.0
         };
+        let header_icon =
+            |glyph: &'static str| widgets::icon(glyph, IconSize::Md.scaled(), p.ink_2);
 
         crate::ui::components::modal_overlay::modal_overlay()
-            .rounded(px(12.))
+            .rounded(Radius::Lg.scaled())
             .flex()
             .items_center()
             .justify_center()
@@ -733,26 +682,19 @@ impl Render for AddBackendPanel {
                 }
             })
             .child(
-                div()
-                    .w(px(304. * scale))
-                    .max_h(px(440. * scale))
-                    .overflow_hidden()
-                    .rounded(px(8.))
-                    .bg(self.theme.surface)
-                    .border(px(1.))
-                    .border_color(self.theme.divider)
-                    .shadow_lg()
-                    .p(px(12. * scale))
+                widgets::dialog_panel(&p)
+                    .w(px(320. * scale))
+                    .max_h(px(460. * scale))
+                    .p(Space::Lg.scaled())
+                    .gap(Space::Md.scaled())
                     .occlude()
                     .on_mouse_down(MouseButton::Left, |_ev, _window, cx| {
                         cx.stop_propagation();
                     })
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.))
                     .child(
                         div()
                             .h(px(28.))
+                            .flex_shrink_0()
                             .flex()
                             .items_center()
                             .justify_between()
@@ -760,20 +702,18 @@ impl Render for AddBackendPanel {
                                 div()
                                     .flex()
                                     .flex_1()
+                                    .min_w(px(0.))
                                     .items_center()
-                                    .gap(px(10.))
+                                    .gap(Space::Sm.scaled())
                                     .when(show_back, |header| {
                                         header.child(
                                             div()
-                                                .w(px(26.))
-                                                .h(px(26.))
-                                                .rounded(px(6.))
-                                                .text_color(self.theme.text_2)
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
+                                                .id("backend-back")
+                                                .role(Role::Button)
+                                                .tab_stop(true)
                                                 .cursor(CursorStyle::PointingHand)
-                                                .hover(move |style| style.bg(hover_bg))
+                                                .rounded(Radius::Md.scaled())
+                                                .hover(move |style| style.bg(p.hover))
                                                 .on_mouse_down(MouseButton::Left, {
                                                     let this = this.clone();
                                                     move |_ev, _window, cx| {
@@ -785,35 +725,28 @@ impl Render for AddBackendPanel {
                                                         });
                                                     }
                                                 })
-                                                .child(widgets::icon(
-                                                    "BackIcon",
-                                                    fs(14.),
-                                                    Hsla::from(self.theme.text_2),
-                                                )),
+                                                .child(header_icon("BackIcon")),
                                         )
                                     })
                                     .child(if self.step == EditorStep::SelectType {
                                         div()
-                                            .text_size(fs(13.))
-                                            .font_weight(FontWeight::BOLD)
-                                            .text_color(self.theme.text_1)
+                                            .text_size(typography::font(type_role::BASE))
+                                            .font_weight(typography::LABEL_WEIGHT)
+                                            .text_color(p.ink)
                                             .child(self.title())
                                             .into_any_element()
                                     } else {
-                                        header_name_input(&self.name_input, cx)
+                                        header_name_input(&self.name_input, &p)
                                     }),
                             )
                             .child(
                                 div()
-                                    .w(px(26.))
-                                    .h(px(26.))
-                                    .rounded(px(6.))
-                                    .text_color(self.theme.text_2)
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
+                                    .id("backend-close")
+                                    .role(Role::Button)
+                                    .tab_stop(true)
                                     .cursor(CursorStyle::PointingHand)
-                                    .hover(move |style| style.bg(hover_bg))
+                                    .rounded(Radius::Md.scaled())
+                                    .hover(move |style| style.bg(p.hover))
                                     .on_mouse_down(MouseButton::Left, {
                                         let this = this.clone();
                                         move |_ev, _window, cx| {
@@ -821,23 +754,20 @@ impl Render for AddBackendPanel {
                                             this.update(cx, |panel, cx| panel.close(cx));
                                         }
                                     })
-                                    .child(widgets::icon(
-                                        "CloseIcon",
-                                        fs(13.),
-                                        Hsla::from(self.theme.text_2),
-                                    )),
+                                    .child(header_icon("CloseIcon")),
                             ),
                     )
-                    .child(div().h(px(1.)).bg(self.theme.divider))
+                    .child(div().h(px(1.)).bg(p.stroke))
                     .child(div().max_h(px(380.)).overflow_y_scrollbar().child(content)),
             )
             .into_any_element()
     }
 }
 
-fn header_name_input(input: &Entity<InputState>, cx: &App) -> AnyElement {
+fn header_name_input(input: &Entity<InputState>, p: &Palette) -> AnyElement {
     div()
         .flex_1()
+        .min_w(px(0.))
         .h(px(26.))
         .flex()
         .items_center()
@@ -848,87 +778,74 @@ fn header_name_input(input: &Entity<InputState>, cx: &App) -> AnyElement {
                 .focus_bordered(false)
                 .w_full()
                 .h(px(20.))
-                .text_size(fs(13.))
-                .font_weight(FontWeight::BOLD)
-                .text_color(Palette::current(cx).ink),
+                .text_size(typography::font(type_role::BASE))
+                .font_weight(typography::LABEL_WEIGHT)
+                .text_color(p.ink),
         )
         .into_any_element()
 }
 
-fn field_label(label: &'static str, color: Rgba) -> impl IntoElement {
+fn field_label(p: &Palette, label: &'static str) -> impl IntoElement {
+    let p = *p;
     div()
-        .text_size(fs(11.))
-        .font_weight(FontWeight::BOLD)
-        .text_color(color)
+        .text_size(typography::font(type_role::CAPTION))
+        .font_weight(typography::LABEL_WEIGHT)
+        .text_color(p.ink_2)
         .child(label)
 }
 
-fn input_box(input: &Entity<InputState>, window: &Window, cx: &App) -> AnyElement {
-    widgets::text_field(&Palette::current(cx), input, "", true, window, cx).into_any_element()
+fn input_box(p: &Palette, input: &Entity<InputState>, window: &Window, cx: &App) -> AnyElement {
+    widgets::text_field(p, input, "", true, window, cx).into_any_element()
 }
 
 fn type_card(
+    p: &Palette,
     title: &'static str,
     description: &'static str,
-    accent: Rgba,
-    background: Rgba,
-    text_1: Rgba,
-    text_3: Rgba,
     on_click: impl Fn(&mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
+    let p = *p;
     div()
         .flex_1()
-        .h(px(78.))
-        .rounded(px(8.))
-        .bg(background)
-        .border(px(1.))
-        .border_color(Rgba::from(Hsla::transparent_black()))
-        .p(px(10.))
+        .min_w(px(0.))
+        .h(px(84.))
+        .rounded(Radius::Lg.scaled())
+        .bg(p.layer_strong)
+        .border_1()
+        .border_color(p.stroke)
+        .p(Space::Lg.scaled())
         .flex()
         .flex_col()
         .justify_center()
-        .gap(px(4.))
+        .gap(Space::Xs.scaled())
         .cursor(CursorStyle::PointingHand)
-        .hover(move |style| style.border_color(accent))
+        .hover(move |style| style.border_color(p.accent))
         .on_mouse_down(MouseButton::Left, move |_ev, window, cx| {
             on_click(window, cx);
         })
         .child(
             div()
-                .text_size(fs(12.))
-                .font_weight(FontWeight::BOLD)
-                .text_color(text_1)
+                .text_size(typography::font(type_role::BASE))
+                .font_weight(typography::LABEL_WEIGHT)
+                .text_color(p.ink)
                 .child(title),
         )
         .child(
             div()
-                .text_size(fs(10.))
-                .text_color(text_3)
+                .text_size(typography::font(type_role::CAPTION))
+                .text_color(p.ink_3)
                 .child(description),
         )
 }
 
 fn primary_button(
+    p: &Palette,
+    id: &'static str,
     label: &'static str,
-    color: Rgba,
-    hover: Rgba,
-    on_color: Rgba,
     on_click: impl Fn(&mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
-    div()
-        .h(px(34.))
-        .rounded(px(7.))
-        .bg(color)
-        .text_size(fs(12.))
-        .font_weight(FontWeight::BOLD)
-        .text_color(on_color)
-        .flex()
-        .items_center()
+    widgets::btn(p, id, label, None, Tone::Accent)
+        .w_full()
         .justify_center()
-        .cursor(CursorStyle::PointingHand)
-        .hover(move |style| style.bg(hover).text_color(color))
-        .on_mouse_down(MouseButton::Left, move |_ev, window, cx| {
-            on_click(window, cx);
-        })
-        .child(label)
+        .on_click(move |_, window, cx| on_click(window, cx))
 }

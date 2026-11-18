@@ -88,6 +88,7 @@ product_icons! {
     "TrimIcon" => TextAlignStart,
 
     // 状态与控件
+    "PlusIcon" => Plus,
     "StarIcon" => Star,
     "StarFilledIcon" => StarFill,
     "PinIcon" => Pin,
