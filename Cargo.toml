@@ -23,8 +23,8 @@ osx_minimum_system_version = "12.0"
 # gpui-pre: lib 名为 `gpui`（Zed gpui 0.2.2 快照），版本锁死（C6）。
 # default 含 wayland/x11，必须关闭（不支持 Linux）。
 gpui-pre = { version = "=0.3.12", default-features = false }
-# gpui-kit: 传递引入 gpui-component 0.9.1 / gpui-base / gpui-kit-assets。
-gpui-kit = "=0.9.1"
+# gpui-kit: 传递引入 gpui-component 0.10.0 / gpui-base / gpui-kit-assets。
+gpui-kit = "=0.10.0"
 clipboard-rs = "0.2"
 rusqlite = { version = "0.32", features = ["bundled"] }
 image = "0.25"
