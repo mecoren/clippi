@@ -30,6 +30,9 @@ use super::tag_picker::TagState;
 const CLIPBOARD_ROW_VERTICAL_SPACE: f32 = 12.0;
 const CLIPBOARD_BOTTOM_SCROLL_INSET: f32 = 36.0;
 const CLIPBOARD_SCROLLBAR_WIDTH: f32 = 16.0;
+/// 卡片与窗口左右边缘的间距。滚动区本身铺满面板宽度，间距由行内边距提供，
+/// 这样滚动条能贴在面板最右侧（与设置页一致）。
+const CLIPBOARD_ROW_HORIZONTAL_PADDING: f32 = 8.0;
 const TAG_PICKER_WIDTH: f32 = 304.0;
 const TAG_PICKER_CARD_ANCHOR_Y: f32 = 10.0;
 const TAG_PICKER_FALLBACK_X: f32 = 400.0;
@@ -2582,13 +2585,16 @@ fn pointer_hover_index(
     let mut top = viewport.top() + scroll_y;
     let mut pointed_row = None;
     let mut previous_card = None;
+    // 滚动区铺满面板，卡片左右各让出一段行内边距，右侧再让出滚动条槽位。
+    let card_left = viewport.left() + px(CLIPBOARD_ROW_HORIZONTAL_PADDING);
+    let card_width = (viewport.size.width
+        - px(CLIPBOARD_ROW_HORIZONTAL_PADDING * 2.)
+        - px(CLIPBOARD_SCROLLBAR_WIDTH))
+    .max(px(0.));
     for (index, size) in sizes.iter().take(item_count).enumerate() {
         let card = Bounds::new(
-            point(viewport.left(), top + px(4.)),
-            gpui::size(
-                (viewport.size.width - px(CLIPBOARD_SCROLLBAR_WIDTH)).max(px(0.)),
-                (size.height - px(8.)).max(px(0.)),
-            ),
+            point(card_left, top + px(4.)),
+            gpui::size(card_width, (size.height - px(8.)).max(px(0.))),
         );
         if previous == Some(index)
             && card.bottom() > viewport.top()
@@ -2871,7 +2877,6 @@ impl Render for ClipboardListView {
             })
             .pt(px(4.))
             .pb(px(8.))
-            .px(px(8.))
             .when(empty_state, |el| {
                 el.child(
                     div()
@@ -3001,6 +3006,7 @@ impl Render for ClipboardListView {
                                                 .role(Role::ListItem)
                                                 .w_full()
                                                 .h_full()
+                                                .px(px(CLIPBOARD_ROW_HORIZONTAL_PADDING))
                                                 .py(px(4.))
                                                 .on_scroll({
                                                     let list_for_scroll_lock =
