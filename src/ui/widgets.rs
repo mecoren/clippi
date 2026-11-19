@@ -471,7 +471,14 @@ fn button_face(
         .rounded(radius.scaled())
         .cursor(CursorStyle::PointingHand)
         .text_color(fg)
-        .text_size(typography::font(type_role::BASE))
+        // 字号跟着按钮高度走：32 高取 BASE（13），24 高降到 BODY（12）。
+        // 13 px 的中文塞进 24 px 高，上下只剩 3–4 px，读作"字撑满按钮"；
+        // 12 也与同样 24 高的菜单项、chip 对齐。
+        .text_size(typography::font(if small {
+            type_role::BODY
+        } else {
+            type_role::BASE
+        }))
         .font_weight(typography::LABEL_WEIGHT)
         .whitespace_nowrap()
         .accessibility_label(text.clone())

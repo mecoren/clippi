@@ -1086,10 +1086,8 @@ impl SettingsPanel {
             let this = cx.entity().clone();
             let item_count = self.state.read(cx).clearable_history_count();
 
-            let divider = p.stroke;
             let text_1 = p.ink;
             let text_3 = p.ink_3;
-            let danger = p.danger;
 
             div()
                 .h(px(58.))
@@ -1124,52 +1122,30 @@ impl SettingsPanel {
                 // --- Clear data button (right) ---
                 .child({
                     let this = this.clone();
-                    div()
-                        .flex_shrink_0()
-                        .h(px(26.))
-                        .px(px(8.))
-                        .rounded(Radius::Md.scaled())
-                        .bg(if maintenance_running { divider } else { danger })
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .cursor(if maintenance_running {
-                            CursorStyle::Arrow
-                        } else {
-                            CursorStyle::PointingHand
+                    let label = if storage_operation_running {
+                        I18nKey::LocalBackupBusy.text()
+                    } else if maintenance_running {
+                        I18nKey::BtnClearingData.text()
+                    } else {
+                        I18nKey::BtnClearData.text()
+                    };
+                    // 与同页「立即清理」同档：走 btn_small（24 高），
+                    // 不再自绘一个 26 高、字号与内边距都不一样的红底按钮。
+                    widgets::btn_small(&p, "clear-data", label, None, widgets::Tone::Danger)
+                        .inert_dimmed(maintenance_running)
+                        .on_click(move |_, _window, cx| {
+                            if item_count == 0 {
+                                this.update(cx, |_panel, cx| {
+                                    cx.emit(SettingsEvent::DataToast(
+                                        I18nKey::ToastClearDataEmpty.text().to_string(),
+                                    ));
+                                });
+                                return;
+                            }
+                            this.update(cx, |_panel, cx| {
+                                cx.emit(SettingsEvent::ShowClearDataConfirm);
+                            });
                         })
-                        .when(!maintenance_running, |button| {
-                            button.hover(|s| s.opacity(0.85)).on_mouse_down(
-                                MouseButton::Left,
-                                move |_ev, _window, cx| {
-                                    cx.stop_propagation();
-                                    if item_count == 0 {
-                                        this.update(cx, |_panel, cx| {
-                                            cx.emit(SettingsEvent::DataToast(
-                                                I18nKey::ToastClearDataEmpty.text().to_string(),
-                                            ));
-                                        });
-                                        return;
-                                    }
-                                    this.update(cx, |_panel, cx| {
-                                        cx.emit(SettingsEvent::ShowClearDataConfirm);
-                                    });
-                                },
-                            )
-                        })
-                        .child(
-                            div()
-                                .text_size(fs(12.))
-                                .font_weight(FontWeight::BOLD)
-                                .text_color(Rgba::from(p.on_accent))
-                                .child(if storage_operation_running {
-                                    I18nKey::LocalBackupBusy.text()
-                                } else if maintenance_running {
-                                    I18nKey::BtnClearingData.text()
-                                } else {
-                                    I18nKey::BtnClearData.text()
-                                }),
-                        )
                 })
         }
         .into_any_element()];
