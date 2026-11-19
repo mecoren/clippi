@@ -167,16 +167,34 @@ pub(crate) fn filter_chip(id: impl Into<ElementId>, active: bool, p: &Palette) -
         .cursor(CursorStyle::PointingHand)
 }
 
-/// Always reserve at least two slots: all sources and an application choice.
-pub(crate) fn source_app_chip_width(width: f32, visible_types: usize, gap: f32) -> f32 {
-    let columns = visible_types.max(2) as f32;
-    let available = (width
+/// Usable width of a toolbar row: whole bar minus padding, divider and action slot.
+fn toolbar_available(bar_width: f32) -> f32 {
+    (bar_width
         - SEARCH_BAR_HORIZONTAL_PADDING
         - TAG_FILTER_BUTTON_WIDTH
         - TOOLBAR_DIVIDER_WIDTH
         - TOOLBAR_GROUP_GAP * 2.)
-        .max(0.);
-    (available - gap * (columns - 1.)).max(0.) / columns
+        .max(0.)
+}
+
+/// Whole-pixel column width. Fractional widths are laid out at sub-pixel
+/// offsets in the type row but snapped inside the scrolling source strip, so
+/// the two rows would drift apart column by column; an integer width keeps
+/// every chip edge on the same pixel in both.
+fn toolbar_column_width(available: f32, columns: usize, gap: f32) -> f32 {
+    let columns = columns.max(1) as f32;
+    ((available - gap * (columns - 1.)).max(0.) / columns).floor()
+}
+
+/// Column width of the type row. Both toolbars are rendered with this fixed
+/// width (never `flex_1`) so their chip edges land on exactly the same pixels.
+fn type_filter_chip_width(bar_width: f32, visible_types: usize, gap: f32) -> f32 {
+    toolbar_column_width(toolbar_available(bar_width), visible_types, gap)
+}
+
+/// Always reserve at least two slots: all sources and an application choice.
+pub(crate) fn source_app_chip_width(bar_width: f32, visible_types: usize, gap: f32) -> f32 {
+    toolbar_column_width(toolbar_available(bar_width), visible_types.max(2), gap)
 }
 
 /// Source choices and interactions shared by the main and nonactivating quick window.
@@ -380,25 +398,18 @@ impl Render for FilterBar {
         let has_tag_filter = !state_snapshot.filters.tag_ids.is_empty();
         let viewport = window.viewport_size();
         let measured_width = self.measured_width.get();
-        let toolbar_width = if measured_width > 0. {
-            measured_width - SEARCH_BAR_HORIZONTAL_PADDING
+        // Whole bar width including both side paddings: the type row and the
+        // source row derive their column width from this same number.
+        let bar_width = if measured_width > 0. {
+            measured_width
         } else {
-            f32::from(viewport.width) - PANEL_OFFSET_X - SEARCH_BAR_HORIZONTAL_PADDING
+            f32::from(viewport.width) - PANEL_OFFSET_X
         };
         let visible_entries = visible_filter_types(&state_snapshot.settings.type_filter_config);
         let active_types: Vec<bool> = visible_entries
             .iter()
             .map(|filter| state_snapshot.filters.is_type_active(filter.key))
             .collect();
-        let visible_count = visible_entries.len() as f32;
-        let type_toolbar_width = (toolbar_width
-            - (TOOLBAR_GROUP_GAP * 2.0)
-            - TOOLBAR_DIVIDER_WIDTH
-            - TAG_FILTER_BUTTON_WIDTH)
-            .max(0.0);
-        let text_gap_total = TYPE_FILTER_TEXT_GAP * (visible_count - 1.0).max(0.0);
-        let type_slot_width =
-            (type_toolbar_width - text_gap_total).max(0.0) / visible_count.max(1.0);
         // Measure the actual translated label in the selected font. Alt never
         // participates in this decision: labels and gaps stay stable on press.
         let label_width = visible_entries
@@ -407,17 +418,17 @@ impl Render for FilterBar {
             .fold(0.0_f32, f32::max);
 
         let text_slot_width = f32::from(fs(12.)) + 2.0 + label_width + 10.0;
-        let icon_only = type_slot_width < text_slot_width;
+        let icon_only =
+            type_filter_chip_width(bar_width, visible_entries.len(), TYPE_FILTER_TEXT_GAP)
+                < text_slot_width;
         let chip_gap = if icon_only {
             TYPE_FILTER_ICON_GAP
         } else {
             TYPE_FILTER_TEXT_GAP
         };
-        let chip_width = source_app_chip_width(
-            toolbar_width + SEARCH_BAR_HORIZONTAL_PADDING,
-            visible_entries.len(),
-            chip_gap,
-        );
+        let chip_width = type_filter_chip_width(bar_width, visible_entries.len(), chip_gap);
+        // Identical to `chip_width` whenever at least two types are visible.
+        let source_chip_width = source_app_chip_width(bar_width, visible_entries.len(), chip_gap);
 
         let inactive_button_bg = p.hover;
         let toolbar_divider = p.stroke;
@@ -442,11 +453,7 @@ impl Render for FilterBar {
                             .flex_1()
                             .min_w(px(0.))
                             .items_center()
-                            .gap(if icon_only {
-                                px(TYPE_FILTER_ICON_GAP)
-                            } else {
-                                px(TYPE_FILTER_TEXT_GAP)
-                            })
+                            .gap(px(chip_gap))
                             .children(visible_entries.iter().enumerate().map(
                                 |(index, filter_def)| {
                                     let icon = filter_def.icon;
@@ -485,15 +492,18 @@ impl Render for FilterBar {
                                             )
                                         });
 
-                                    let button = filter_chip(("filter-type", index), is_active, &p)
+                                    // Fixed column width (same one the source row
+                                    // uses) instead of `flex_1`: equal fractions
+                                    // would round differently and drift the edges.
+                                    let button =
+                                        super::components::scroll_filter_bar::scroll_filter_chip(
+                                            ("filter-type", index),
+                                            is_active,
+                                            &p,
+                                            chip_width,
+                                        )
                                         .relative()
                                         .aria_label(label)
-                                        .border_1()
-                                        .border_color(if is_active {
-                                            p.accent.opacity(0.45)
-                                        } else {
-                                            p.accent.opacity(0.)
-                                        })
                                         .overflow_hidden()
                                         .when(icon_only, move |button| {
                                             button.tooltip(move |window, cx| {
@@ -552,7 +562,17 @@ impl Render for FilterBar {
                             .w(px(24.))
                             .h(Ctrl::Chip.scaled())
                             .flex_shrink_0()
-                            .rounded(Radius::Sm.scaled())
+                            .rounded(Radius::Md.scaled())
+                            .hover({
+                                // 激活态带着强调底色，悬停只能在它上面叠墨，
+                                // 不能把底色整块换掉。
+                                let face: Hsla = if has_tag_filter {
+                                    p.accent_soft()
+                                } else {
+                                    inactive_button_bg
+                                };
+                                move |style| style.bg(widgets::hover_of(face, p.ink))
+                            })
                             .flex()
                             .items_center()
                             .justify_center()
@@ -597,7 +617,7 @@ impl Render for FilterBar {
             .gap(px(4.))
             .child(type_bar)
             .when(source_enabled, |bar| {
-                bar.child(self.source_bar(chip_width, chip_gap, cx))
+                bar.child(self.source_bar(source_chip_width, chip_gap, cx))
             })
             .child(
                 canvas(
@@ -622,6 +642,31 @@ impl Render for FilterBar {
 mod tests {
     use super::visible_filter_types;
     use crate::core::settings::TypeFilterEntry;
+
+    #[test]
+    fn type_and_source_rows_share_the_same_column_grid() {
+        for width in [324., 360., 430.] {
+            for types in 2..=8 {
+                for gap in [3., 4.] {
+                    let type_slot = super::type_filter_chip_width(width, types, gap);
+                    let source_slot = super::source_app_chip_width(width, types, gap);
+                    assert!(
+                        (type_slot - source_slot).abs() < f32::EPSILON,
+                        "width {width} types {types} gap {gap}: {type_slot} != {source_slot}"
+                    );
+                    assert_eq!(
+                        type_slot.fract(),
+                        0.,
+                        "width {width} types {types} gap {gap}: fractional column"
+                    );
+                }
+            }
+        }
+        // A single type may use the whole row; the source row keeps an app slot.
+        assert!(
+            super::type_filter_chip_width(430., 1, 4.) > super::source_app_chip_width(430., 1, 4.)
+        );
+    }
 
     #[test]
     fn source_bar_leaves_room_for_an_app_when_types_are_hidden() {
