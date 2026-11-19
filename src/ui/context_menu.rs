@@ -87,6 +87,8 @@ pub struct ContextMenu {
     items: Vec<RawMenuItem>,
     x: f32,
     y: f32,
+    /// 菜单宽度；只有两条短文案的菜单可以收窄。
+    width: f32,
     container_width: f32,
     container_height: f32,
     theme: ClippiTheme,
@@ -126,11 +128,13 @@ fn ctrl_shortcut(key: &str) -> Option<String> {
     Some(format!("{}+{}", ctrl_label(), key))
 }
 const MENU_WIDTH: f32 = 184.0;
+/// 条目少且文案短的菜单（如卡片三点菜单）用这一档宽度。
+const MENU_WIDTH_COMPACT: f32 = 136.0;
 /// Generic open glyph, shared by every open action so one icon means "open"
 /// whatever the entry type is.
 const OPEN_ICON: &str = "OpenIcon";
-/// Internal item width (menu width minus 4px padding on each side).
-const ITEM_WIDTH: f32 = MENU_WIDTH - 8.0; // 176.0
+/// 菜单左右内边距，条目宽度 = 菜单宽度 - 2 × 该值。
+const MENU_PADDING: f32 = 4.0;
 /// Height of a single menu item row.
 const ITEM_HEIGHT: f32 = 30.0;
 /// Height of a separator (3px gap + 1px line + 3px gap).
@@ -144,6 +148,7 @@ impl ContextMenu {
             items: Vec::new(),
             x: 0.0,
             y: 0.0,
+            width: MENU_WIDTH,
             container_width: f32::MAX,
             container_height: f32::MAX,
             theme: ClippiTheme::dark(),
@@ -559,8 +564,37 @@ impl ContextMenu {
         Self::new().items(items)
     }
 
+    /// 「更多操作」菜单：卡片头部的三点按钮弹出，只放低频动作
+    /// （备注、标签），常用动作仍留在悬浮工具条上。
+    pub fn for_card_more() -> Self {
+        // 只有两条短文案，按最窄一档显示，避免在卡片右侧留一大片空白。
+        Self::new().width(MENU_WIDTH_COMPACT).items(vec![
+            RawMenuItem {
+                label: I18nKey::EditNote.text().into(),
+                action: "edit_note".into(),
+                icon: "NoteIcon".into(),
+                danger: false,
+                fav: false,
+                shortcut: sc("F2"),
+            },
+            RawMenuItem {
+                label: I18nKey::CtxTag.text().into(),
+                action: "show_tag_picker".into(),
+                icon: "TagIcon".into(),
+                danger: false,
+                fav: false,
+                shortcut: ctrl_shortcut("T"),
+            },
+        ])
+    }
+
     fn items(mut self, items: Vec<RawMenuItem>) -> Self {
         self.items = items;
+        self
+    }
+
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = width;
         self
     }
 
@@ -616,6 +650,7 @@ impl RenderOnce for ContextMenu {
             items,
             x,
             y,
+            width,
             container_width,
             container_height,
             theme,
@@ -636,7 +671,8 @@ impl RenderOnce for ContextMenu {
 
         // --- Clamp position to container bounds with height awareness. ---
         // Flips the menu above the cursor if it would overflow the bottom edge.
-        let menu_w = MENU_WIDTH;
+        let menu_w = width;
+        let item_w = menu_w - MENU_PADDING * 2.0;
         let clamped_x = x.clamp(4.0, (container_width - menu_w - 4.0).max(4.0));
         // Prefer below cursor; flip above if it overflows the bottom.
         let clamped_y = if y + menu_h + 4.0 <= container_height {
@@ -658,7 +694,7 @@ impl RenderOnce for ContextMenu {
             .border_color(sep_line)
             // 菜单不投影：层级靠 `flyout` 面 + 描边（Argus 只给对话框阴影）。
             .shadow_none()
-            .p(px(4.))
+            .p(px(MENU_PADDING))
             .flex()
             .flex_col()
             .on_key_down({
@@ -679,7 +715,7 @@ impl RenderOnce for ContextMenu {
                 // --- Render separator ---
                 if item.label == SEPARATOR_LABEL {
                     return div()
-                        .w(px(ITEM_WIDTH))
+                        .w(px(item_w))
                         .flex()
                         .flex_col()
                         .child(div().h(px(3.)))
@@ -732,7 +768,7 @@ impl RenderOnce for ContextMenu {
                     .role(Role::MenuItem)
                     .aria_label(label.clone())
                     .relative()
-                    .w(px(ITEM_WIDTH))
+                    .w(px(item_w))
                     .h(px(30.))
                     .rounded(Radius::Md.scaled())
                     .flex()

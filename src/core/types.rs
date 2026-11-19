@@ -562,6 +562,31 @@ impl ClipboardItem {
     }
 }
 
+/// 卡片时间：本地时间下「今天只给时刻、跨天补日期、跨年补年份」。
+///
+/// - 与现在同一本地日期 → `HH:MM`
+/// - 同一年但不是一个自然日 → `MM-DD HH:MM`
+/// - 更早 → `YYYY-MM-DD HH:MM`
+pub fn format_card_time(captured_at: &DateTime<Utc>) -> String {
+    format_card_time_at(captured_at, chrono::Local::now())
+}
+
+fn format_card_time_at(
+    captured_at: &DateTime<Utc>,
+    now: chrono::DateTime<chrono::Local>,
+) -> String {
+    use chrono::Datelike;
+    let local = captured_at.with_timezone(&now.timezone());
+    let day = local.date_naive();
+    if day == now.date_naive() {
+        local.format("%H:%M").to_string()
+    } else if day.year() == now.date_naive().year() {
+        local.format("%m-%d %H:%M").to_string()
+    } else {
+        local.format("%Y-%m-%d %H:%M").to_string()
+    }
+}
+
 /// Format elapsed time as human-readable string
 pub fn format_relative_time(captured_at: &DateTime<Utc>) -> String {
     let elapsed = Utc::now().signed_duration_since(*captured_at);
@@ -1086,6 +1111,36 @@ mod tests {
         assert_eq!(item.display_kind(), DisplayKind::Rtf);
         assert_eq!(item.editor_type(), "rtf");
         assert_eq!(ContentType::from_str("rtf"), ContentType::RichText);
+    }
+
+    #[test]
+    fn card_time_shows_time_then_date_then_year() {
+        use chrono::TimeZone;
+        let now = chrono::Local
+            .with_ymd_and_hms(2026, 3, 10, 9, 30, 0)
+            .single()
+            .expect("local now");
+        let at = |y, m, d, h, min| {
+            chrono::Local
+                .with_ymd_and_hms(y, m, d, h, min, 0)
+                .single()
+                .expect("local time")
+                .with_timezone(&Utc)
+        };
+
+        // 同一自然日：只给时刻。
+        assert_eq!(format_card_time_at(&at(2026, 3, 10, 8, 5), now), "08:05");
+        assert_eq!(format_card_time_at(&at(2026, 3, 10, 0, 1), now), "00:01");
+        // 跨天但在同一年：日期 + 时刻。
+        assert_eq!(
+            format_card_time_at(&at(2026, 3, 9, 22, 45), now),
+            "03-09 22:45"
+        );
+        // 去年及更早：年份 + 日期 + 时刻。
+        assert_eq!(
+            format_card_time_at(&at(2025, 11, 18, 22, 45), now),
+            "2025-11-18 22:45"
+        );
     }
 
     #[test]

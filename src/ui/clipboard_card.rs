@@ -32,7 +32,7 @@ use crate::core::transfer_types::{
     TRANSFER_STATUS_PINNED_UID, TRANSFER_STATUS_RETENTION_UID,
 };
 use crate::core::types::{
-    format_relative_time, parse_hex_color, url_domain, url_path, url_site_name, ClipboardItem,
+    format_card_time, parse_hex_color, url_domain, url_path, url_site_name, ClipboardItem,
     ContentType, DisplayKind, FileData, FileInfo, HotkeyPasteFormat, RichData,
 };
 
@@ -41,16 +41,17 @@ use super::components::spinner::activity_spinner;
 use super::design::palette::Palette;
 use super::design::size::Radius;
 use super::font::{sc, scale};
-use super::hover_toolbar::{HoverToolbar, HoverToolbarProps, ToolbarBounds};
+use super::hover_toolbar::{
+    button_anchor, buttons_for, toolbar_width, HoverToolbar, HoverToolbarProps, ToolbarBounds,
+};
 use super::rich_preview::{self, StyledHtmlSpan};
 use super::search_highlight;
 use super::theme::ClippiTheme;
 
-pub const CARD_TOOLBAR_HEIGHT: f32 = 20.0;
-
 type CardClickHandler = Rc<dyn Fn(usize, Modifiers, &mut Window, &mut App)>;
 type CardDoubleClickHandler = Rc<dyn Fn(usize, Modifiers, &mut Window, &mut App)>;
 type CardActionHandler = Rc<dyn Fn(&str, &mut Window, &mut App)>;
+type CardMoreHandler = Rc<dyn Fn(Point<Pixels>, &mut Window, &mut App)>;
 type CardWindowHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 type CardFormatHandler = Rc<dyn Fn(HotkeyPasteFormat, &mut Window, &mut App)>;
 
@@ -64,8 +65,11 @@ const TIME_PILL_PADDING_X: f32 = 7.0;
 const PANEL_BORDER_WIDTH: f32 = 1.0;
 const LIST_PADDING_X: f32 = 8.0;
 const CARD_PADDING_X: f32 = 10.0;
-const CARD_ICON_WIDTH: f32 = 36.0;
-const CARD_CONTENT_GAP: f32 = 10.0;
+/// 卡片顶部信息行：来源图标 + 类型 + 时间，悬浮时右侧滑出操作图标。
+const CARD_HEADER_HEIGHT: f32 = 20.0;
+/// 头部信息行与内容预览之间的间距。
+const CARD_HEADER_GAP: f32 = 4.0;
+const CARD_HEADER_ICON_SIZE: f32 = 16.0;
 const MAX_ICON_CACHE_JOBS: usize = 4;
 
 #[derive(Clone, Copy)]
@@ -152,8 +156,7 @@ fn info_row_available_width(window: &Window) -> f32 {
         - PANEL_OFFSET_X
         - PANEL_BORDER_WIDTH * 2.0
         - LIST_PADDING_X * 2.0;
-    let content_left = CARD_PADDING_X + CARD_ICON_WIDTH + CARD_CONTENT_GAP;
-    (card_width_real / scale() - content_left - CARD_PADDING_X).max(0.0)
+    (card_width_real / scale() - CARD_PADDING_X * 2.0).max(0.0)
 }
 
 #[cfg(test)]
@@ -503,7 +506,7 @@ mod info_row_tests {
         }
         .to_json();
 
-        assert_eq!(estimate_card_height(&item, "auto"), 68.0);
+        assert_eq!(estimate_card_height(&item, "auto"), 92.0);
     }
 
     #[test]
@@ -515,8 +518,8 @@ mod info_row_tests {
         }
         .to_json();
 
-        assert_eq!(estimate_card_height(&item, "medium"), 96.0);
-        assert_eq!(estimate_card_height(&item, "high"), 128.0);
+        assert_eq!(estimate_card_height(&item, "medium"), 120.0);
+        assert_eq!(estimate_card_height(&item, "high"), 152.0);
     }
 
     #[test]
@@ -524,10 +527,10 @@ mod info_row_tests {
         let mut item = ClipboardItem::new_text(1, "content", ContentType::PlainText, None, None);
         item.note = "note".to_string();
 
-        assert_eq!(estimate_card_height(&item, "auto"), 68.0);
-        assert_eq!(estimate_card_height(&item, "low"), 68.0);
-        assert_eq!(estimate_card_height(&item, "medium"), 96.0);
-        assert_eq!(estimate_card_height(&item, "high"), 128.0);
+        assert_eq!(estimate_card_height(&item, "auto"), 92.0);
+        assert_eq!(estimate_card_height(&item, "low"), 92.0);
+        assert_eq!(estimate_card_height(&item, "medium"), 120.0);
+        assert_eq!(estimate_card_height(&item, "high"), 152.0);
     }
 }
 
@@ -1165,11 +1168,12 @@ fn card_content_matches_search(item: &ClipboardItem, terms: &[String]) -> bool {
 }
 
 /// Compute estimated card height for the virtual list, in real (zoomed) pixels.
-/// The body returns design-unit buckets (68/96/128); multiplying by the live
-/// scale keeps the row budget proportional to the uniformly-zoomed card
-/// contents, so larger fonts never clip.
+/// The body returns design-unit buckets (68/96/128) for the *content* area;
+/// the header row is added on top so the preview keeps its original height.
+/// Multiplying by the live scale keeps the row budget proportional to the
+/// uniformly-zoomed card contents, so larger fonts never clip.
 pub fn estimate_card_height(item: &ClipboardItem, card_height_mode: &str) -> f32 {
-    base_card_height(item, card_height_mode) * scale()
+    (base_card_height(item, card_height_mode) + CARD_HEADER_HEIGHT + CARD_HEADER_GAP) * scale()
 }
 
 fn base_card_height(item: &ClipboardItem, card_height_mode: &str) -> f32 {
@@ -1252,11 +1256,14 @@ pub struct ClipboardCard {
     selection_order: usize,
     on_click: Option<CardClickHandler>,
     is_hovered: bool,
-    toolbar_below: bool,
+    /// 本卡片的「更多」菜单正开着：此时鼠标不在卡片上，工具条仍要保持展开。
+    toolbar_pinned: bool,
     toolbar_bounds: Option<ToolbarBounds>,
     selected_count: usize,
     can_merge_selection: bool,
     on_toolbar_action: Option<CardActionHandler>,
+    /// 三点按钮：交给列表在点击位置弹出备注/标签菜单。
+    on_toolbar_more: Option<CardMoreHandler>,
     on_double_click: Option<CardDoubleClickHandler>,
     /// Whether this card is in note-editing mode (shows inline editor).
     editing: bool,
@@ -1297,11 +1304,12 @@ impl ClipboardCard {
             selection_order: 0,
             on_click: None,
             is_hovered: false,
-            toolbar_below: false,
+            toolbar_pinned: false,
             toolbar_bounds: None,
             selected_count: 0,
             can_merge_selection: false,
             on_toolbar_action: None,
+            on_toolbar_more: None,
             on_double_click: None,
             editing: false,
             note_input: None,
@@ -1330,11 +1338,6 @@ impl ClipboardCard {
     /// Share the measured toolbar hit area with the list's pointer resolver.
     pub fn toolbar_bounds(mut self, bounds: ToolbarBounds) -> Self {
         self.toolbar_bounds = Some(bounds);
-        self
-    }
-
-    pub fn toolbar_below(mut self, below: bool) -> Self {
-        self.toolbar_below = below;
         self
     }
 
@@ -1370,6 +1373,21 @@ impl ClipboardCard {
         handler: impl Fn(&str, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_toolbar_action = Some(Rc::new(handler));
+        self
+    }
+
+    /// 本卡的「更多」菜单开着时保持工具条展开（菜单期间鼠标已不在卡上）。
+    pub fn toolbar_pinned(mut self, pinned: bool) -> Self {
+        self.toolbar_pinned = pinned;
+        self
+    }
+
+    /// 三点按钮被点击：参数是点击位置（窗口坐标）。
+    pub fn on_toolbar_more(
+        mut self,
+        handler: impl Fn(Point<Pixels>, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_toolbar_more = Some(Rc::new(handler));
         self
     }
 
@@ -1475,11 +1493,12 @@ impl RenderOnce for ClipboardCard {
             selection_order,
             on_click,
             is_hovered,
-            toolbar_below,
+            toolbar_pinned,
             toolbar_bounds,
             selected_count,
             can_merge_selection,
             on_toolbar_action,
+            on_toolbar_more,
             on_double_click,
             editing,
             note_input,
@@ -1508,7 +1527,6 @@ impl RenderOnce for ClipboardCard {
         let ok: Rgba = p.ok.into();
         let fav_color: Rgba = p.fav.into();
         let tag_bg: Rgba = p.tag_bg.into();
-        let tag_text: Rgba = p.tag_ink.into();
         let text_1: Rgba = p.ink.into();
         let text_2: Rgba = p.ink_2.into();
         let text_3: Rgba = p.ink_3.into();
@@ -1525,7 +1543,7 @@ impl RenderOnce for ClipboardCard {
         let hover_bg: Rgba = p.hover.into();
         let highlight_bg = theme.accent_highlight();
         let highlight_text = theme.accent_highlight_text();
-        let time_str = format_relative_time(&item.updated_at);
+        let time_str = format_card_time(&item.updated_at);
         let is_fav = item.is_favorite;
         let content_type = item.content_type;
         let note = item.note.clone();
@@ -1626,9 +1644,8 @@ impl RenderOnce for ClipboardCard {
         // 叠层淡入，选中与悬停共用同一套过渡。
         let card_face: Rgba = surface;
         // 悬停/选中过渡（167 ms，Argus 链接卡片同款）：面淡入强调色 12%、
-        // 描边提亮到强调色 55%、顶部 2 px 强调线由 32 px 拉长到 96 px，
-        // 指针下的卡片整体上抬 2 px。gpui 0.3.12 的 Div 没有 transform，
-        // 上抬用 relative inset 表达，不改列表行高与滚动位置。
+        // 描边提亮到强调色 55%、顶部 2 px 强调线由 32 px 拉长到 96 px。
+        // 卡片不做位移，悬停只改颜色，避免列表内容随指针上下浮动。
         let lit = selected || is_hovered;
         let lit_t = gpui_kit::base::motion::transition(
             (
@@ -1640,16 +1657,6 @@ impl RenderOnce for ClipboardCard {
             window,
             cx,
         );
-        let rise_t = gpui_kit::base::motion::transition(
-            (
-                ElementId::Name(SharedString::from(format!("card-rise-{}", item.id))),
-                "t",
-            ),
-            if is_hovered { 1.0_f32 } else { 0.0 },
-            motion::transition(cx),
-            window,
-            cx,
-        );
         let hover_face: Rgba = motion::mix_rgba(surface, accent, 0.12);
 
         let base = div()
@@ -1657,7 +1664,6 @@ impl RenderOnce for ClipboardCard {
             .w_full()
             .h_full()
             .overflow_hidden()
-            .top(sc(-2.) * rise_t)
             .capture_any_mouse_up(|_ev, _window, cx| {
                 cx.stop_propagation();
             })
@@ -1666,9 +1672,9 @@ impl RenderOnce for ClipboardCard {
             .border_color(motion::mix(p.stroke, p.accent.opacity(0.55), lit_t))
             .rounded(Radius::Card.scaled())
             .flex()
-            .flex_row()
+            .flex_col()
             .p(sc(8.))
-            .gap(sc(8.))
+            .gap(sc(CARD_HEADER_GAP))
             .when(lit_t > 0.001, |card| {
                 card.child(
                     // 强调色面只铺一层，不改变卡片自身的透明面。
@@ -1697,317 +1703,61 @@ impl RenderOnce for ClipboardCard {
             base
         };
 
-        // --- Left: icon area (top-aligned with content) ---
+        // --- 顶部信息行图标 ---
+        // 优先级与旧版左侧图标列一致：文件用系统文件图标、链接用 favicon，
+        // 其余优先来源应用图标；设置关闭时退回类型图标。
         let icon_kind = item.display_kind();
-        let icon_area = match icon_kind {
-            DisplayKind::Color => div()
-                .w(sc(36.))
-                .flex()
-                .flex_col()
-                .items_center()
-                .gap(sc(4.))
-                .child(
-                    div()
-                        .w(sc(36.))
-                        .h(sc(28.))
-                        .rounded(sc(6.))
-                        .overflow_hidden()
-                        .bg(tag_bg)
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(if let Some(path) = source_icon_path.clone() {
-                            gpui::img(path)
-                                .when_some(image_cache.clone(), |img, cache| {
-                                    img.image_cache(&cache)
-                                })
-                                .w(sc(20.))
-                                .h(sc(20.))
-                                .rounded(sc(4.))
-                                .into_any_element()
-                        } else {
-                            div()
-                                .w(sc(20.))
-                                .h(sc(20.))
-                                .rounded(sc(4.))
-                                .bg(color_swatch)
-                                .border(sc(1.))
-                                .border_color(color_border)
-                                .into_any_element()
-                        }),
-                )
-                .child(if source_icon_path.is_some() {
-                    div()
-                        .w(sc(36.))
-                        .h(sc(14.))
-                        .rounded(Radius::Sm.scaled())
-                        .bg(color_swatch)
-                        .border(sc(1.))
-                        .border_color(color_border)
-                        .p(sc(2.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            div()
-                                .w_full()
-                                .h_full()
-                                .rounded(Radius::Pill.scaled())
-                                .bg(color_swatch),
-                        )
-                        .into_any_element()
-                } else {
-                    div()
-                        .w(sc(36.))
-                        .h(sc(14.))
-                        .rounded(Radius::Sm.scaled())
-                        .bg(tag_bg)
-                        .px(sc(4.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            div()
-                                .text_size(sc(10.))
-                                .text_color(tag_text)
-                                .truncate()
-                                .child(label.to_string()),
-                        )
-                        .into_any_element()
-                }),
-            DisplayKind::Image => div()
-                .w(sc(36.))
-                .flex()
-                .flex_col()
-                .items_center()
-                .gap(sc(4.))
-                .child(
-                    div()
-                        .w(sc(36.))
-                        .h(sc(28.))
-                        .rounded(sc(6.))
-                        .overflow_hidden()
-                        .bg(tag_bg)
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(if let Some(path) = source_icon_path.clone() {
-                            gpui::img(path)
-                                .when_some(image_cache.clone(), |img, cache| {
-                                    img.image_cache(&cache)
-                                })
-                                .w(sc(20.))
-                                .h(sc(20.))
-                                .rounded(sc(4.))
-                                .into_any_element()
-                        } else {
-                            widgets::icon(icon.to_string(), sc(18.), Hsla::from(tag_text))
-                                .into_any_element()
-                        }),
-                )
-                .child(
-                    div()
-                        .w(sc(36.))
-                        .h(sc(14.))
-                        .rounded(Radius::Sm.scaled())
-                        .bg(tag_bg)
-                        .px(sc(4.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            div()
-                                .text_size(sc(10.))
-                                .text_color(tag_text)
-                                .truncate()
-                                .child(label.to_string()),
-                        ),
-                ),
-            DisplayKind::File => {
-                // --- Single file: prefer file system icon over source app icon ---
-                let file_icon = if transfer_is_cloud || remote_host.is_some() {
-                    None
-                } else {
-                    serde_json::from_str::<FileData>(&item.file_data)
-                        .ok()
-                        .and_then(|fd| {
-                            if fd.files.len() == 1 {
-                                fd.files
-                                    .first()
-                                    .and_then(|fi| cached_file_icon_path(&fi.path, fi.is_dir))
-                            } else {
-                                None
-                            }
-                        })
-                };
-                let effective_icon = file_icon.or(source_icon_path);
-                let fallback_icon = if transfer_is_cloud { "CloudIcon" } else { icon };
-                div()
-                    .w(sc(36.))
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap(sc(4.))
-                    .child(
-                        div()
-                            .w(sc(36.))
-                            .h(sc(28.))
-                            .rounded(sc(6.))
-                            .overflow_hidden()
-                            .bg(tag_bg)
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(if let Some(path) = effective_icon {
-                                gpui::img(path)
-                                    .when_some(image_cache.clone(), |img, cache| {
-                                        img.image_cache(&cache)
-                                    })
-                                    .w(sc(20.))
-                                    .h(sc(20.))
-                                    .rounded(sc(4.))
-                                    .into_any_element()
-                            } else {
-                                widgets::icon(
-                                    fallback_icon.to_string(),
-                                    sc(18.),
-                                    Hsla::from(tag_text),
-                                )
-                                .into_any_element()
-                            }),
-                    )
-                    .child(
-                        div()
-                            .w(sc(36.))
-                            .h(sc(14.))
-                            .rounded(Radius::Sm.scaled())
-                            .bg(tag_bg)
-                            .px(sc(4.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(
-                                div()
-                                    .text_size(sc(10.))
-                                    .text_color(tag_text)
-                                    .truncate()
-                                    .child(label.to_string()),
-                            ),
-                    )
+        let single_file_icon =
+            if content_type == ContentType::File && transfer_file_data.files.len() == 1 {
+                transfer_file_data
+                    .files
+                    .first()
+                    .and_then(|file| cached_file_icon_path(&file.path, file.is_dir))
+            } else {
+                None
+            };
+        let link_favicon = if icon_kind == DisplayKind::Link {
+            let domain = url_domain(full_text);
+            if domain.is_empty() {
+                None
+            } else {
+                crate::services::favicon::favicon_cache_path(&domain).map(std::path::PathBuf::from)
             }
-            DisplayKind::Link => {
-                // --- Favicon priority: cache → source app icon → type icon ---
-                // --- Only checks the local cache file here. The fetch runs on ---
-                // --- a `url_assets` background worker and repaints this card ---
-                // --- through `WindowManagerEvent::FaviconReady` once the file ---
-                // --- is published. ---
-                let domain = url_domain(full_text);
-                let favicon_path = if domain.is_empty() {
-                    None
-                } else {
-                    crate::services::favicon::favicon_cache_path(&domain)
-                        .map(std::path::PathBuf::from)
-                };
-                // --- Source app icon only when the setting is enabled ---
-                let app_icon = if show_source { source_icon_path } else { None };
-                let effective_icon = favicon_path.or(app_icon);
-                div()
-                    .w(sc(36.))
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap(sc(4.))
-                    .child(
-                        div()
-                            .w(sc(36.))
-                            .h(sc(28.))
-                            .rounded(sc(6.))
-                            .overflow_hidden()
-                            .bg(tag_bg)
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(if let Some(path) = effective_icon {
-                                gpui::img(path)
-                                    .when_some(image_cache.clone(), |img, cache| {
-                                        img.image_cache(&cache)
-                                    })
-                                    .w(sc(20.))
-                                    .h(sc(20.))
-                                    .rounded(sc(4.))
-                                    .into_any_element()
-                            } else {
-                                widgets::icon(icon.to_string(), sc(18.), Hsla::from(tag_text))
-                                    .into_any_element()
-                            }),
-                    )
-                    .child(
-                        div()
-                            .w(sc(36.))
-                            .h(sc(14.))
-                            .rounded(Radius::Sm.scaled())
-                            .bg(tag_bg)
-                            .px(sc(4.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(
-                                div()
-                                    .text_size(sc(10.))
-                                    .text_color(tag_text)
-                                    .truncate()
-                                    .child(label.to_string()),
-                            ),
-                    )
+        } else {
+            None
+        };
+        let header_icon_path = match icon_kind {
+            // 颜色条目优先展示颜色本身，色块比来源图标更有信息量。
+            DisplayKind::Color => None,
+            DisplayKind::File if !transfer_is_cloud && remote_host.is_none() => {
+                single_file_icon.or(source_icon_path.clone())
             }
-            _ => div()
-                .w(sc(36.))
-                .flex()
-                .flex_col()
-                .items_center()
-                .gap(sc(4.))
-                .child(
-                    div()
-                        .w(sc(36.))
-                        .h(sc(28.))
-                        .rounded(sc(6.))
-                        .overflow_hidden()
-                        .bg(tag_bg)
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(if let Some(path) = source_icon_path.clone() {
-                            gpui::img(path)
-                                .when_some(image_cache.clone(), |img, cache| {
-                                    img.image_cache(&cache)
-                                })
-                                .w(sc(20.))
-                                .h(sc(20.))
-                                .rounded(sc(4.))
-                                .into_any_element()
-                        } else {
-                            widgets::icon(icon.to_string(), sc(18.), Hsla::from(tag_text))
-                                .into_any_element()
-                        }),
-                )
-                .child(
-                    div()
-                        .w(sc(36.))
-                        .h(sc(14.))
-                        .rounded(Radius::Sm.scaled())
-                        .bg(tag_bg)
-                        .px(sc(4.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            div()
-                                .text_size(sc(10.))
-                                .text_color(tag_text)
-                                .truncate()
-                                .child(label.to_string()),
-                        ),
-                ),
+            DisplayKind::Link => link_favicon.or(source_icon_path.clone()),
+            _ => source_icon_path.clone(),
+        };
+        let header_icon: AnyElement = if let Some(path) = header_icon_path {
+            gpui::img(path)
+                .when_some(image_cache.clone(), |img, cache| img.image_cache(&cache))
+                .w(sc(CARD_HEADER_ICON_SIZE))
+                .h(sc(CARD_HEADER_ICON_SIZE))
+                .rounded(sc(4.))
+                .into_any_element()
+        } else if icon_kind == DisplayKind::Color {
+            div()
+                .w(sc(CARD_HEADER_ICON_SIZE))
+                .h(sc(CARD_HEADER_ICON_SIZE))
+                .rounded(sc(4.))
+                .bg(color_swatch)
+                .border(sc(1.))
+                .border_color(color_border)
+                .into_any_element()
+        } else {
+            widgets::icon(
+                if transfer_is_cloud { "CloudIcon" } else { icon },
+                sc(14.),
+                Hsla::from(text_2),
+            )
+            .into_any_element()
         };
 
         let note_matches =
@@ -2345,7 +2095,6 @@ impl RenderOnce for ClipboardCard {
                                 .relative()
                                 .flex_1()
                                 .w_full()
-                                .h_full()
                                 .rounded(sc(8.))
                                 .overflow_hidden()
                                 .bg(tag_bg)
@@ -2384,11 +2133,9 @@ impl RenderOnce for ClipboardCard {
                             div()
                                 .flex_1()
                                 .w_full()
-                                .h_full()
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .mr(sc(CARD_ICON_WIDTH + CARD_CONTENT_GAP))
                                 .child(
                                     div()
                                         .size(sc(40.))
@@ -2404,53 +2151,47 @@ impl RenderOnce for ClipboardCard {
                                         )),
                                 )
                         } else {
-                            div()
-                                .flex_1()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .mr(sc(CARD_ICON_WIDTH + CARD_CONTENT_GAP))
-                                .child(
-                                    div()
-                                        .w_full()
-                                        .mb(sc(6.))
-                                        .flex()
-                                        .flex_col()
-                                        .items_center()
-                                        .justify_center()
-                                        .gap(sc(2.))
-                                        .child(
-                                            div()
-                                                .h(sc(24.))
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .child(widgets::icon(
-                                                    "ImageIcon",
-                                                    sc(22.),
-                                                    Hsla::from(text_2),
-                                                )),
-                                        )
-                                        .child(
-                                            div()
-                                                .w_full()
-                                                .h(sc(15.))
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .child(
-                                                    div()
-                                                        .max_w_full()
-                                                        .text_size(sc(12.))
-                                                        .line_height(sc(14.))
-                                                        .text_color(text_3)
-                                                        .overflow_hidden()
-                                                        .whitespace_nowrap()
-                                                        .truncate()
-                                                        .child(image_name),
-                                                ),
-                                        ),
-                                )
+                            div().flex_1().flex().items_center().justify_center().child(
+                                div()
+                                    .w_full()
+                                    .mb(sc(6.))
+                                    .flex()
+                                    .flex_col()
+                                    .items_center()
+                                    .justify_center()
+                                    .gap(sc(2.))
+                                    .child(
+                                        div()
+                                            .h(sc(24.))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .child(widgets::icon(
+                                                "ImageIcon",
+                                                sc(22.),
+                                                Hsla::from(text_2),
+                                            )),
+                                    )
+                                    .child(
+                                        div()
+                                            .w_full()
+                                            .h(sc(15.))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .child(
+                                                div()
+                                                    .max_w_full()
+                                                    .text_size(sc(12.))
+                                                    .line_height(sc(14.))
+                                                    .text_color(text_3)
+                                                    .overflow_hidden()
+                                                    .whitespace_nowrap()
+                                                    .truncate()
+                                                    .child(image_name),
+                                            ),
+                                    ),
+                            )
                         }
                     }
                     ContentType::PlainText | ContentType::RichText => {
@@ -2842,7 +2583,8 @@ impl RenderOnce for ClipboardCard {
                 }
             }
         } else {
-            (time_str, text_2)
+            // 顶部信息行的时间按三级文字处理，压在卡片面上比正文更轻。
+            (time_str, text_3)
         };
         let display_tags: Vec<_> = if is_transfer {
             tags.iter()
@@ -3163,39 +2905,108 @@ impl RenderOnce for ClipboardCard {
                                 .child(label),
                         ),
                 )
-            })
+            });
+
+        // --- 顶部信息行：图标 | 类型 | 时间 ---
+        // 悬浮时操作图标从右侧滑出，时间同步左移同样的距离，两者始终相邻，
+        // 备注/标签收进三点菜单。
+        let toolbar_visible = (is_hovered || toolbar_pinned)
+            && !editing
+            && !recording_hotkey
+            && item.meta_type != "pending-image";
+        let reveal = keyed_transition(
+            window,
+            cx,
+            SharedString::from(format!("card-toolbar-{}", item.id)),
+            motion::fast(),
+            0.0_f32,
+            motion::ease_out,
+            if toolbar_visible { 1.0 } else { 0.0 },
+        );
+        let mut toolbar = None;
+        let mut slide = 0.0;
+        if reveal > 0.001 {
+            let mut toolbar_props = HoverToolbarProps::from_item(&item, selected_count, selected)
+                .can_merge_selection(can_merge_selection);
+            toolbar_props.has_links &= detect_links;
+            let buttons = buttons_for(&toolbar_props, &p);
+            let exposed_width = toolbar_width(&buttons) * reveal;
+            slide = exposed_width + reveal * CARD_HEADER_GAP;
+            toolbar = Some((toolbar_props, buttons, exposed_width));
+        }
+        let mut header = div()
+            .relative()
+            .w_full()
+            .h(sc(CARD_HEADER_HEIGHT))
+            .flex_shrink_0()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(sc(6.))
+            .child(header_icon)
             .child(
                 div()
-                    .h(sc(18.))
-                    .rounded(Radius::Pill.scaled())
-                    .bg(pill_bg)
-                    .shadow(vec![BoxShadow {
-                        color: if is_dark {
-                            media_scrim
-                        } else {
-                            media_scrim_hover
-                        }
-                        .into(),
-                        offset: point(sc(0.), sc(1.)),
-                        inset: false,
-                        blur_radius: sc(2.),
-                        spread_radius: sc(0.),
-                    }])
-                    .border(sc(1.))
-                    .border_color(pill_border)
-                    .px(sc(8.))
-                    .flex()
-                    .items_center()
+                    .flex_1()
+                    .min_w(sc(0.))
+                    .text_size(sc(11.))
+                    .text_color(text_2)
+                    .truncate()
+                    .child(label),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    // 时间让出滑出的操作条：位移与滑出进度同一个值。
+                    .when(slide > 0.0, |el| el.mr(sc(slide)))
+                    .text_size(sc(10.))
+                    .text_color(time_pill_color)
+                    .child(time_str),
+            );
+        if let Some((toolbar_props, buttons, exposed_width)) = toolbar {
+            // 菜单锚定在「更多」按钮左下方：按钮这一帧的几何由工具条自己回报。
+            let more_index = buttons.iter().position(|button| button.action() == "more");
+            let anchor_tracker = toolbar_bounds.clone();
+            header = header.child(
+                div()
+                    .absolute()
+                    .right(sc(0.))
+                    .top(sc(0.))
+                    .h(sc(CARD_HEADER_HEIGHT))
+                    .w(sc(exposed_width))
+                    .overflow_hidden()
                     .child(
-                        div()
-                            .text_size(sc(10.))
-                            .text_color(time_pill_color)
-                            .child(time_str),
+                        div().absolute().right(sc(0.)).top(sc(0.)).child(
+                            HoverToolbar::new(toolbar_props)
+                                .buttons(buttons)
+                                .when_some(toolbar_bounds, |toolbar, tracker| {
+                                    toolbar.track_bounds(item.id, tracker)
+                                })
+                                .on_more(move |position, window, cx| {
+                                    let anchor = match (
+                                        more_index,
+                                        anchor_tracker.as_ref().and_then(|tracker| tracker.get()),
+                                    ) {
+                                        (Some(index), Some((_, bounds))) => {
+                                            button_anchor(bounds, index)
+                                        }
+                                        _ => position,
+                                    };
+                                    if let Some(ref handler) = on_toolbar_more {
+                                        handler(anchor, window, cx);
+                                    }
+                                })
+                                .on_action(move |action, window, cx| {
+                                    if let Some(ref handler) = on_toolbar_action {
+                                        handler(action, window, cx);
+                                    }
+                                }),
+                        ),
                     ),
             );
+        }
 
         // --- Assemble card ---
-        let card = base.child(icon_area).child(content);
+        let card = base.child(header).child(content);
         // --- Hide bottom tags/time row during inline editing/recording. ---
         let card = if !editing && !recording_hotkey {
             card.child(bottom_info)
@@ -3258,75 +3069,6 @@ impl RenderOnce for ClipboardCard {
             card
         };
 
-        // --- Hover toolbar (hidden during inline editing/recording, and for
-        // non-persisted pending placeholders). Transfer entries keep their
-        // toolbar even though they also use negative ids. ---
-        let toolbar_visible =
-            is_hovered && !editing && !recording_hotkey && item.meta_type != "pending-image";
-        // motion::transition schedules animation frames while running; the
-        // hover key state above also redraws idle cards.
-        let reveal = keyed_transition(
-            window,
-            cx,
-            SharedString::from(format!("card-toolbar-{}", item.id)),
-            motion::fast(),
-            0.0_f32,
-            motion::ease_out,
-            if toolbar_visible { 1.0 } else { 0.0 },
-        );
-        // The wrapper allows tabs to extend above the clipped card without
-        // reserving list space. Deferred painting keeps them above adjacent rows
-        // and allows the toolbar shadow to extend beyond its own bounds.
-        let card = div().relative().w_full().h_full().child(card);
-        // A stale/fading toolbar must never float outside its hovered card after
-        // scrolling. Only animate entry; pointer exit removes it immediately.
-        if toolbar_visible && reveal > 0.0 {
-            let mut toolbar_props = HoverToolbarProps::from_item(&item, selected_count, selected)
-                .can_merge_selection(can_merge_selection);
-            toolbar_props.has_links &= detect_links;
-            // Keep the reveal anchored to the card edge. Near the viewport top,
-            // reveal downward from the bottom edge instead of covering filters.
-            // Only the individual buttons cast shadows; a shadow on this reveal
-            // wrapper would merge them into a continuous strip.
-            let exposed_height = CARD_TOOLBAR_HEIGHT * reveal;
-            card.child(deferred(
-                div()
-                    .absolute()
-                    .when(!toolbar_below, |el| el.top(sc(-exposed_height)))
-                    .when(toolbar_below, |el| el.bottom(sc(-exposed_height)))
-                    .right(sc(8.))
-                    .h(sc(exposed_height))
-                    .when(!toolbar_below, |el| el.rounded_t(sc(4.)))
-                    .when(toolbar_below, |el| el.rounded_b(sc(4.)))
-                    .bg(theme.bg)
-                    .child(
-                        div()
-                            .h_full()
-                            .when(reveal < 0.999, |el| el.overflow_hidden())
-                            .child(
-                                div()
-                                    .mt(sc(if toolbar_below {
-                                        exposed_height - CARD_TOOLBAR_HEIGHT
-                                    } else {
-                                        0.
-                                    }))
-                                    .child(
-                                        HoverToolbar::new(toolbar_props)
-                                            .below_card(toolbar_below)
-                                            .when_some(toolbar_bounds, |toolbar, tracker| {
-                                                toolbar.track_bounds(item.id, tracker)
-                                            })
-                                            .on_action(move |action, _window, cx| {
-                                                if let Some(ref handler) = on_toolbar_action {
-                                                    handler(action, _window, cx);
-                                                }
-                                            }),
-                                    ),
-                            ),
-                    ),
-            ))
-        } else {
-            card
-        }
+        card
     }
 }

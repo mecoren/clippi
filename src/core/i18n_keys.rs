@@ -769,6 +769,7 @@ define_i18n! {
     CardTypeUrl:            ("链接", "URL"),
     CardTypePath:           ("路径", "Path"),
     CardTypeSecret:         ("密钥", "Key"),
+    CardMoreActions:        ("更多操作", "More actions"),
     CardChars:              ("{0} 字符", "{0} chars"),
     CardFilesCount:         ("{0} 个文件", "{0} files"),
     CardStaleFile:          ("已失效", "Stale"),

@@ -8,6 +8,45 @@ use crate::ui::font::sc;
 pub type ToolbarBounds = Rc<Cell<Option<(i64, Bounds<Pixels>)>>>;
 
 type ToolbarActionHandler = Rc<dyn Fn(&str, &mut gpui::Window, &mut gpui::App)>;
+/// 「更多」按钮：把点击位置交给调用方，由它弹出备注/标签菜单。
+pub type ToolbarMoreHandler = Rc<dyn Fn(Point<Pixels>, &mut gpui::Window, &mut gpui::App)>;
+
+type ToolbarColorFn = Box<dyn Fn(bool) -> Rgba>;
+
+/// 单个操作按钮：图标名、动作名、常态/悬停换色。
+pub struct ToolbarButton {
+    icon: &'static str,
+    action: &'static str,
+    color: ToolbarColorFn,
+}
+
+impl ToolbarButton {
+    pub fn action(&self) -> &'static str {
+        self.action
+    }
+}
+
+/// 第 `index` 个按钮左下角在窗口坐标里的位置，用作弹出菜单的锚点。
+pub fn button_anchor(toolbar: Bounds<Pixels>, index: usize) -> Point<Pixels> {
+    point(
+        toolbar.left() + sc(index as f32 * (BUTTON_SIZE + BUTTON_GAP)),
+        toolbar.bottom(),
+    )
+}
+
+/// 按钮边长与间距（设计像素），宽度估算与渲染共用。
+const BUTTON_SIZE: f32 = 20.0;
+const BUTTON_GAP: f32 = 2.0;
+/// 图标字形大小。按钮本身不画底框，所以字形比可点区域小一圈。
+const BUTTON_ICON_SIZE: f32 = 14.0;
+
+/// 一排按钮的总宽度（设计像素）。
+pub fn toolbar_width(buttons: &[ToolbarButton]) -> f32 {
+    if buttons.is_empty() {
+        return 0.;
+    }
+    buttons.len() as f32 * BUTTON_SIZE + buttons.len().saturating_sub(1) as f32 * BUTTON_GAP
+}
 
 use gpui::prelude::*;
 use gpui::*;
@@ -19,7 +58,6 @@ use crate::core::types::{ContentType, RichData};
 
 use super::design::motion;
 use super::design::palette::Palette;
-use super::design::size::Radius;
 
 /// Properties that determine which toolbar buttons to show.
 pub struct HoverToolbarProps {
@@ -122,8 +160,10 @@ fn single_open_action(props: &HoverToolbarProps) -> Option<&'static str> {
 #[derive(IntoElement)]
 pub struct HoverToolbar {
     props: HoverToolbarProps,
-    below_card: bool,
+    /// 预先构建好的按钮，避免宽度估算与渲染各算一次。
+    buttons: Option<Vec<ToolbarButton>>,
     on_action: Option<ToolbarActionHandler>,
+    on_more: Option<ToolbarMoreHandler>,
     bounds_tracker: Option<(i64, ToolbarBounds)>,
 }
 
@@ -131,14 +171,15 @@ impl HoverToolbar {
     pub fn new(props: HoverToolbarProps) -> Self {
         Self {
             props,
-            below_card: false,
+            buttons: None,
             on_action: None,
+            on_more: None,
             bounds_tracker: None,
         }
     }
 
-    pub fn below_card(mut self, below: bool) -> Self {
-        self.below_card = below;
+    pub fn buttons(mut self, buttons: Vec<ToolbarButton>) -> Self {
+        self.buttons = Some(buttons);
         self
     }
 
@@ -151,211 +192,226 @@ impl HoverToolbar {
         self.on_action = Some(Rc::new(handler));
         self
     }
+
+    /// 「更多」按钮的点击回调，参数是点击位置（窗口坐标）。
+    pub fn on_more(
+        mut self,
+        handler: impl Fn(Point<Pixels>, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_more = Some(Rc::new(handler));
+        self
+    }
+}
+
+/// 按卡片状态生成一排操作按钮。卡片先调用它算宽度，再把同一份结果交给
+/// [`HoverToolbar`]，避免宽度估算与渲染各算一次。
+pub fn buttons_for(props: &HoverToolbarProps, p: &Palette) -> Vec<ToolbarButton> {
+    // Filled glyphs look heavier than body text at the same color. Soften
+    // light-theme icons without losing the dark-theme contrast boost.
+    let accent: Rgba = p.accent.into();
+    let icon_color: Rgba = if p.dark {
+        p.ink.into()
+    } else {
+        motion::mix(p.ink, p.ink_2, 0.5).into()
+    };
+    let danger: Rgba = p.danger.into();
+    let fav_color: Rgba = p.fav.into();
+
+    let is_single = props.selected_count <= 1;
+    let is_batch = props.selected_count > 1 && props.is_selected;
+
+    let mut buttons: Vec<ToolbarButton> = Vec::new();
+    let mut push = |icon: &'static str, action: &'static str, color: ToolbarColorFn| {
+        buttons.push(ToolbarButton {
+            icon,
+            action,
+            color,
+        });
+    };
+
+    if is_single
+        && props.has_links
+        && matches!(
+            props.content_type,
+            ContentType::PlainText | ContentType::RichText
+        )
+    {
+        push(
+            "LinkIcon",
+            "extract_links",
+            Box::new(move |hovered| if hovered { accent } else { icon_color }),
+        );
+    }
+    if is_single && props.is_transfer {
+        let transfer_pinned = props.transfer_pinned;
+        let pin_color: Rgba = p.pin.into();
+        if props.transfer_is_local {
+            push(
+                "OpenIcon",
+                "open_transfer_location",
+                Box::new(move |hovered| if hovered { accent } else { icon_color }),
+            );
+        } else {
+            push(
+                "DownloadIcon",
+                "download_transfer",
+                Box::new(move |hovered| if hovered { accent } else { icon_color }),
+            );
+        }
+        // Pin/unpin — between open/download and delete.
+        push(
+            "PinIcon",
+            "toggle_transfer_pin",
+            Box::new(move |hovered| {
+                if hovered || transfer_pinned {
+                    pin_color
+                } else {
+                    icon_color
+                }
+            }),
+        );
+        push(
+            "DeleteIcon",
+            "delete_transfer",
+            Box::new(move |hovered| if hovered { danger } else { icon_color }),
+        );
+    } else if is_single {
+        // Copy
+        push(
+            "CopyIcon",
+            "copy",
+            Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
+        );
+
+        // --- Paste Plain Text (only when item has actual rich formatting) ---
+        if props.has_rich_content {
+            push(
+                "TextIcon",
+                "paste_plain",
+                Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
+            );
+        }
+
+        // --- Paste as bitmap (image only) ---
+        if props.content_type == ContentType::Image {
+            push(
+                "ImageIcon",
+                "paste_image_bitmap",
+                Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
+            );
+        }
+
+        // --- QR code (image with QR code) ---
+        if props.content_type == ContentType::Image && props.has_qr_code {
+            push(
+                "QrCodeIcon",
+                "qr_action",
+                Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
+            );
+        }
+
+        // --- Edit (not image or file) ---
+        if props.content_type != ContentType::Image && props.content_type != ContentType::File {
+            push(
+                "EditIcon",
+                "edit",
+                Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
+            );
+        }
+
+        // --- Open (one button for the whole family) ---
+        if let Some(open_action) = single_open_action(props) {
+            push(
+                "OpenIcon",
+                open_action,
+                Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
+            );
+        }
+
+        // --- Favorite (icon changes based on state) ---
+        let fav_icon = if props.is_favorite {
+            "StarIcon"
+        } else {
+            "StarFilledIcon"
+        };
+        push(
+            fav_icon,
+            "toggle_favorite",
+            Box::new(move |_hovered: bool| fav_color),
+        );
+
+        // --- More: 备注、标签等低频操作收进三点菜单 ---
+        push(
+            "MoreIcon",
+            "more",
+            Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
+        );
+
+        // --- Delete ---
+        push(
+            "DeleteIcon",
+            "delete",
+            Box::new(move |hovered: bool| if hovered { danger } else { icon_color }),
+        );
+    } else if is_batch && props.is_transfer {
+        push(
+            "DeleteIcon",
+            "batch_delete_transfer",
+            Box::new(move |hovered: bool| if hovered { danger } else { icon_color }),
+        );
+    } else if is_batch {
+        // --- Batch paste ---
+        push(
+            "PasteIcon",
+            "batch_paste",
+            Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
+        );
+        if props.can_merge_selection {
+            // --- Merge selected ---
+            push(
+                "FilesIcon",
+                "merge_selected",
+                Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
+            );
+        }
+        // --- Batch tag ---
+        push(
+            "TagIcon",
+            "batch_tag",
+            Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
+        );
+        // --- Batch favorite ---
+        push(
+            "StarIcon",
+            "batch_favorite",
+            Box::new(move |_hovered: bool| fav_color),
+        );
+        // --- Batch delete ---
+        push(
+            "DeleteIcon",
+            "batch_delete",
+            Box::new(move |hovered: bool| if hovered { danger } else { icon_color }),
+        );
+    }
+
+    buttons
 }
 
 impl RenderOnce for HoverToolbar {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let Self {
             props,
-            below_card,
+            buttons,
             on_action,
+            on_more,
             bounds_tracker,
         } = self;
 
         let p = Palette::current(cx);
-        // Filled glyphs look heavier than body text at the same color. Soften
-        // light-theme icons without losing the dark-theme contrast boost.
-        let accent: Rgba = p.accent.into();
-        let icon_color: Rgba = if p.dark {
-            p.ink.into()
-        } else {
-            motion::mix(p.ink, p.ink_2, 0.5).into()
-        };
         let danger: Rgba = p.danger.into();
-        let fav_color: Rgba = p.fav.into();
-        let pill_bg: Rgba = p.on_card("layer-strong").into();
-        let pill_border: Rgba = p.stroke_strong.into();
+        let accent: Rgba = p.accent.into();
 
-        let is_single = props.selected_count <= 1;
-        let is_batch = props.selected_count > 1 && props.is_selected;
-
-        // --- Build button list: (icon_glyph, action_name, hover_color) ---
-        // Using type alias for the color function
-        type ColorFn = Box<dyn Fn(bool) -> Rgba>;
-        let mut buttons: Vec<(&str, &str, ColorFn)> = Vec::new();
-
-        if is_single
-            && props.has_links
-            && matches!(
-                props.content_type,
-                ContentType::PlainText | ContentType::RichText
-            )
-        {
-            buttons.push((
-                "LinkIcon",
-                "extract_links",
-                Box::new(move |hovered| if hovered { accent } else { icon_color }),
-            ));
-        }
-        if is_single && props.is_transfer {
-            let transfer_pinned = props.transfer_pinned;
-            let pin_color: Rgba = p.pin.into();
-            if props.transfer_is_local {
-                buttons.push((
-                    "OpenIcon",
-                    "open_transfer_location",
-                    Box::new(move |hovered| if hovered { accent } else { icon_color }),
-                ));
-            } else {
-                buttons.push((
-                    "DownloadIcon",
-                    "download_transfer",
-                    Box::new(move |hovered| if hovered { accent } else { icon_color }),
-                ));
-            }
-            // Pin/unpin — between open/download and delete.
-            buttons.push((
-                "PinIcon",
-                "toggle_transfer_pin",
-                Box::new(move |hovered| {
-                    if hovered || transfer_pinned {
-                        pin_color
-                    } else {
-                        icon_color
-                    }
-                }),
-            ));
-            buttons.push((
-                "DeleteIcon",
-                "delete_transfer",
-                Box::new(move |hovered| if hovered { danger } else { icon_color }),
-            ));
-        } else if is_single {
-            // Copy
-            buttons.push((
-                "CopyIcon",
-                "copy",
-                Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
-            ));
-
-            // --- Paste Plain Text (only when item has actual rich formatting) ---
-            if props.has_rich_content {
-                buttons.push((
-                    "TextIcon",
-                    "paste_plain",
-                    Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
-                ));
-            }
-
-            // --- Paste as bitmap (image only) ---
-            if props.content_type == ContentType::Image {
-                buttons.push((
-                    "ImageIcon",
-                    "paste_image_bitmap",
-                    Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
-                ));
-            }
-
-            // --- QR code (image with QR code) ---
-            if props.content_type == ContentType::Image && props.has_qr_code {
-                buttons.push((
-                    "QrCodeIcon",
-                    "qr_action",
-                    Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
-                ));
-            }
-
-            // --- Edit (not image or file) ---
-            if props.content_type != ContentType::Image && props.content_type != ContentType::File {
-                buttons.push((
-                    "EditIcon",
-                    "edit",
-                    Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
-                ));
-            }
-
-            // Note
-            buttons.push((
-                "NoteIcon",
-                "edit_note",
-                Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
-            ));
-
-            // Tag
-            buttons.push((
-                "TagIcon",
-                "show_tag_picker",
-                Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
-            ));
-
-            // --- Open (one button for the whole family, right of tag) ---
-            if let Some(open_action) = single_open_action(&props) {
-                buttons.push((
-                    "OpenIcon",
-                    open_action,
-                    Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
-                ));
-            }
-
-            // --- Favorite (icon changes based on state) ---
-            let fav_icon = if props.is_favorite {
-                "StarIcon"
-            } else {
-                "StarFilledIcon"
-            };
-            buttons.push((
-                fav_icon,
-                "toggle_favorite",
-                Box::new(move |_hovered: bool| fav_color),
-            ));
-
-            // --- Delete ---
-            buttons.push((
-                "DeleteIcon",
-                "delete",
-                Box::new(move |hovered: bool| if hovered { danger } else { icon_color }),
-            ));
-        } else if is_batch && props.is_transfer {
-            buttons.push((
-                "DeleteIcon",
-                "batch_delete_transfer",
-                Box::new(move |hovered: bool| if hovered { danger } else { icon_color }),
-            ));
-        } else if is_batch {
-            // --- Batch paste ---
-            buttons.push((
-                "PasteIcon",
-                "batch_paste",
-                Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
-            ));
-            if props.can_merge_selection {
-                // --- Merge selected ---
-                buttons.push((
-                    "FilesIcon",
-                    "merge_selected",
-                    Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
-                ));
-            }
-            // --- Batch tag ---
-            buttons.push((
-                "TagIcon",
-                "batch_tag",
-                Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
-            ));
-            // --- Batch favorite ---
-            buttons.push((
-                "StarIcon",
-                "batch_favorite",
-                Box::new(move |_hovered: bool| fav_color),
-            ));
-            // --- Batch delete ---
-            buttons.push((
-                "DeleteIcon",
-                "batch_delete",
-                Box::new(move |hovered: bool| if hovered { danger } else { icon_color }),
-            ));
-        }
-
+        let buttons = buttons.unwrap_or_else(|| buttons_for(&props, &p));
         if buttons.is_empty() {
             return div();
         }
@@ -364,16 +420,13 @@ impl RenderOnce for HoverToolbar {
         let selected_count = props.selected_count;
         let meta_type = props.meta_type.clone();
 
-        // Include the gaps in one opaque hit area: neither the underlying
-        // filter controls nor the preceding row should show or receive clicks.
-        let toolbar_width = (buttons.len() * 20 + buttons.len().saturating_sub(1) * 2) as f32;
+        // Include the gaps in one hit area: the row underneath should not
+        // receive clicks meant for a tab.
+        let toolbar_width = toolbar_width(&buttons);
         let item_id = bounds_tracker.as_ref().map_or(0, |(id, _)| *id);
         div()
             .w(sc(toolbar_width))
-            .h(sc(20.))
-            .bg(p.background)
-            .when(!below_card, |el| el.rounded_t(Radius::Sm.scaled()))
-            .when(below_card, |el| el.rounded_b(Radius::Sm.scaled()))
+            .h(sc(BUTTON_SIZE))
             .relative()
             .children(bounds_tracker.map(|(item_id, tracker)| {
                 canvas(
@@ -386,9 +439,8 @@ impl RenderOnce for HoverToolbar {
             }))
             .flex()
             .flex_row()
-            .when(!below_card, |el| el.items_end())
-            .when(below_card, |el| el.items_start())
-            .gap(sc(2.))
+            .items_center()
+            .gap(sc(BUTTON_GAP))
             // The tabs overlap the preceding row. Own their hit area so mouse
             // movement cannot select that row or clear the active toolbar.
             // `block_mouse_except_scroll` (not `occlude`): GPUI's `occlude`
@@ -411,9 +463,16 @@ impl RenderOnce for HoverToolbar {
             .on_mouse_up(MouseButton::Right, |_event, _window, cx| {
                 cx.stop_propagation()
             })
-            .children(buttons.into_iter().map(move |(icon, action, color_fn)| {
+            .children(buttons.into_iter().map(move |button| {
+                let ToolbarButton {
+                    icon,
+                    action,
+                    color: color_fn,
+                } = button;
                 let on_action = on_action.clone();
+                let on_more = on_more.clone();
                 let tooltip = match action {
+                    "more" => I18nKey::CardMoreActions.text().to_string(),
                     "copy" => I18nKey::CtxCopy.text().to_string(),
                     "extract_links" => I18nKey::ExtractLinks.text().to_string(),
                     "paste_plain" => I18nKey::CtxPastePlain.text().to_string(),
@@ -466,18 +525,13 @@ impl RenderOnce for HoverToolbar {
                     .role(Role::Button)
                     .tab_stop(true)
                     .aria_label(tooltip.clone())
-                    .w(sc(20.))
-                    // 尺寸恒定：悬停只做图标动效，按钮外框不再伸缩。
-                    .h(sc(20.))
+                    .w(sc(BUTTON_SIZE))
+                    // 只有图标本身：不画底框、不画描边，悬停只换色。
+                    .h(sc(BUTTON_SIZE))
                     .flex_shrink_0()
                     .flex()
                     .items_center()
                     .justify_center()
-                    .when(!below_card, |el| el.rounded_t(sc(4.)))
-                    .when(below_card, |el| el.rounded_b(sc(4.)))
-                    .bg(pill_bg)
-                    .border(sc(1.))
-                    .border_color(pill_border)
                     .cursor(CursorStyle::PointingHand)
                     .on_hover(move |value, _window, cx| {
                         if *value && !cx.reduce_motion() {
@@ -498,12 +552,19 @@ impl RenderOnce for HoverToolbar {
                         } else {
                             color_fn(false)
                         };
-                        widgets::icon_moving(control, icon, sc(12.), Hsla::from(color))
+                        widgets::icon_moving(control, icon, sc(BUTTON_ICON_SIZE), Hsla::from(color))
                     })
                     .on_mouse_down(MouseButton::Left, {
                         let action = action.clone();
-                        move |_ev, _window, cx| {
+                        let is_more = action_id == "more";
+                        move |ev, _window, cx| {
                             cx.stop_propagation();
+                            if is_more {
+                                if let Some(ref handler) = on_more {
+                                    handler(ev.position, _window, cx);
+                                }
+                                return;
+                            }
                             if let Some(ref handler) = on_action {
                                 handler(&action, _window, cx);
                             }

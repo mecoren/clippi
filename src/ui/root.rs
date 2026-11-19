@@ -1946,6 +1946,8 @@ impl Render for RootView {
                     menu_y + Self::directional_overlay_offset(menu_y, win_h, context_menu_offset);
                 let is_batch = list.read(cx).context_menu_is_batch();
                 let is_transfer_batch = list.read(cx).context_menu_is_transfer_batch();
+                // 卡片三点按钮：菜单只含备注、标签，沿用同一套定位与收起逻辑。
+                let is_card_more = list.read(cx).context_menu_is_card_more();
                 let item = list.read(cx).context_menu_item().cloned();
 
                 // --- Backdrop — click / scroll to dismiss ---
@@ -1971,7 +1973,28 @@ impl Render for RootView {
                         .occlude()
                         .child({
                             let l = list_for_action.clone();
-                            if is_transfer_batch {
+                            if is_card_more {
+                                ContextMenu::for_card_more()
+                                    .with_position(menu_x, menu_y, win_w, win_h)
+                                    .theme(self.theme.clone())
+                                    .on_action({
+                                        let l = l.clone();
+                                        move |action, window, cx| {
+                                            l.update(cx, |lst, cx| {
+                                                lst.handle_menu_action(action, window, cx);
+                                            });
+                                        }
+                                    })
+                                    .on_dismiss({
+                                        let l = l.clone();
+                                        move |_window, cx| {
+                                            l.update(cx, |lst, cx| {
+                                                lst.hide_context_menu(cx);
+                                            });
+                                        }
+                                    })
+                                    .into_any_element()
+                            } else if is_transfer_batch {
                                 ContextMenu::for_transfer_batch()
                                     .with_position(menu_x, menu_y, win_w, win_h)
                                     .theme(self.theme.clone())

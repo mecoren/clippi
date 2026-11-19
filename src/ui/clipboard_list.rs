@@ -19,7 +19,7 @@ use crate::core::types::{
 };
 use crate::state::app::AppState;
 
-use super::clipboard_card::{estimate_card_height, ClipboardCard, CARD_TOOLBAR_HEIGHT};
+use super::clipboard_card::{estimate_card_height, ClipboardCard};
 use super::components::reorder::DragAutoScroll;
 use super::font::sx;
 use super::hover_toolbar::ToolbarBounds;
@@ -419,6 +419,8 @@ pub struct ClipboardListView {
     context_menu_y: f32,
     context_menu_item: Option<ClipboardItem>,
     context_menu_is_batch: bool,
+    /// 当前菜单由卡片三点按钮弹出（只含备注、标签），不是右键菜单。
+    context_menu_card_more: bool,
     tag_picker_visible: bool,
     tag_picker_x: f32,
     tag_picker_y: f32,
@@ -492,6 +494,7 @@ impl ClipboardListView {
             context_menu_y: 0.0,
             context_menu_item: None,
             context_menu_is_batch: false,
+            context_menu_card_more: false,
             tag_picker_visible: false,
             tag_picker_x: 0.0,
             tag_picker_y: 0.0,
@@ -1703,6 +1706,40 @@ impl ClipboardListView {
         self.context_menu_is_batch
     }
 
+    /// 当前菜单是否由卡片三点按钮弹出（只含备注 / 标签）。
+    pub fn context_menu_is_card_more(&self) -> bool {
+        self.context_menu_card_more
+    }
+
+    /// 卡片三点按钮：在点击位置弹出备注 / 标签菜单。
+    pub fn open_card_more_menu(
+        &mut self,
+        item_id: i64,
+        position: Point<Pixels>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // 与悬浮工具条其他动作一致：只认同一次渲染里的悬停项，
+        // 避免回收复用的行把菜单开到别的条目上。
+        if self
+            .hovered_index
+            .and_then(|index| self.items.get(index))
+            .is_none_or(|item| item.id != item_id)
+        {
+            return;
+        }
+        let Some(item) = self.items.iter().find(|item| item.id == item_id).cloned() else {
+            return;
+        };
+        self.context_menu_visible = true;
+        self.context_menu_is_batch = false;
+        self.context_menu_card_more = true;
+        self.context_menu_x = f32::from(position.x);
+        self.context_menu_y = f32::from(position.y);
+        self.context_menu_item = Some(item);
+        cx.notify();
+    }
+
     pub fn context_menu_is_transfer_batch(&self) -> bool {
         self.context_menu_is_batch
             && !self.selected_ids.is_empty()
@@ -1724,6 +1761,8 @@ impl ClipboardListView {
     pub fn dismiss_context_menu(&mut self, cx: &mut Context<Self>) {
         self.context_menu_visible = false;
         self.context_menu_item = None;
+        self.context_menu_is_batch = false;
+        self.context_menu_card_more = false;
         self.hovered_index = None;
         cx.notify();
     }
@@ -1732,6 +1771,8 @@ impl ClipboardListView {
     pub fn dismiss_all_panels(&mut self, cx: &mut Context<Self>) {
         self.context_menu_visible = false;
         self.context_menu_item = None;
+        self.context_menu_is_batch = false;
+        self.context_menu_card_more = false;
         self.hovered_index = None;
         self.tag_picker_visible = false;
         self.tag_picker_item_id = -1;
@@ -2033,6 +2074,7 @@ impl ClipboardListView {
     pub(crate) fn hide_context_menu(&mut self, cx: &mut Context<Self>) {
         self.context_menu_visible = false;
         self.context_menu_item = None;
+        self.context_menu_card_more = false;
         cx.notify();
     }
 
@@ -2901,17 +2943,18 @@ impl Render for ClipboardListView {
                                         state.pending_transfer_uploads.clone(),
                                     )
                                 };
-                                let mut row_top = this.item_sizes.iter().take(range.start)
-                                    .fold(px(0.), |height, size| height + size.height)
-                                    + this.scroll_handle.offset().y;
                                 range
                                     .filter_map(|i| {
                                         let item = this.items.get(i)?;
-                                        // Include shadow clearance; use geometry rather than
-                                        // index zero so partially scrolled rows work too.
-                                        let toolbar_below = row_top + px(4.) < px(sx(CARD_TOOLBAR_HEIGHT + 9.));
-                                        row_top += this.item_sizes[i].height;
                                         let item_id = item.id;
+                                        // 「更多」菜单开着时鼠标已不在卡片上，
+                                        // 但这一行的工具条要保持展开。
+                                        let card_more_open = this.context_menu_visible
+                                            && this.context_menu_card_more
+                                            && this
+                                                .context_menu_item
+                                                .as_ref()
+                                                .is_some_and(|menu_item| menu_item.id == item_id);
                                         let inline_locked = inline_locked_item_id == Some(item_id);
                                         let selected =
                                             inline_locked || this.selected_ids.contains(&item_id);
@@ -2949,6 +2992,7 @@ impl Render for ClipboardListView {
                                         let list_for_right = list_entity.clone();
                                         let list_for_hover = list_entity.clone();
                                         let list_for_toolbar = list_entity.clone();
+                                        let list_for_more = list_entity.clone();
                                         let list_for_note_commit = list_entity.clone();
 
                                         // Compute 1-based selection order for badge display
@@ -3085,6 +3129,8 @@ impl Render for ClipboardListView {
                                                                     Some(item.clone());
                                                                 this.context_menu_is_batch =
                                                                     is_batch;
+                                                                this.context_menu_card_more =
+                                                                    false;
                                                                 cx.notify();
                                                             }
                                                         });
@@ -3098,7 +3144,7 @@ impl Render for ClipboardListView {
                                                     )
                                                     .theme(theme.clone())
                                                     .hovered(is_hovered)
-                                                    .toolbar_below(toolbar_below)
+                                                    .toolbar_pinned(card_more_open)
                                                     .toolbar_bounds(this.toolbar_bounds.clone())
                                                     .show_source_app(show_source_app)
                                                     .detect_links(detect_links)
@@ -3146,6 +3192,13 @@ impl Render for ClipboardListView {
                                                         list_for_toolbar.update(cx, |this, cx| {
                                                             this.handle_toolbar_action(
                                                                 item_id, action, window, cx,
+                                                            );
+                                                        });
+                                                    })
+                                                    .on_toolbar_more(move |position, window, cx| {
+                                                        list_for_more.update(cx, |this, cx| {
+                                                            this.open_card_more_menu(
+                                                                item_id, position, window, cx,
                                                             );
                                                         });
                                                     })

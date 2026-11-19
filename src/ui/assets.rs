@@ -95,6 +95,7 @@ product_icons! {
     "KeyboardIcon" => Keyboard,
     "CloseIcon" => X,
     "CheckIcon" => Check,
+    "MoreIcon" => Ellipsis,
     "CircleIcon" => Circle,
     "CircleCheckIcon" => CircleCheck,
     "ChevronDownIcon" => ChevronDown,
