@@ -2413,18 +2413,25 @@ mod tests {
         assert_eq!(decode_console_output(&[]), "");
     }
 
-    /// A stale task must never be the only registration on a filtered process,
-    /// and the elevated build must not fall back to the Run key silently.
+    /// Only the persistent "run as administrator" layer on the executable
+    /// decides the method. The token of the running process must not: the
+    /// installer, the updater and CI runners all start the binary elevated,
+    /// and that one-off session must not repoint auto-start at a logon task.
     #[test]
-    fn auto_start_method_is_a_user_session_registration_when_not_elevated() {
-        // The test harness runs filtered, so the Windows branch has to answer
-        // `UserSession` unless the exe itself carries the RUNASADMIN layer.
+    fn auto_start_method_follows_the_executable_elevation_layer() {
         let method = auto_start_method();
         assert!(matches!(
             method,
             AutoStartMethod::UserSession | AutoStartMethod::ElevatedTask
         ));
-        assert!(!is_process_elevated() || method == AutoStartMethod::ElevatedTask);
+        #[cfg(target_os = "windows")]
+        {
+            let exe = std::env::current_exe().expect("test executable path");
+            assert_eq!(
+                method == AutoStartMethod::ElevatedTask,
+                exe_requests_elevation(&exe)
+            );
+        }
     }
 }
 
