@@ -145,11 +145,6 @@ impl EditPanel {
         }
     }
 
-    /// 主题变化（设置页切换浅/暗）：取色每帧走 `Palette`，这里只需重绘。
-    pub fn set_theme(&mut self, cx: &mut Context<Self>) {
-        cx.notify();
-    }
-
     /// 查找栏里的原文本与新文本。
     fn find_query(&self, cx: &App) -> String {
         self.find_input.read(cx).value().to_string()

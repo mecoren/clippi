@@ -9,12 +9,12 @@ use std::rc::Rc;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 
+use crate::ui::design::palette::Palette;
 use crate::ui::design::size::Radius;
 use crate::ui::widgets;
 use gpui_kit::component::scroll::{Scrollbar, ScrollbarAxis};
 
 use crate::core::i18n_keys::I18nKey;
-use crate::ui::theme::ClippiTheme;
 
 const DIALOG_WIDTH: f32 = 304.;
 const MIN_DIALOG_HEIGHT: f32 = 196.;
@@ -73,7 +73,8 @@ pub struct AppListDialogParams {
     /// notes) need more room than the entry-count formula gives them; the
     /// viewport still wins.
     pub fixed_height: Option<f32>,
-    pub theme: ClippiTheme,
+    /// 语义色板快照（根视图持有，随主题重建）。
+    pub theme: Palette,
     /// (opacity, scale, offset, viewport_w, viewport_h)
     pub layout: (f32, f32, f32, f32, f32),
     pub on_close: AppListAction,
@@ -171,19 +172,19 @@ pub fn render_app_list_dialog(params: AppListDialogParams) -> impl IntoElement {
     let popup_left = ((main_width - popup_width) * 0.5).max(8.);
     let popup_top = ((viewport_height - popup_height) * 0.5).max(8.) + offset;
     let close = params.on_close.clone();
-    let theme = params.theme.clone();
-    let surface = theme.surface;
-    let divider = theme.divider;
+    let theme = params.theme;
+    let surface = theme.on_card("layer");
+    let divider = theme.stroke;
     let accent = theme.accent;
-    let accent_soft = theme.accent_soft;
-    let accent_hover = theme.accent_overlay();
-    let text_2 = theme.text_2;
-    let text_3 = theme.text_3;
+    let accent_soft = theme.accent_soft();
+    let accent_hover = accent_soft;
+    let text_2 = theme.ink_2;
+    let text_3 = theme.ink_3;
     let add_button_recording = params.add_button_recording;
     let add_button_bg = if add_button_recording {
         accent_soft
     } else {
-        theme.btn_hover
+        theme.on_card("hover")
     };
     let add_button_border = if add_button_recording {
         accent
@@ -194,7 +195,7 @@ pub fn render_app_list_dialog(params: AppListDialogParams) -> impl IntoElement {
     let add_button_hover = if add_button_recording {
         accent_hover
     } else {
-        theme.surface_press
+        theme.on_card("press")
     };
 
     crate::ui::components::modal_overlay::modal_overlay()
@@ -316,17 +317,17 @@ pub fn render_app_list_dialog(params: AppListDialogParams) -> impl IntoElement {
 fn render_title_bar(
     title: &str,
     badge: &str,
-    theme: &ClippiTheme,
+    theme: &Palette,
     scale: f32,
     help_text: Option<String>,
     on_close: AppListAction,
 ) -> impl IntoElement {
     let badge = badge.to_owned();
     let accent = theme.accent;
-    let divider = theme.divider;
-    let btn_hover = theme.btn_hover;
-    let text_1 = theme.text_1;
-    let text_2 = theme.text_2;
+    let divider = theme.stroke;
+    let btn_hover = theme.on_card("hover");
+    let text_1 = theme.ink;
+    let text_2 = theme.ink_2;
     let help_lines = help_text.map(|text| text.lines().map(str::to_owned).collect::<Vec<_>>());
 
     div()
@@ -353,7 +354,7 @@ fn render_title_bar(
                             .h(px(22.))
                             .px(px(8. * scale))
                             .rounded(Radius::Pill.scaled())
-                            .bg(theme.accent_soft)
+                            .bg(theme.accent_soft())
                             .border(px(1.))
                             .border_color(accent)
                             .flex()
@@ -394,8 +395,8 @@ fn render_title_bar(
                                 "app-list-help",
                                 "HelpIcon",
                                 fs(13.),
-                                Hsla::from(text_2),
-                                Hsla::from(accent),
+                                text_2,
+                                accent,
                             ))
                             .child(widgets::icon_probe(
                                 "app-list-help",
@@ -414,7 +415,7 @@ fn render_title_bar(
                         .items_center()
                         .justify_center()
                         .cursor(CursorStyle::PointingHand)
-                        .hover(|style| style.bg(theme.btn_hover))
+                        .hover(|style| style.bg(theme.on_card("hover")))
                         .on_mouse_down(MouseButton::Left, move |_ev, window, cx| {
                             cx.stop_propagation();
                             close(window, cx);
@@ -423,7 +424,7 @@ fn render_title_bar(
                             "app-list-close",
                             "CloseIcon",
                             fs(13.),
-                            Hsla::from(text_2),
+                            text_2,
                         ))
                         .child(widgets::icon_probe(
                             "app-list-close",
@@ -437,7 +438,7 @@ fn render_entry(
     entry: &AppListDialogEntry,
     show_shortcut: bool,
     actions: AppListEntryActions<'_>,
-    theme: &ClippiTheme,
+    theme: &Palette,
     scale: f32,
 ) -> impl IntoElement {
     let app_name = entry.app_name.clone();
@@ -448,9 +449,9 @@ fn render_entry(
             .recording_app
             .map(|name| name.eq_ignore_ascii_case(&entry.app_name))
             .unwrap_or(false);
-    let text_1 = theme.text_1;
-    let text_2 = theme.text_2;
-    let text_3 = theme.text_3;
+    let text_1 = theme.ink;
+    let text_2 = theme.ink_2;
+    let text_3 = theme.ink_3;
     let danger = theme.danger;
     let accent = theme.accent;
 
@@ -500,7 +501,7 @@ fn render_entry(
                                 .h(px(20.))
                                 .px(px(8. * scale))
                                 .rounded(px(4.))
-                                .bg(theme.accent_soft)
+                                .bg(theme.accent_soft())
                                 .text_size(fs(10.))
                                 .text_color(accent)
                                 .flex()
@@ -520,7 +521,7 @@ fn render_entry(
                                 .h(px(20.))
                                 .px(px(8. * scale))
                                 .rounded(px(4.))
-                                .bg(theme.accent_soft)
+                                .bg(theme.accent_soft())
                                 .text_size(fs(10.))
                                 .text_color(accent)
                                 .cursor(CursorStyle::PointingHand)
@@ -551,7 +552,7 @@ fn render_entry(
                             .items_center()
                             .justify_center()
                             .cursor(CursorStyle::PointingHand)
-                            .hover(|style| style.bg(theme.btn_hover))
+                            .hover(|style| style.bg(theme.on_card("hover")))
                             .on_mouse_down(MouseButton::Left, {
                                 move |_ev, window, cx| {
                                     cx.stop_propagation();
@@ -564,7 +565,7 @@ fn render_entry(
                                 control.clone(),
                                 "CloseIcon",
                                 fs(12.),
-                                Hsla::from(text_2),
+                                text_2,
                             ))
                             .child(widgets::icon_probe(control, CursorStyle::PointingHand)),
                     )
@@ -597,8 +598,8 @@ fn render_entry(
                             control.clone(),
                             "DeleteIcon",
                             fs(12.),
-                            Hsla::from(text_3),
-                            Hsla::from(danger),
+                            text_3,
+                            danger,
                         ))
                         .child(widgets::icon_probe(control, CursorStyle::PointingHand))
                 }),

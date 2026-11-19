@@ -46,7 +46,6 @@ use super::hover_toolbar::{
 };
 use super::rich_preview::{self, StyledHtmlSpan};
 use super::search_highlight;
-use super::theme::ClippiTheme;
 
 type CardClickHandler = Rc<dyn Fn(usize, Modifiers, &mut Window, &mut App)>;
 type CardDoubleClickHandler = Rc<dyn Fn(usize, Modifiers, &mut Window, &mut App)>;
@@ -1252,7 +1251,6 @@ pub struct ClipboardCard {
     item: Rc<ClipboardItem>,
     selected: bool,
     index: usize,
-    theme: ClippiTheme,
     selection_order: usize,
     on_click: Option<CardClickHandler>,
     is_hovered: bool,
@@ -1300,7 +1298,6 @@ impl ClipboardCard {
             item,
             selected,
             index,
-            theme: ClippiTheme::dark(),
             selection_order: 0,
             on_click: None,
             is_hovered: false,
@@ -1354,11 +1351,6 @@ impl ClipboardCard {
 
     pub fn can_merge_selection(mut self, value: bool) -> Self {
         self.can_merge_selection = value;
-        self
-    }
-
-    pub fn theme(mut self, theme: ClippiTheme) -> Self {
-        self.theme = theme;
         self
     }
 
@@ -1489,7 +1481,6 @@ impl RenderOnce for ClipboardCard {
             item,
             selected,
             index,
-            theme,
             selection_order,
             on_click,
             is_hovered,
@@ -1541,8 +1532,8 @@ impl RenderOnce for ClipboardCard {
         let color_border: Rgba = p.stroke_strong.into();
         let subtle_row_bg: Rgba = p.on_card("control").into();
         let hover_bg: Rgba = p.hover.into();
-        let highlight_bg = theme.accent_highlight();
-        let highlight_text = theme.accent_highlight_text();
+        let highlight_bg: Rgba = p.highlight().into();
+        let highlight_text: Rgba = p.on_highlight().into();
         let time_str = format_card_time(&item.updated_at);
         let is_fav = item.is_favorite;
         let content_type = item.content_type;
@@ -2557,7 +2548,7 @@ impl RenderOnce for ClipboardCard {
             if is_pinned {
                 (
                     I18nKey::TransferKeepForever.text().to_string(),
-                    theme.transfer_pin_color,
+                    p.pin.into(),
                 )
             } else {
                 match retention {
@@ -3025,7 +3016,7 @@ impl RenderOnce for ClipboardCard {
                     .bottom(sc(4.))
                     .w(sc(3.))
                     .rounded(Radius::Pill.scaled())
-                    .bg(theme.transfer_pin_color),
+                    .bg(p.pin),
             )
         } else if is_fav {
             card.child(

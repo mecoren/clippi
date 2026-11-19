@@ -253,11 +253,6 @@ impl Sidebar {
         }
         cx.notify();
     }
-
-    /// 主题变化（设置页切换浅/暗）：取色每帧走 `Palette`，这里只需重绘。
-    pub fn set_theme(&mut self, cx: &mut Context<Self>) {
-        cx.notify();
-    }
 }
 
 impl Render for Sidebar {

@@ -21,11 +21,11 @@ use crate::state::app::AppState;
 
 use super::clipboard_card::{estimate_card_height, ClipboardCard};
 use super::components::reorder::DragAutoScroll;
+use super::design::palette::Palette;
 use super::font::sx;
 use super::hover_toolbar::ToolbarBounds;
 use super::search_box::SearchBox;
 use super::tag_picker::TagState;
-use super::theme::ClippiTheme;
 
 const CLIPBOARD_ROW_VERTICAL_SPACE: f32 = 12.0;
 const CLIPBOARD_BOTTOM_SCROLL_INSET: f32 = 36.0;
@@ -445,7 +445,6 @@ pub struct ClipboardListView {
     /// Persisted last-selected item ID — survives across set_items calls
     /// (including the empty-item clear during window hide).
     last_selected_id: Option<i64>,
-    theme: ClippiTheme,
     last_lang_version: u64,
     /// WindowManager entity for hotkey recording coordination.
     window_manager: Entity<crate::ui::window_manager::WindowManager>,
@@ -463,7 +462,6 @@ impl ClipboardListView {
     pub fn new(
         items: Vec<ClipboardItem>,
         state: Entity<AppState>,
-        theme: ClippiTheme,
         window: &mut Window,
         cx: &mut App,
         window_manager: Entity<crate::ui::window_manager::WindowManager>,
@@ -512,7 +510,6 @@ impl ClipboardListView {
             image_cache: RetainAllImageCache::new(cx),
             confirm_dialog: None,
             last_selected_id: None,
-            theme,
             last_lang_version: crate::core::i18n::lang_version(),
             window_manager,
             recording_hotkey_id: -1,
@@ -2078,11 +2075,6 @@ impl ClipboardListView {
         cx.notify();
     }
 
-    pub fn set_theme(&mut self, theme: ClippiTheme, cx: &mut Context<Self>) {
-        self.theme = theme;
-        cx.notify();
-    }
-
     /// Get the current confirmation dialog state, if any.
     pub fn confirm_dialog_state(&self) -> Option<&ConfirmDialogState> {
         self.confirm_dialog.as_ref()
@@ -2649,10 +2641,10 @@ impl Render for ClipboardListView {
         let items_count = self.item_sizes.len();
         let view = cx.entity();
         let focus_handle = self.focus_handle.clone();
-        let theme = self.theme.clone();
-        let bg = theme.bg;
-        let text_2 = theme.text_2;
-        let text_3 = theme.text_3;
+        let p = Palette::current(cx);
+        let bg = p.background;
+        let text_2 = p.ink_2;
+        let text_3 = p.ink_3;
 
         let empty_state = items_count == 0;
 
@@ -3142,8 +3134,7 @@ impl Render for ClipboardListView {
                                                         selected,
                                                         i,
                                                     )
-                                                    .theme(theme.clone())
-                                                    .hovered(is_hovered)
+                                                                                                        .hovered(is_hovered)
                                                     .toolbar_pinned(card_more_open)
                                                     .toolbar_bounds(this.toolbar_bounds.clone())
                                                     .show_source_app(show_source_app)

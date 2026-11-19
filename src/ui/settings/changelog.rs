@@ -57,11 +57,10 @@ impl SettingsPanel {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let p = self.palette;
-        let theme = &self.theme;
-        let accent = theme.accent;
-        let accent_soft = theme.accent_soft;
-        let text_1 = theme.text_1;
-        let text_3 = theme.text_3;
+        let accent = p.accent;
+        let accent_soft = p.accent_soft();
+        let text_1 = p.ink;
+        let text_3 = p.ink_3;
         let current_version = env!("CARGO_PKG_VERSION");
         let this = cx.entity().clone();
 
@@ -128,7 +127,7 @@ impl SettingsPanel {
         let Some(entry) = changelog::version(version) else {
             return div().into_any_element();
         };
-        let text_2 = self.theme.text_2;
+        let text_2 = self.palette.ink_2;
         // `###` section headings are the only headings in a body; keep them just
         // above body weight so a version reads as one block.
         let body_style = TextViewStyle::default()

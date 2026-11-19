@@ -20,7 +20,6 @@ impl SettingsPanel {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let p = self.palette;
-        let theme = &self.theme;
         let wm = self.window_manager.clone();
         let this = cx.entity().clone();
 
@@ -29,11 +28,11 @@ impl SettingsPanel {
         let update_available = app.update_available.clone();
         let auto_check = app.settings.auto_check_updates;
         let current_version = env!("CARGO_PKG_VERSION");
-        let divider = theme.divider;
-        let accent = theme.accent;
-        let text_1 = theme.text_1;
-        let text_2 = theme.text_2;
-        let text_3 = theme.text_3;
+        let divider = p.stroke;
+        let accent = p.accent;
+        let text_1 = p.ink;
+        let text_2 = p.ink_2;
+        let text_3 = p.ink_3;
 
         let (status_text, btn_label, btn_disabled, mut on_click) =
             button_state(&phase, &update_available, &wm);
@@ -76,7 +75,7 @@ impl SettingsPanel {
                     .w_full()
                     .text_size(fs(10.))
                     .text_color(if matches!(phase, UpdatePhase::Error(_)) {
-                        theme.danger
+                        p.danger
                     } else {
                         accent
                     })
@@ -119,7 +118,7 @@ impl SettingsPanel {
                                 "version-auto-check",
                                 check_icon,
                                 fs(12.),
-                                Hsla::from(check_color),
+                                check_color,
                             ))
                             .child(widgets::icon_probe(
                                 "version-auto-check",
@@ -146,11 +145,7 @@ impl SettingsPanel {
                                 div()
                                     .text_size(fs(12.))
                                     .font_weight(FontWeight::BOLD)
-                                    .text_color(if btn_disabled {
-                                        text_3
-                                    } else {
-                                        Rgba::from(p.on_accent)
-                                    })
+                                    .text_color(if btn_disabled { text_3 } else { p.on_accent })
                                     .child(btn_label),
                             );
                         if let (false, Some(handler)) = (btn_disabled, on_click.take()) {
@@ -180,7 +175,7 @@ impl SettingsPanel {
                         }
                     })
                     // Gray icon (default)
-                    .child(widgets::icon("GithubIcon", fs(26.), Hsla::from(text_3)))
+                    .child(widgets::icon("GithubIcon", fs(26.), text_3))
                     // Green icon (shown on group hover)
                     .child(
                         div()
@@ -193,7 +188,7 @@ impl SettingsPanel {
                                 "version-github-lit",
                                 "GithubIcon",
                                 fs(26.),
-                                Hsla::from(accent),
+                                accent,
                             )),
                     )
                     .child(widgets::icon_probe(
@@ -207,8 +202,8 @@ impl SettingsPanel {
                         UpdatePhase::Downloading { progress } => progress,
                         _ => 0,
                     },
-                    accent,
-                    divider,
+                    accent.into(),
+                    divider.into(),
                 ))
             })
             .into_any_element()];

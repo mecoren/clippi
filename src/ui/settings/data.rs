@@ -239,13 +239,13 @@ impl SettingsPanel {
 
     pub fn render_local_backup_dialog_overlay(
         panel: Entity<Self>,
-        theme: crate::ui::theme::ClippiTheme,
         layout: (f32, f32, f32, f32, f32),
         cx: &App,
     ) -> impl IntoElement {
         let Some(dialog) = panel.read(cx).local_backup_dialog.clone() else {
             return div().into_any_element();
         };
+        let p = Palette::current(cx);
         let available = dialog
             .prepared
             .as_ref()
@@ -270,13 +270,13 @@ impl SettingsPanel {
                 continue;
             }
             let action_panel = panel.clone();
-            let hover = theme.btn_hover;
+            let hover = p.on_card("hover");
             rows.push(
                 crate::ui::type_filter_config::selectable_type_row(
                     "",
                     label.text().to_owned(),
                     checked,
-                    &Palette::current(cx),
+                    &p,
                     Some(gpui::SharedString::from(if settings {
                         "backup-settings"
                     } else {
@@ -334,7 +334,7 @@ impl SettingsPanel {
             ),
             add_button_recording: false,
             fixed_height: None,
-            theme,
+            theme: p,
             layout,
             on_close: Rc::new(move |_, cx| {
                 close_panel.update(cx, |panel, cx| {

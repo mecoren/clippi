@@ -1,8 +1,7 @@
 //! Add/edit sync backend dialog.
 //!
 //! 外壳与字段全部来自控件工厂（`dialog_panel` / `text_field` / `btn` /
-//! `tool_icon_btn`），页面只负责排版与事件；颜色取 `Palette`，不再读
-//! `ClippiTheme`。
+//! `tool_icon_btn`），页面只负责排版与事件；颜色统一取 `Palette`。
 
 use std::time::{Duration, Instant};
 

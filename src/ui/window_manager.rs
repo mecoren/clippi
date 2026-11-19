@@ -1023,7 +1023,7 @@ impl WindowManager {
     }
 
     fn poll(&mut self, cx: &mut Context<Self>) {
-        if crate::ui::theme::refresh_system_accent() {
+        if crate::ui::design::palette::refresh_system_accent() {
             cx.emit(WindowManagerEvent::SystemAccentChanged);
             if let Some(view) = &self.quick_view {
                 view.update(cx, |_, cx| cx.notify());

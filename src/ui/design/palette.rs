@@ -3,8 +3,10 @@
 //!
 //! 对齐 Argus `theme.rs:9-197`（Palette/缓存/`on_card`/`remainder`）。
 
-use gpui::{px, App, Hsla, Rgba, Window};
+use gpui::{px, App, Hsla, Rgba, WindowAppearance};
 use gpui_kit::component::{ActiveTheme, Theme, ThemeMode};
+
+use crate::core::settings::AppSettings;
 
 use super::{motion, tokens};
 
@@ -50,9 +52,6 @@ pub struct Palette {
     pub tag_bg: Hsla,
     pub tag_ink: Hsla,
     pub tip: Hsla,
-    pub scrim: Hsla,
-    pub scroll_thumb: Hsla,
-    pub scroll_thumb_hover: Hsla,
     pub dark: bool,
 }
 
@@ -122,21 +121,20 @@ impl Palette {
             tag_bg: color("tag-bg"),
             tag_ink: color("tag-ink"),
             tip: color("tip"),
-            scrim: color("scrim"),
-            scroll_thumb: color("scroll-thumb"),
-            scroll_thumb_hover: color("scroll-thumb-hover"),
             dark,
         }
     }
 
-    /// 强调色 15% 底（选中卡片/激活标签）。
+    /// 强调色底：选中卡片、激活标签、选中行、当前 Tab 的**唯一**口径。
+    ///
+    /// 早期有三套写法（窗口底混 15%、强调色 13.3% alpha、`layer` 混 15%），
+    /// 现在全部收敛到这里；页面不得再自算强调色底色。
     pub fn accent_soft(&self) -> Hsla {
         motion::mix(self.layer, self.accent, 0.15)
     }
 
     /// 搜索命中块的底：强调色自身的不透明度。亮色模式压得更淡，否则浅底上
-    /// 命中文字会糊；暗色模式反之。数值与卡片列表沿用同一口径
-    /// （`theme.rs::accent_highlight`），两处高亮不会各自漂移。
+    /// 命中文字会糊；暗色模式反之。卡片列表与快捷窗共用本函数。
     pub fn highlight(&self) -> Hsla {
         self.accent
             .opacity(if self.dark { 0.40 } else { 77. / 255. })
@@ -242,10 +240,45 @@ pub fn apply(mode: ThemeMode, accent: Option<Rgba>, cx: &mut App) {
     super::super::font::apply_to_global_theme(cx);
 }
 
-/// 在 `window` 存在时调用（启动路径），确保首帧前主题已就位。
-pub fn apply_for_window(mode: ThemeMode, accent: Option<Rgba>, window: &mut Window, cx: &mut App) {
-    Theme::change(mode, Some(window), cx);
-    apply(mode, accent, cx);
+/// 设置项 + 窗口外观 → 主题模式。`theme` 为 `light`/`dark` 时直接采用，
+/// 其余（含 `system`）跟随系统外观。
+pub fn mode_for(settings: &AppSettings, appearance: Option<WindowAppearance>) -> ThemeMode {
+    match settings.theme.as_str() {
+        "light" => ThemeMode::Light,
+        "dark" => ThemeMode::Dark,
+        _ => match appearance {
+            Some(WindowAppearance::Dark | WindowAppearance::VibrantDark) => ThemeMode::Dark,
+            _ => ThemeMode::Light,
+        },
+    }
+}
+
+/// 设置里选了「跟随系统强调色」时的覆盖色；其余情况返回 `None`，
+/// [`apply`] 会回落到令牌 `accent`。
+pub fn accent_for(settings: &AppSettings) -> Option<Rgba> {
+    if settings.theme_color == "system" {
+        *SYSTEM_ACCENT.lock().expect("system accent cache poisoned")
+    } else {
+        None
+    }
+}
+
+/// 系统强调色缓存：启动时读一次，之后由轮询按 1 秒节流刷新。
+static SYSTEM_ACCENT: std::sync::Mutex<Option<Rgba>> = std::sync::Mutex::new(None);
+
+/// 重新读取系统强调色。返回是否发生变化（调用方据此决定要不要重放主题）。
+pub fn refresh_system_accent() -> bool {
+    static LAST_READ: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+    let mut last = LAST_READ.lock().expect("system accent timer poisoned");
+    if last.is_some_and(|time| time.elapsed() < std::time::Duration::from_secs(1)) {
+        return false;
+    }
+    *last = Some(std::time::Instant::now());
+    let color = crate::platform::accent::read_system_accent();
+    let mut cached = SYSTEM_ACCENT.lock().expect("system accent cache poisoned");
+    let changed = *cached != color;
+    *cached = color;
+    changed
 }
 
 #[cfg(test)]

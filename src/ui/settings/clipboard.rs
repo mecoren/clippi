@@ -52,10 +52,10 @@ impl SettingsPanel {
         let copy_sound_file = app.settings.copy_sound_file.clone();
         // --- borrow released here — `app` is a &AppState reference ---
 
-        let theme = self.theme.clone();
-        let divider = theme.divider;
-        let text_1 = theme.text_1;
-        let text_3 = theme.text_3;
+        let p = self.palette;
+        let divider = p.stroke;
+        let text_1 = p.ink;
+        let text_3 = p.ink_3;
 
         let mut container = div().flex().flex_col().gap(px(12.)).pt(px(8.));
 

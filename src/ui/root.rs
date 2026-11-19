@@ -43,6 +43,7 @@ use super::components::confirm_dialog::ConfirmDialog;
 use super::components::spinner::activity_spinner;
 use super::components::toast::Toast;
 use super::context_menu::{ContextMenu, MenuItemContext};
+use super::design::palette;
 use super::edit_panel::{EditPanel, EditPanelEvent};
 use super::emoji_panel::{EmojiPanel, EmojiPanelEvent};
 use super::filter_bar::FilterBar;
@@ -52,7 +53,6 @@ use super::settings::{SettingsEvent, SettingsPanel};
 use super::sidebar::{Sidebar, SidebarEvent};
 use super::tag_filter::{render_edit_panel, TagDeleteTarget, TagFilterEvent, TagFilterPanel};
 use super::tag_picker::TagPickerPanel;
-use super::theme::ClippiTheme;
 use super::titlebar::{Titlebar, TitlebarEvent};
 use super::type_filter_config::TypeFilterConfigPanel;
 use crate::core::frontend::{PANEL_MARGIN, PANEL_OFFSET_X, PANEL_RADIUS, SYSTEM_DRAWN_FRAME};
@@ -124,7 +124,8 @@ pub struct RootView {
     view_transition_started: Option<Instant>,
     overlay_transitions: HashMap<&'static str, OverlayTransitionState>,
     pinned: bool,
-    theme: ClippiTheme,
+    /// 语义色板快照：窗口底、浮层与 toast 由根视图自绘，随主题重建一次。
+    theme: Palette,
     /// Cached at creation time so the ThemeChanged handler (which only
     /// has access to `&mut App`) can resolve the "system" theme correctly.
     window_appearance: WindowAppearance,
@@ -177,41 +178,25 @@ impl RootView {
         // --- Use cached window_appearance from creation time so ---
         // --- "system" theme resolves correctly even though we ---
         // --- only have &mut App here (not WindowContext). ---
-        self.theme =
-            ClippiTheme::from_settings(&self.state.read(cx).settings, Some(self.window_appearance));
-        let theme = self.theme.clone();
+        let settings = self.state.read(cx).settings.clone();
+        let mode = palette::mode_for(&settings, Some(self.window_appearance));
 
         // --- 令牌表 → gpui-kit 全局主题：输入框、滚动条、提示层、菜单 ---
         // --- 随色板统一；透明窗口底、字号 rem 与字体族一并在 apply 内恢复。 ---
-        let mode = if theme.dark {
-            gpui_kit::component::ThemeMode::Dark
-        } else {
-            gpui_kit::component::ThemeMode::Light
-        };
-        super::design::palette::apply(mode, Some(theme.accent), cx);
+        palette::apply(mode, palette::accent_for(&settings), cx);
+        // 色板来自全局主题，必须在上面的 `apply` 之后重建。
+        self.theme = Palette::current(cx);
 
-        self.titlebar.update(cx, |titlebar, cx| {
-            titlebar.set_theme(theme.clone(), cx);
-        });
-        self.search_box.update(cx, |search_box, cx| {
-            search_box.set_theme(theme.clone(), cx);
-        });
-        self.filter_bar.update(cx, |filter_bar, cx| {
-            filter_bar.set_theme(theme.clone(), cx);
-        });
-        self.list_view.update(cx, |list_view, cx| {
-            list_view.set_theme(theme.clone(), cx);
-        });
-        self.settings_panel.update(cx, |panel, cx| {
-            panel.reload_theme(theme.clone(), cx);
-        });
-        self.edit_panel.update(cx, |panel, cx| {
-            panel.set_theme(cx);
-        });
+        // 子视图不再各自持有主题副本，统一在 render 里取 `Palette::current`；
+        // 这里只负责让它们重画。
+        self.titlebar.update(cx, |_, cx| cx.notify());
+        self.search_box.update(cx, |_, cx| cx.notify());
+        self.filter_bar.update(cx, |_, cx| cx.notify());
+        self.list_view.update(cx, |_, cx| cx.notify());
+        self.settings_panel.update(cx, |_, cx| cx.notify());
+        self.edit_panel.update(cx, |_, cx| cx.notify());
         self.emoji_panel.update(cx, |_, cx| cx.notify());
-        self.sidebar.update(cx, |sidebar, cx| {
-            sidebar.set_theme(cx);
-        });
+        self.sidebar.update(cx, |_, cx| cx.notify());
         self.focus_recovery_pending = true;
         cx.notify();
     }
@@ -227,50 +212,31 @@ impl RootView {
         window_manager: Entity<WindowManager>,
         cx: &mut Context<Self>,
     ) -> Self {
-        super::theme::refresh_system_accent();
+        palette::refresh_system_accent();
         let app_state = state.read(cx);
         let items = app_state.visible_items();
         let window_appearance = window.appearance();
-        let theme = ClippiTheme::from_settings(&app_state.settings, Some(window_appearance));
-        super::design::palette::apply(
-            if theme.dark {
-                gpui_kit::component::ThemeMode::Dark
-            } else {
-                gpui_kit::component::ThemeMode::Light
-            },
-            Some(theme.accent),
+        let settings = app_state.settings.clone();
+        palette::apply(
+            palette::mode_for(&settings, Some(window_appearance)),
+            palette::accent_for(&settings),
             cx,
         );
+        let theme = Palette::current(cx);
         let list_view = cx.new(|cx| {
-            ClipboardListView::new(
-                items,
-                state.clone(),
-                theme.clone(),
-                window,
-                cx,
-                window_manager.clone(),
-            )
+            ClipboardListView::new(items, state.clone(), window, cx, window_manager.clone())
         });
         list_view.update(cx, |list, cx| list.focus(window, cx));
-        let titlebar = cx.new(|_cx| Titlebar::new(state.clone(), list_view.clone(), theme.clone()));
-        let search_box = cx
-            .new(|cx| SearchBox::new(state.clone(), list_view.clone(), theme.clone(), window, cx));
-        let filter_bar =
-            cx.new(|_cx| FilterBar::new(state.clone(), list_view.clone(), theme.clone()));
+        let titlebar = cx.new(|_cx| Titlebar::new(state.clone(), list_view.clone()));
+        let search_box = cx.new(|cx| SearchBox::new(state.clone(), list_view.clone(), window, cx));
+        let filter_bar = cx.new(|_cx| FilterBar::new(state.clone(), list_view.clone()));
         let emoji_panel = cx.new(|cx| EmojiPanel::new(state.clone(), window, cx));
         // Wire up search_box reference for Ctrl+F keyboard shortcut.
         list_view.update(cx, |list, _cx| {
             list.search_bar = Some(search_box.clone());
         });
-        let settings_panel = cx.new(|cx| {
-            SettingsPanel::new(
-                state.clone(),
-                window_manager.clone(),
-                theme.clone(),
-                window,
-                cx,
-            )
-        });
+        let settings_panel =
+            cx.new(|cx| SettingsPanel::new(state.clone(), window_manager.clone(), window, cx));
         let edit_panel = cx.new(|cx| EditPanel::new(state.clone(), window, cx));
         let sidebar = cx.new(|_cx| Sidebar::new(state.clone(), list_view.clone()));
         let tag_filter_panel = cx.new(|cx| {
@@ -1081,7 +1047,7 @@ impl Render for RootView {
         if self.pending_tag_delete.is_some() && (!is_clipboard || !tag_panel_open) {
             self.pending_tag_delete = None;
         }
-        let theme = self.theme.clone();
+        let theme = self.theme;
         // 主窗口外描边：1 物理像素的 OS 风格描边，取描边强档。
         let panel_border = Rgba::from(Palette::current(cx).stroke_strong);
         // 1 physical-pixel border, DPI-aware — matches OS system border width.
@@ -1764,7 +1730,7 @@ impl Render for RootView {
                     .top(px(0.))
                     .bottom(px(0.))
                     .rounded(px(panel_corner))
-                    .bg(theme.bg)
+                    .bg(theme.background)
                     // DWM draws the window stroke on Windows (`SYSTEM_DRAWN_FRAME`);
                     // the app draws it and its own shadow everywhere else.
                     .when(panel_stroke, |panel| {
@@ -1803,15 +1769,15 @@ impl Render for RootView {
                                                         .bottom(px(12.))
                                                         .size(px(22.))
                                                         .rounded(Radius::Pill.scaled())
-                                                        .bg(theme.toast_bg)
+                                                        .bg(Hsla { a: 1., ..theme.tip })
                                                         .border(px(1.))
-                                                        .border_color(theme.divider)
+                                                        .border_color(theme.stroke)
                                                         .flex()
                                                         .items_center()
                                                         .justify_center()
                                                         .child(activity_spinner(
                                                             "transfer-refresh-spinner",
-                                                            theme.accent,
+                                                            theme.accent.into(),
                                                             17.,
                                                         )),
                                                 )
@@ -1976,8 +1942,7 @@ impl Render for RootView {
                             if is_card_more {
                                 ContextMenu::for_card_more()
                                     .with_position(menu_x, menu_y, win_w, win_h)
-                                    .theme(self.theme.clone())
-                                    .on_action({
+                                                                        .on_action({
                                         let l = l.clone();
                                         move |action, window, cx| {
                                             l.update(cx, |lst, cx| {
@@ -1997,8 +1962,7 @@ impl Render for RootView {
                             } else if is_transfer_batch {
                                 ContextMenu::for_transfer_batch()
                                     .with_position(menu_x, menu_y, win_w, win_h)
-                                    .theme(self.theme.clone())
-                                    .on_action({
+                                                                        .on_action({
                                         let l = l.clone();
                                         move |action, window, cx| {
                                             l.update(cx, |lst, cx| {
@@ -2020,8 +1984,7 @@ impl Render for RootView {
                                 let can_merge = l.read(cx).can_merge_selected_items(cx);
                                 ContextMenu::for_batch(count, can_merge)
                                     .with_position(menu_x, menu_y, win_w, win_h)
-                                    .theme(self.theme.clone())
-                                    .on_action({
+                                                                        .on_action({
                                         let l = l.clone();
                                         move |action, window, cx| {
                                             l.update(cx, |lst, cx| {
@@ -2053,8 +2016,7 @@ impl Render for RootView {
                                     });
                                     ContextMenu::for_transfer_entry(is_local, is_pinned)
                                         .with_position(menu_x, menu_y, win_w, win_h)
-                                        .theme(self.theme.clone())
-                                        .on_action({
+                                                                                .on_action({
                                             let l = l.clone();
                                             move |action, window, cx| {
                                                 l.update(cx, |lst, cx| {
@@ -2076,8 +2038,7 @@ impl Render for RootView {
                                     ctx.transfer_enabled = self.state.read(cx).transfer_available();
                                     ContextMenu::for_item(&ctx)
                                         .with_position(menu_x, menu_y, win_w, win_h)
-                                        .theme(self.theme.clone())
-                                        .on_action({
+                                                                                .on_action({
                                             let l = l.clone();
                                             move |action, window, cx| {
                                                 l.update(cx, |lst, cx| {
@@ -2190,8 +2151,7 @@ impl Render for RootView {
                 let dialog = list.read(cx).confirm_dialog_state().cloned();
                 let dialog_element: AnyElement = match dialog {
                     Some(ConfirmDialogState::Single { id }) => ConfirmDialog::delete_single()
-                        .theme(self.theme.clone())
-                        .focus_handle(dialog_focus.clone())
+                                                .focus_handle(dialog_focus.clone())
                         .on_confirm({
                             let s = app_state.clone();
                             let l = list.clone();
@@ -2211,8 +2171,7 @@ impl Render for RootView {
                         })
                         .render_animated(window, cx, confirm_dialog_gen),
                     Some(ConfirmDialogState::Batch { count }) => ConfirmDialog::delete_batch(count)
-                        .theme(self.theme.clone())
-                        .focus_handle(dialog_focus.clone())
+                                                .focus_handle(dialog_focus.clone())
                         .on_confirm({
                             let s = app_state.clone();
                             let l = list.clone();
@@ -2233,8 +2192,7 @@ impl Render for RootView {
                         .render_animated(window, cx, confirm_dialog_gen),
                     Some(ConfirmDialogState::TransferBatch { hashes }) => {
                         ConfirmDialog::delete_batch(hashes.len())
-                            .theme(self.theme.clone())
-                            .focus_handle(dialog_focus.clone())
+                                                        .focus_handle(dialog_focus.clone())
                             .on_confirm({
                                 let state = app_state.clone();
                                 let list = list.clone();
@@ -2256,8 +2214,7 @@ impl Render for RootView {
                             .render_animated(window, cx, confirm_dialog_gen)
                     }
                     Some(ConfirmDialogState::Transfer { hash }) => ConfirmDialog::delete_single()
-                        .theme(self.theme.clone())
-                        .focus_handle(dialog_focus.clone())
+                                                .focus_handle(dialog_focus.clone())
                         .on_confirm({
                             let state = app_state.clone();
                             let list = list.clone();
@@ -2299,8 +2256,7 @@ impl Render for RootView {
                 let root_entity = cx.entity().clone();
 
                 let dialog_element = ConfirmDialog::delete_tag(&target.name)
-                    .theme(self.theme.clone())
-                    .focus_handle(dialog_focus)
+                                        .focus_handle(dialog_focus)
                     .on_confirm({
                         let app_state = app_state.clone();
                         let tag_filter = tag_filter.clone();
@@ -2413,7 +2369,7 @@ impl Render for RootView {
                     add_button_label,
                     add_button_recording: false,
                     fixed_height: None,
-                    theme: self.theme.clone(),
+                    theme: self.theme,
                     layout: (
                         hotkey_blacklist_popup_opacity,
                         hotkey_blacklist_popup_scale,
@@ -2511,7 +2467,7 @@ impl Render for RootView {
                     add_button_label,
                     add_button_recording: recording_active,
                     fixed_height: None,
-                    theme: self.theme.clone(),
+                    theme: self.theme,
                     layout: (
                         paste_shortcuts_popup_opacity,
                         paste_shortcuts_popup_scale,
@@ -2627,7 +2583,7 @@ impl Render for RootView {
                     add_button_label,
                     add_button_recording: false,
                     fixed_height: None,
-                    theme: self.theme.clone(),
+                    theme: self.theme,
                     layout: (
                         app_blacklist_popup_opacity,
                         app_blacklist_popup_scale,
@@ -2688,8 +2644,8 @@ impl Render for RootView {
             })
             .when(privacy_popup_visible, |root| {
                 let selected = self.state.read(cx).settings.privacy_protection_types.clone();
-                let theme = self.theme.clone();
-                let hover = theme.btn_hover;
+                let theme = self.theme;
+                let hover = theme.on_card("hover");
                 let rows = [
                     ("secret", "SecretIcon", I18nKey::PrivacySecret),
                     ("phone", "PhoneIcon", I18nKey::PrivacyPhone),
@@ -2745,7 +2701,9 @@ impl Render for RootView {
             })
             .when(local_backup_popup_visible, |root| {
                 root.child(SettingsPanel::render_local_backup_dialog_overlay(
-                    self.settings_panel.clone(), self.theme.clone(), local_backup_popup_layout, cx,
+                    self.settings_panel.clone(),
+                    local_backup_popup_layout,
+                    cx,
                 ))
             })
             // --- Changelog notes (one release, opened from the version list) ---
@@ -2774,7 +2732,7 @@ impl Render for RootView {
                     add_button_label: None,
                     add_button_recording: false,
                     fixed_height: Some(420.),
-                    theme: self.theme.clone(),
+                    theme: self.theme,
                     layout: changelog_detail_popup_layout,
                     on_close: Rc::new(move |_window, cx| {
                         settings.update(cx, |panel, cx| panel.close_changelog_entry(cx));
@@ -2871,8 +2829,7 @@ impl Render for RootView {
                                 )
                                 .confirm_label(I18nKey::BtnClearData.text())
                                 .danger(true)
-                                .theme(self.theme.clone())
-                                .on_confirm({
+                                                                .on_confirm({
                                     let root_entity = root_entity.clone();
                                     let app_state = app_state.clone();
                                     move |_window, cx| {
@@ -2922,8 +2879,7 @@ impl Render for RootView {
                 let dialog_element: AnyElement = match action {
                     Some(hotkey::HotkeyConfirmAction::AddBlacklist { app_name }) => {
                         ConfirmDialog::add_blacklist(&app_name)
-                            .theme(self.theme.clone())
-                            .on_confirm({
+                                                        .on_confirm({
                                 let wm = wm.clone();
                                 let app_state = app_state.clone();
                                 let settings = settings.clone();
@@ -2960,8 +2916,7 @@ impl Render for RootView {
                     }
                     Some(hotkey::HotkeyConfirmAction::RemoveBlacklist { app_name }) => {
                         ConfirmDialog::remove_blacklist(&app_name)
-                            .theme(self.theme.clone())
-                            .on_confirm({
+                                                        .on_confirm({
                                 let wm = wm.clone();
                                 let app_state = app_state.clone();
                                 let settings = settings.clone();
@@ -2995,8 +2950,7 @@ impl Render for RootView {
                     }
                     Some(hotkey::HotkeyConfirmAction::AddPasteShortcut { app_name, shortcut }) => {
                         ConfirmDialog::add_paste_shortcut(&app_name, &shortcut)
-                            .theme(self.theme.clone())
-                            .on_confirm({
+                                                        .on_confirm({
                                 let settings = settings.clone();
                                 let app_name = app_name.clone();
                                 let shortcut = shortcut.clone();
@@ -3025,8 +2979,7 @@ impl Render for RootView {
                     }
                     Some(hotkey::HotkeyConfirmAction::RemovePasteShortcut { app_name }) => {
                         ConfirmDialog::remove_paste_shortcut(&app_name)
-                            .theme(self.theme.clone())
-                            .on_confirm({
+                                                        .on_confirm({
                                 let settings = settings.clone();
                                 let app_name = app_name.clone();
                                 move |_window, cx| {
@@ -3055,8 +3008,7 @@ impl Render for RootView {
                     // ── Clipboard app blacklist ──
                     Some(hotkey::HotkeyConfirmAction::AddClipboardBlacklist { app_name }) => {
                         ConfirmDialog::add_clipboard_blacklist(&app_name)
-                            .theme(self.theme.clone())
-                            .on_confirm({
+                                                        .on_confirm({
                                 let wm = wm.clone();
                                 let app_state = app_state.clone();
                                 let settings = settings.clone();
@@ -3096,8 +3048,7 @@ impl Render for RootView {
                     }
                     Some(hotkey::HotkeyConfirmAction::RemoveClipboardBlacklist { app_name }) => {
                         ConfirmDialog::remove_clipboard_blacklist(&app_name)
-                            .theme(self.theme.clone())
-                            .on_confirm({
+                                                        .on_confirm({
                                 let wm = wm.clone();
                                 let app_state = app_state.clone();
                                 let settings = settings.clone();
@@ -3140,8 +3091,7 @@ impl Render for RootView {
                             .title(I18nKey::WinVTakeoverConfirmTitle.text())
                             .message(I18nKey::WinVTakeoverConfirmMsg.fmt(&[&fallback_hotkey]))
                             .confirm_label(I18nKey::DialogConfirm.text())
-                            .theme(self.theme.clone())
-                            .on_confirm({
+                                                        .on_confirm({
                                 let wm = wm.clone();
                                 let settings = settings.clone();
                                 let app_state = app_state.clone();
@@ -3175,8 +3125,7 @@ impl Render for RootView {
                         .title(I18nKey::WinVTakeoverRestoreTitle.text())
                         .message(I18nKey::WinVTakeoverRestoreMsg.text())
                         .confirm_label(I18nKey::DialogConfirm.text())
-                        .theme(self.theme.clone())
-                        .on_confirm({
+                                                .on_confirm({
                             let wm = wm.clone();
                             let settings = settings.clone();
                             let app_state = app_state.clone();
@@ -3209,8 +3158,7 @@ impl Render for RootView {
                         .title(I18nKey::WinVManualSetupHint.text())
                         .message(I18nKey::WinVManualSetupContent.text())
                         .confirm_label(I18nKey::DialogConfirm.text())
-                        .theme(self.theme.clone())
-                        .on_confirm({
+                                                .on_confirm({
                             let settings = settings.clone();
                             move |_window, cx| {
                                 settings.update(cx, |panel, cx| {
@@ -3348,8 +3296,8 @@ impl Render for RootView {
                         .top(px(y.min((win_h - 32.).max(0.))))
                         .max_w(px((win_w - PANEL_OFFSET_X - 8.).max(1.)))
                         .px(px(8.)).py(px(4.)).rounded(px(4.))
-                        .bg(self.theme.bg).border_1().border_color(panel_border)
-                        .text_color(self.theme.text_1).text_size(super::font::fs(10.))
+                        .bg(self.theme.background).border_1().border_color(panel_border)
+                        .text_color(self.theme.ink).text_size(super::font::fs(10.))
                         // 提示层不投影：Mica 合成下会起光晕（Argus AGENTS.md 第 8 条）。
                         .shadow_none().child(label)
                 )

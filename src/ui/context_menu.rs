@@ -8,6 +8,7 @@
 //! --- - Single and batch mode variants with conditional items ---
 //! --- - Position clamping to container bounds ---
 
+use crate::ui::design::palette::Palette;
 use crate::ui::design::size::Radius;
 use crate::ui::font::fs;
 use std::rc::Rc;
@@ -18,7 +19,6 @@ use gpui::*;
 use super::widgets;
 
 use crate::core::i18n_keys::I18nKey;
-use crate::ui::theme::ClippiTheme;
 
 type MenuActionHandler = Rc<dyn Fn(&str, &mut Window, &mut App)>;
 type MenuDismissHandler = Rc<dyn Fn(&mut Window, &mut App)>;
@@ -91,7 +91,6 @@ pub struct ContextMenu {
     width: f32,
     container_width: f32,
     container_height: f32,
-    theme: ClippiTheme,
     on_action: Option<MenuActionHandler>,
     on_dismiss: Option<MenuDismissHandler>,
 }
@@ -151,7 +150,6 @@ impl ContextMenu {
             width: MENU_WIDTH,
             container_width: f32::MAX,
             container_height: f32::MAX,
-            theme: ClippiTheme::dark(),
             on_action: None,
             on_dismiss: None,
         }
@@ -622,11 +620,6 @@ impl ContextMenu {
         self
     }
 
-    pub fn theme(mut self, theme: ClippiTheme) -> Self {
-        self.theme = theme;
-        self
-    }
-
     /// Estimate the rendered height of this menu based on its items.
     pub fn estimated_height(&self) -> f32 {
         let mut h: f32 = MENU_V_PADDING;
@@ -653,21 +646,21 @@ impl RenderOnce for ContextMenu {
             width,
             container_width,
             container_height,
-            theme,
             on_action,
             on_dismiss,
         } = self;
 
-        let surface = theme.panel_surface;
-        let sep_line = theme.panel_sep_line;
+        let p = Palette::current(_cx);
+        let surface = p.flyout;
+        let sep_line = p.stroke;
         // Floating menus need more contrast than buttons on the main surface.
-        let item_hover = theme.surface_press;
-        let accent = theme.accent;
-        let text_1 = theme.text_1;
-        let text_2 = theme.text_2;
-        let text_3 = theme.text_3;
-        let danger = theme.danger;
-        let fav_color = theme.fav_color;
+        let item_hover = p.on_card("press");
+        let accent = p.accent;
+        let text_1 = p.ink;
+        let text_2 = p.ink_2;
+        let text_3 = p.ink_3;
+        let danger = p.danger;
+        let fav_color = p.fav;
 
         // --- Clamp position to container bounds with height awareness. ---
         // Flips the menu above the cursor if it would overflow the bottom edge.
@@ -790,8 +783,8 @@ impl RenderOnce for ContextMenu {
                                     control.clone(),
                                     icon,
                                     fs(13.),
-                                    Hsla::from(normal_icon),
-                                    Hsla::from(hover_icon),
+                                    normal_icon,
+                                    hover_icon,
                                 )
                             })
                             .child({

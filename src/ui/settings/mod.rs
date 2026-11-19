@@ -44,7 +44,6 @@ use crate::ui::design::motion;
 use crate::ui::design::palette::Palette;
 use crate::ui::design::size::{Ctrl, IconSize, Radius, Space};
 use crate::ui::design::typography::{self, type_role};
-use crate::ui::theme::ClippiTheme;
 use crate::ui::widgets;
 use crate::ui::window_manager::WindowManager;
 
@@ -83,9 +82,7 @@ pub struct SettingsPanel {
     active_tab: usize,
     state: Entity<AppState>,
     window_manager: Entity<WindowManager>,
-    theme: ClippiTheme,
-    /// 语义色板：设置页共享层（分组、行、开关、选项）唯一取色入口。
-    /// 与 `theme` 并存是因为子页仍有大量 `ClippiTheme` 字段在用，逐页迁移；
+    /// 语义色板：设置页（分组、行、开关、选项）唯一取色入口。
     /// 每帧 `render` 开头刷新，保证主题切换后当帧即生效。
     palette: Palette,
     scroll_handle: ScrollHandle,
@@ -190,7 +187,6 @@ impl SettingsPanel {
     pub fn new(
         state: Entity<AppState>,
         window_manager: Entity<WindowManager>,
-        theme: ClippiTheme,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -240,7 +236,6 @@ impl SettingsPanel {
             active_tab: 0,
             state,
             window_manager,
-            theme,
             palette: Palette::current(cx),
             scroll_handle: ScrollHandle::default(),
             backend_collapse_states: HashMap::new(),
@@ -284,12 +279,6 @@ impl SettingsPanel {
             slider_drags: HashMap::new(),
             font_picker_scroll_frames: 0,
         }
-    }
-
-    /// Reload theme from the computed ClippiTheme (called by RootView after ThemeChanged).
-    pub fn reload_theme(&mut self, theme: ClippiTheme, cx: &mut Context<Self>) {
-        self.theme = theme;
-        cx.notify();
     }
 
     /// Switch to a specific tab by index.
@@ -363,7 +352,6 @@ impl SettingsPanel {
     ) -> impl IntoElement {
         let wm = self.window_manager.clone();
         let this = cx.entity().clone();
-        let theme = self.theme.clone();
 
         let show_upload = self.config_sync_upload_confirm.is_some();
         let show_apply = wm.read(cx).config_sync_pending_snapshot().is_some();
@@ -391,7 +379,6 @@ impl SettingsPanel {
                 let backend_id = self.config_sync_backend_id.clone();
                 let wm = wm.clone();
                 let this = this.clone();
-                let theme = theme.clone();
 
                 root.child(
                     ConfirmDialog::new()
@@ -399,7 +386,6 @@ impl SettingsPanel {
                         .message(msg)
                         .confirm_label(I18nKey::BtnApply.text())
                         .danger(false)
-                        .theme(theme)
                         .on_confirm({
                             let wm = wm.clone();
                             let this = this.clone();
@@ -436,7 +422,6 @@ impl SettingsPanel {
             .when(show_apply, |root| {
                 let wm = wm.clone();
                 let this = this.clone();
-                let theme = theme.clone();
                 let snapshot = wm.read(cx).config_sync_pending_snapshot().cloned();
 
                 if let Some(ref snap) = snapshot {
@@ -452,8 +437,7 @@ impl SettingsPanel {
                             .message(msg)
                             .confirm_label(I18nKey::BtnRestartNow.text())
                             .danger(false)
-                            .theme(theme)
-                            .on_confirm({
+                                .on_confirm({
                                 let wm = wm.clone();
                                 move |_window, app| {
                                     wm.update(app, |wm, cx| {
@@ -495,7 +479,6 @@ impl SettingsPanel {
         };
         let wm = self.window_manager.clone();
         let this = cx.entity().clone();
-        let theme = self.theme.clone();
 
         div().when(show, |root| {
             let id = self.delete_backend_confirm.clone().unwrap_or_default();
@@ -503,7 +486,6 @@ impl SettingsPanel {
             // backdrop, so no second dimming layer is drawn here.
             root.absolute().size_full().top_0().left_0().child(
                 ConfirmDialog::delete_backend()
-                    .theme(theme)
                     .on_confirm({
                         let wm = wm.clone();
                         let this = this.clone();
@@ -550,7 +532,7 @@ impl Render for SettingsPanel {
         self.palette = Palette::current(cx);
         let active = self.active_tab;
         let changelog_open = self.changelog_open;
-        let theme = &self.theme;
+        let p = self.palette;
         let this = cx.entity().clone();
         let focus_handle = self.focus_handle.clone();
 
@@ -561,7 +543,7 @@ impl Render for SettingsPanel {
             .w_full()
             .overflow_hidden()
             .rounded_b(px(12.))
-            .bg(theme.bg)
+            .bg(p.background)
             .track_focus(&focus_handle)
             //  Navigation bar (height 36px, mt 8px matching Slint y=8px)
             .child(
@@ -601,7 +583,7 @@ impl Render for SettingsPanel {
                                 "settings-back",
                                 "BackIcon",
                                 fs(16.),
-                                Hsla::from(theme.text_2),
+                                p.ink_2,
                             ))
                             .child(widgets::icon_probe(
                                 "settings-back",
@@ -613,7 +595,7 @@ impl Render for SettingsPanel {
                         div()
                             .text_size(fs(16.))
                             .font_weight(FontWeight::BOLD)
-                            .text_color(theme.text_1)
+                            .text_color(p.ink)
                             .child(if changelog_open {
                                 I18nKey::Changelog.text()
                             } else {
@@ -651,7 +633,7 @@ impl Render for SettingsPanel {
                     .flex_col()
                     .overflow_hidden()
                     .rounded_b(px(12.))
-                    .bg(theme.bg)
+                    .bg(p.background)
                     .pt(px(8.))
                     .child(
                         div()

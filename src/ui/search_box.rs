@@ -18,10 +18,10 @@ use crate::core::i18n_keys::I18nKey;
 use crate::state::app::AppState;
 
 use super::clipboard_list::{ClipboardListEvent, ClipboardListView};
+use super::design::palette::Palette;
 use super::design::size::{Ctrl, IconSize, Radius, Space};
 use super::design::typography::{self, type_role};
 use super::emoji_panel::EmojiPanel;
-use super::theme::ClippiTheme;
 use super::widgets;
 
 /// Debounce for applying search keywords: only the last stable keyword typed
@@ -62,7 +62,6 @@ pub struct SearchBox {
     picker: Option<Entity<EmojiPanel>>,
     state: Entity<AppState>,
     list_view: Entity<ClipboardListView>,
-    theme: ClippiTheme,
     last_lang_version: u64,
     /// Whether the cursor is over the new-entry button, which drives its
     /// expand/collapse transition.
@@ -74,7 +73,6 @@ impl SearchBox {
     pub fn new(
         state: Entity<AppState>,
         list_view: Entity<ClipboardListView>,
-        theme: ClippiTheme,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -127,16 +125,10 @@ impl SearchBox {
             picker: None,
             state,
             list_view,
-            theme,
             last_lang_version: crate::core::i18n::lang_version(),
             new_item_hovered: false,
             _subscriptions,
         }
-    }
-
-    pub fn set_theme(&mut self, theme: ClippiTheme, cx: &mut Context<Self>) {
-        self.theme = theme;
-        cx.notify();
     }
 
     /// Reuse the complete search row, including its add button, for the picker.
@@ -179,22 +171,23 @@ impl Render for SearchBox {
             });
         }
 
-        let theme = &self.theme;
+        let p = Palette::current(cx);
         let active_input = self
             .picker
             .as_ref()
             .map(|picker| picker.read(cx).input_entity())
             .unwrap_or_else(|| self.input.clone());
-        let text_2 = theme.text_2;
-        let text_3 = theme.text_3;
-        let surface = theme.surface;
-        let divider = theme.divider;
-        let accent = theme.accent;
+        // `mix_rgba` 与下游样式都按 `Rgba` 接口工作，这里一次性转换。
+        let text_2: Rgba = p.ink_2.into();
+        let text_3: Rgba = p.ink_3.into();
+        let surface: Rgba = p.on_card("layer").into();
+        let divider: Rgba = p.stroke.into();
+        let accent: Rgba = p.accent.into();
         // Glyph and label are knocked out of the solid accent pill. The panel
-        // background behind the button is `theme.bg`, but the surface token is a
-        // step brighter in both themes, which keeps the small text legible on a
-        // saturated fill.
-        let knockout = theme.surface;
+        // background behind the button is `window-bg`, but the surface token is
+        // a step brighter in both themes, which keeps the small text legible on
+        // a saturated fill.
+        let knockout: Rgba = p.on_card("layer").into();
         let this = cx.entity();
 
         // --- New-entry button: hovering expands it to reveal its label, which ---

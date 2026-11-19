@@ -18,7 +18,6 @@ use super::components::shortcut_hint::external_shortcut;
 use super::design::palette::Palette;
 use super::design::size::{Ctrl, IconSize, Radius, Space};
 use super::design::typography::{self, type_role};
-use super::theme::ClippiTheme;
 use super::widgets;
 
 pub(crate) struct FilterDef {
@@ -273,18 +272,13 @@ pub struct FilterBar {
     tag_panel_open: bool,
     filter_config_open: bool,
     alt_shortcuts_available: bool,
-    theme: ClippiTheme,
     source_scroll: ScrollHandle,
     measured_width: std::rc::Rc<std::cell::Cell<f32>>,
     source_scroll_left: std::cell::Cell<bool>,
 }
 
 impl FilterBar {
-    pub fn new(
-        state: Entity<AppState>,
-        list_view: Entity<ClipboardListView>,
-        theme: ClippiTheme,
-    ) -> Self {
+    pub fn new(state: Entity<AppState>, list_view: Entity<ClipboardListView>) -> Self {
         Self {
             source_scroll: ScrollHandle::new(),
             measured_width: Default::default(),
@@ -294,7 +288,6 @@ impl FilterBar {
             tag_panel_open: false,
             filter_config_open: false,
             alt_shortcuts_available: false,
-            theme,
         }
     }
 
@@ -327,11 +320,6 @@ impl FilterBar {
             self.alt_shortcuts_available = available;
             cx.notify();
         }
-    }
-
-    pub fn set_theme(&mut self, theme: ClippiTheme, cx: &mut Context<Self>) {
-        self.theme = theme;
-        cx.notify();
     }
 
     fn source_bar(&self, chip_width: f32, chip_gap: f32, cx: &mut Context<Self>) -> Div {
@@ -376,7 +364,6 @@ impl FilterBar {
 
 impl Render for FilterBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = &self.theme;
         let p = Palette::current(cx);
         let accent = p.accent;
         let text_2 = p.ink_2;
@@ -534,7 +521,7 @@ impl Render for FilterBar {
                                         (index + 1).to_string(),
                                         alt_pressed && index < 9,
                                         button,
-                                        theme,
+                                        &p,
                                         window,
                                         cx,
                                     )

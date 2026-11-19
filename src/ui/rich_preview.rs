@@ -564,17 +564,19 @@ mod contrast_tests {
 
     #[test]
     fn office_black_and_white_follow_theme_when_unreadable() {
-        for theme in [
-            super::super::theme::ClippiTheme::dark(),
-            super::super::theme::ClippiTheme::light(),
-        ] {
+        use crate::ui::design::tokens;
+        use gpui::{Hsla, Rgba};
+        for dark in [true, false] {
+            let flattened = tokens::token("window-bg", dark).blend(tokens::token("layer", dark));
+            let surface: Rgba = Hsla { a: 1., ..flattened }.into();
+            let text_1: Rgba = tokens::token("ink", dark).into();
             for color in [rgb(0), rgb(0xffffff)] {
-                let result = preview_text_color(color, theme.surface, theme.text_1);
-                assert!(contrast(result, theme.surface) >= 4.5);
-                if contrast(color, theme.surface) >= 4.5 {
+                let result = preview_text_color(color, surface, text_1);
+                assert!(contrast(result, surface) >= 4.5);
+                if contrast(color, surface) >= 4.5 {
                     assert_eq!(result, color);
                 } else {
-                    assert_eq!(result, theme.text_1);
+                    assert_eq!(result, text_1);
                 }
             }
         }

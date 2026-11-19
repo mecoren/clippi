@@ -12,7 +12,6 @@ use super::components::shortcut_hint::{shortcut_popover, shortcut_progress};
 use super::design::palette::Palette;
 use super::design::size::{Ctrl, IconSize, Radius, Space};
 use super::design::typography::{self, type_role};
-use super::theme::ClippiTheme;
 use super::widgets;
 
 /// Shared hit area and hover treatment for every titlebar action. Call sites
@@ -77,15 +76,10 @@ pub struct Titlebar {
     emoji_shortcut_available: bool,
     hotkeys_shortcut_available: bool,
     transfer_shortcut_available: bool,
-    theme: ClippiTheme,
 }
 
 impl Titlebar {
-    pub fn new(
-        state: Entity<AppState>,
-        list_view: Entity<ClipboardListView>,
-        theme: ClippiTheme,
-    ) -> Self {
+    pub fn new(state: Entity<AppState>, list_view: Entity<ClipboardListView>) -> Self {
         Self {
             state,
             list_view,
@@ -95,7 +89,6 @@ impl Titlebar {
             emoji_shortcut_available: false,
             hotkeys_shortcut_available: false,
             transfer_shortcut_available: false,
-            theme,
         }
     }
 
@@ -131,18 +124,12 @@ impl Titlebar {
             cx.notify();
         }
     }
-
-    pub fn set_theme(&mut self, theme: ClippiTheme, cx: &mut Context<Self>) {
-        self.theme = theme;
-        cx.notify();
-    }
 }
 
 impl EventEmitter<TitlebarEvent> for Titlebar {}
 
 impl Render for Titlebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = &self.theme;
         let (hotkeys_active, fav_active, show_hotkeys_filter, show_favorites_filter) = {
             let state = self.state.read(cx);
             let hotkeys_active = state.filters.is_hotkeys_active();
@@ -293,11 +280,7 @@ impl Render for Titlebar {
                                 .when(
                                     self.emoji_shortcut_available && emoji_hint_progress > 0.001,
                                     |slot| {
-                                        slot.child(shortcut_popover(
-                                            "E",
-                                            emoji_hint_progress,
-                                            theme,
-                                        ))
+                                        slot.child(shortcut_popover("E", emoji_hint_progress, &p))
                                     },
                                 ),
                         )
@@ -347,11 +330,7 @@ impl Render for Titlebar {
                                     self.hotkeys_shortcut_available
                                         && hotkeys_hint_progress > 0.001,
                                     |slot| {
-                                        slot.child(shortcut_popover(
-                                            "H",
-                                            hotkeys_hint_progress,
-                                            theme,
-                                        ))
+                                        slot.child(shortcut_popover("H", hotkeys_hint_progress, &p))
                                     },
                                 ),
                         )
@@ -397,7 +376,7 @@ impl Render for Titlebar {
                                         slot.child(shortcut_popover(
                                             "T",
                                             transfer_hint_progress,
-                                            theme,
+                                            &p,
                                         ))
                                     },
                                 ),
@@ -449,7 +428,7 @@ impl Render for Titlebar {
                                         slot.child(shortcut_popover(
                                             "D",
                                             favorite_hint_progress,
-                                            theme,
+                                            &p,
                                         ))
                                     },
                                 ),

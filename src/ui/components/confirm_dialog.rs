@@ -24,7 +24,6 @@ use gpui::*;
 use crate::ui::design::motion;
 use crate::ui::design::palette::Palette;
 use crate::ui::design::size::Radius;
-use crate::ui::theme::ClippiTheme;
 use crate::ui::transition::keyed_transition;
 use crate::ui::widgets;
 
@@ -49,7 +48,6 @@ pub struct ConfirmDialog {
     confirm_label: String,
     cancel_label: String,
     danger: bool,
-    theme: ClippiTheme,
     on_confirm: Option<DialogHandler>,
     on_cancel: Option<DialogHandler>,
     options: Vec<DialogOption>,
@@ -64,7 +62,6 @@ impl ConfirmDialog {
             confirm_label: I18nKey::DialogConfirm.text().into(),
             cancel_label: I18nKey::BtnCancel.text().into(),
             danger: false,
-            theme: ClippiTheme::dark(),
             on_confirm: None,
             on_cancel: None,
             options: Vec::new(),
@@ -91,11 +88,6 @@ impl ConfirmDialog {
 
     pub fn danger(mut self, danger: bool) -> Self {
         self.danger = danger;
-        self
-    }
-
-    pub fn theme(mut self, theme: ClippiTheme) -> Self {
-        self.theme = theme;
         self
     }
 
@@ -239,7 +231,6 @@ impl ConfirmDialog {
             confirm_label,
             cancel_label,
             danger: is_danger,
-            theme,
             on_confirm,
             on_cancel,
             options,
@@ -271,14 +262,10 @@ impl ConfirmDialog {
             (1.0, 1.0)
         };
 
-        let confirm_color = if is_danger {
-            theme.danger
-        } else {
-            theme.accent
-        };
+        let p = Palette::current(cx);
+        let confirm_color = if is_danger { p.danger } else { p.accent };
         // 确认钮文字跟底色走语义对色（danger→on_danger，accent→on_accent），
         // 不再写死白色。
-        let p = Palette::current(cx);
         let confirm_text = Rgba::from(if is_danger { p.on_danger } else { p.on_accent });
 
         if let Some(ref handle) = focus_handle {
@@ -323,23 +310,23 @@ impl ConfirmDialog {
             .child(
                 div()
                     .w(px(280. * scale))
-                    .bg(theme.panel_surface)
+                    .bg(p.flyout)
                     .rounded(Radius::Card.scaled())
                     .border(px(1.))
-                    .border_color(theme.panel_sep_line)
+                    .border_color(p.stroke)
                     .p(px(16. * scale))
                     .occlude()
                     .child(
                         div()
                             .text_size(fs(16.))
                             .font_weight(FontWeight::BOLD)
-                            .text_color(theme.text_1)
+                            .text_color(p.ink)
                             .child(title),
                     )
                     .child(
                         div()
                             .text_size(fs(12.))
-                            .text_color(theme.text_2)
+                            .text_color(p.ink_2)
                             .mt(px(8.))
                             .child(message),
                     )
@@ -347,7 +334,7 @@ impl ConfirmDialog {
                         dialog.child(div().mt(px(12.)).flex_col().children(
                             options.into_iter().map(|option| {
                                 let on_toggle = option.on_toggle.clone();
-                                let hover_bg = theme.btn_hover;
+                                let hover_bg = p.on_card("hover");
                                 let control: SharedString =
                                     format!("confirm-option:{}", option.label).into();
                                 div()
@@ -370,17 +357,13 @@ impl ConfirmDialog {
                                             "CircleIcon"
                                         },
                                         fs(12.),
-                                        Hsla::from(if option.selected {
-                                            theme.accent
-                                        } else {
-                                            theme.text_3
-                                        }),
+                                        if option.selected { p.accent } else { p.ink_3 },
                                     ))
                                     .child(widgets::icon_probe(control, CursorStyle::PointingHand))
                                     .child(
                                         div()
                                             .text_size(fs(12.))
-                                            .text_color(theme.text_1)
+                                            .text_color(p.ink)
                                             .child(option.label),
                                     )
                             }),
@@ -401,13 +384,13 @@ impl ConfirmDialog {
                                     .px(px(12.))
                                     .rounded(px(4.))
                                     .text_size(fs(12.))
-                                    .text_color(theme.text_2)
+                                    .text_color(p.ink_2)
                                     .flex()
                                     .items_center()
                                     .justify_center()
                                     .cursor(CursorStyle::PointingHand)
                                     .hover({
-                                        let hover_bg = theme.btn_hover;
+                                        let hover_bg = p.on_card("hover");
                                         move |style| style.bg(hover_bg)
                                     })
                                     .on_mouse_down(MouseButton::Left, {

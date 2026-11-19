@@ -3,9 +3,10 @@
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 
+use crate::ui::design::palette::Palette;
 use crate::ui::design::size::Radius;
+use crate::ui::font;
 use crate::ui::transition::keyed_transition;
-use crate::ui::{font, theme::ClippiTheme};
 
 /// Stable keys preserve the current value when Alt is released mid-animation.
 ///
@@ -54,7 +55,8 @@ impl HintGeometry {
     }
 }
 
-fn shortcut_foreground(accent: Rgba) -> Rgba {
+fn shortcut_foreground(accent: Hsla) -> Hsla {
+    let rgb = accent.to_rgb();
     let linear = |channel: f32| {
         if channel <= 0.04045 {
             channel / 12.92
@@ -62,18 +64,17 @@ fn shortcut_foreground(accent: Rgba) -> Rgba {
             ((channel + 0.055) / 1.055).powf(2.4)
         }
     };
-    let luminance =
-        0.2126 * linear(accent.r) + 0.7152 * linear(accent.g) + 0.0722 * linear(accent.b);
+    let luminance = 0.2126 * linear(rgb.r) + 0.7152 * linear(rgb.g) + 0.0722 * linear(rgb.b);
     // 与 `on_accent` 同一意图：按键底恒为强调色，文字按底的实际亮度取黑/白，
     // 不随主题翻转（深浅强调色都可能被用户选中）。
     if luminance > 0.179 {
-        Rgba::from(Hsla::black())
+        Hsla::black()
     } else {
-        Rgba::from(Hsla::white())
+        Hsla::white()
     }
 }
 
-fn keycap(key: SharedString, geometry: HintGeometry, theme: &ClippiTheme) -> Div {
+fn keycap(key: SharedString, geometry: HintGeometry, theme: &Palette) -> Div {
     div()
         .flex_shrink_0()
         .w(px(geometry.width))
@@ -98,7 +99,7 @@ pub fn external_shortcut(
     key: impl Into<SharedString>,
     visible: bool,
     button: impl IntoElement,
-    theme: &ClippiTheme,
+    theme: &Palette,
     window: &mut Window,
     cx: &mut App,
 ) -> Div {
@@ -128,7 +129,7 @@ pub fn external_shortcut(
 
 /// A small deferred popover below a toolbar icon. Deferral paints it above the
 /// following search row without increasing header height or moving the icon.
-pub fn shortcut_popover(key: impl Into<SharedString>, progress: f32, theme: &ClippiTheme) -> Div {
+pub fn shortcut_popover(key: impl Into<SharedString>, progress: f32, theme: &Palette) -> Div {
     let geometry = HintGeometry::new(font::scale());
     div()
         .absolute()
