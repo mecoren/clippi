@@ -216,12 +216,36 @@ mod tests {
         // SAFETY: read-only queries; initialized GUITHREADINFO with required size.
         unsafe {
             let foreground = GetForegroundWindow();
+            // A session without a foreground window (headless runner, or the
+            // foreground is momentarily gone) has no owner to compare against;
+            // the focus slots stay null instead of failing the query.
+            let mut focus = std::ptr::null_mut();
             let thread = GetWindowThreadProcessId(foreground, std::ptr::null_mut());
-            let mut info: GUITHREADINFO = std::mem::zeroed();
-            info.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
-            assert_ne!(GetGUIThreadInfo(thread, &mut info), 0);
-            (foreground, info.hwndFocus, GetFocus())
+            if !foreground.is_null() && thread != 0 {
+                let mut info: GUITHREADINFO = std::mem::zeroed();
+                info.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
+                if GetGUIThreadInfo(thread, &mut info) != 0 {
+                    focus = info.hwndFocus;
+                }
+            }
+            (foreground, focus, GetFocus())
         }
+    }
+
+    /// Which slots of a snapshot belong to the test's own windows.
+    ///
+    /// The policy under test can only give the input away to *our* windows, so
+    /// that is all the assertions look at. The session-wide foreground changing
+    /// between two samples — a desktop notification, another program stealing
+    /// focus, a background thread of a previously run test — is outside what a
+    /// non-activating `show_at` can cause, and comparing raw handles made this
+    /// test fail whenever the machine was not idle.
+    fn owned_by_test(snapshot: (HWND, HWND, HWND), windows: [HWND; 2]) -> (bool, bool, bool) {
+        (
+            windows.contains(&snapshot.0),
+            windows.contains(&snapshot.1),
+            windows.contains(&snapshot.2),
+        )
     }
 
     #[test]
@@ -229,7 +253,14 @@ mod tests {
         let owner = TestWindow::new(std::ptr::null_mut());
         let popup = TestWindow::new(owner.0);
         install(popup.0 as isize).expect("install non-activating policy");
-        let before = input_snapshot();
+        // Both windows are hidden and off-screen, so the session input is owned
+        // by something else right now; no step below may move it onto either of
+        // them.
+        let test_windows = [popup.0, owner.0];
+        let before = owned_by_test(input_snapshot(), test_windows);
+        // The baseline has to be "someone else owns the input", otherwise the
+        // comparisons below could not tell a passing step from a stealing one.
+        assert_eq!(before, (false, false, false), "test windows own the input");
         let mut data = 0;
         assert_ne!(
             unsafe { GetWindowSubclass(popup.0, Some(window_proc), SUBCLASS_ID, &mut data) },
@@ -238,7 +269,11 @@ mod tests {
 
         for _ in 0..100 {
             assert!(show_at(popup.0 as isize, -32000, -32000, 1, 1));
-            assert_eq!(input_snapshot(), before, "show changed input ownership");
+            assert_eq!(
+                owned_by_test(input_snapshot(), test_windows),
+                before,
+                "show changed input ownership"
+            );
             // SAFETY: send activation queries to our own live window on its thread.
             unsafe {
                 assert_ne!(IsWindowVisible(popup.0), 0);
@@ -266,16 +301,24 @@ mod tests {
                     PA_NOACTIVATE as isize
                 );
             }
-            assert_eq!(input_snapshot(), before, "pointer changed input ownership");
+            assert_eq!(
+                owned_by_test(input_snapshot(), test_windows),
+                before,
+                "pointer changed input ownership"
+            );
             assert!(hide(popup.0 as isize));
-            assert_eq!(input_snapshot(), before, "hide changed input ownership");
+            assert_eq!(
+                owned_by_test(input_snapshot(), test_windows),
+                before,
+                "hide changed input ownership"
+            );
             // A display notification must not let GPUI resurrect a hidden popup.
             unsafe {
                 assert_eq!(SendMessageW(popup.0, WM_DISPLAYCHANGE, 32, 0), 0);
                 assert_eq!(IsWindowVisible(popup.0), 0);
             }
             assert_eq!(
-                input_snapshot(),
+                owned_by_test(input_snapshot(), test_windows),
                 before,
                 "display change changed input ownership"
             );
@@ -285,5 +328,34 @@ mod tests {
     #[test]
     fn missing_window_cannot_install_policy() {
         assert!(install(0).is_err());
+    }
+
+    /// The regression the loop above must still catch: input moving onto either
+    /// of the two test windows. Fake handles, no real window involved.
+    #[test]
+    fn ownership_check_flags_the_tests_own_windows() {
+        let popup = 0x1111usize as HWND;
+        let owner = 0x2222usize as HWND;
+        let foreign = 0x3333usize as HWND;
+        let windows = [popup, owner];
+
+        assert_eq!(
+            owned_by_test((popup, owner, popup), windows),
+            (true, true, true)
+        );
+        assert_eq!(
+            owned_by_test((owner, popup, owner), windows),
+            (true, true, true)
+        );
+        // A session-wide focus change between two foreign windows is not a
+        // change of ownership by this policy, hence identical tuples.
+        assert_eq!(
+            owned_by_test((foreign, foreign, foreign), windows),
+            (false, false, false)
+        );
+        assert_eq!(
+            owned_by_test((foreign, std::ptr::null_mut(), foreign), windows),
+            (false, false, false)
+        );
     }
 }
