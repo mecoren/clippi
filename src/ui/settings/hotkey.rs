@@ -238,7 +238,10 @@ impl SettingsPanel {
                             })
                             .child(
                                 div()
-                                    .text_size(fs(12.))
+                                    // 录制按钮固定 80 px 宽，字取 11：12 px 的
+                                    // "Alt+Shift+V" 几乎顶满两侧内边距，读起来
+                                    // 比行标题还重。
+                                    .text_size(fs(11.))
                                     .font_weight(FontWeight::BOLD)
                                     .text_color(recording_btn_text)
                                     .child(if pending_single.is_some() {
@@ -874,7 +877,8 @@ impl SettingsPanel {
                             .justify_center()
                             .child(
                                 div()
-                                    .text_size(fs(12.))
+                                    // 与相邻录制按钮同尺寸、同字号。
+                                    .text_size(fs(11.))
                                     .font_weight(FontWeight::BOLD)
                                     .text_color(p.accent)
                                     .child("Win+V"),
