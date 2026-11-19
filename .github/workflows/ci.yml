@@ -1,0 +1,69 @@
+# Validation gate for this fork's main branch (`wait`).
+#
+# Upstream's workflows cannot cover this repository: `wait` is a branch upstream
+# does not have, and `release.yml` only triggers on `v*` tags, so a push to
+# `wait` would otherwise land unverified. The steps mirror section 8 of
+# AGENTS.md: fmt, clippy, tests.
+#
+# `cargo check` is not a separate step on purpose: `cargo clippy --all-targets`
+# compiles every target with the same driver, so it already fails on anything
+# `check` would fail on, and running both would compile the whole dependency
+# tree twice.
+name: ci
+
+on:
+  push:
+    branches: [wait]
+  pull_request:
+    branches: [wait]
+  # Manual re-run from the Actions tab.
+  workflow_dispatch:
+
+# A newer push supersedes the still-running gate for the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Test panics are read from the runner log, where there is no local terminal.
+  RUST_BACKTRACE: 1
+
+jobs:
+  check:
+    # Windows is the primary platform (AGENTS.md 6.6). The gpui-pre dependency
+    # has no backend with default features off and the project does not support
+    # Linux, so Linux runners cannot build this crate at all. macOS-only files
+    # (`*_macos.rs`, `src/platform/ocr_helper.m`) are therefore not covered by
+    # this job; add a `macos-15` job when that becomes worth the runner minutes.
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+
+      # Pinned instead of tracking `stable`: a new Rust release ships new clippy
+      # lints, which under `-D warnings` would turn this gate red without a
+      # code change. Bump this version together with the local toolchain.
+      # Plain rustup keeps the setup on GitHub-owned tooling (no extra action).
+      - name: Pin Rust toolchain
+        run: |
+          rustup toolchain install 1.96.0 --profile minimal --component rustfmt,clippy
+          rustup default 1.96.0
+
+      # Must run after the toolchain: the cache key includes the rustc version.
+      # gpui-pre + windows + image + oxipng take tens of minutes cold.
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      # `-D warnings` is the only way to enforce AGENTS.md section 8's "no new
+      # warnings": the tree is warning-free today, so anything reported is new.
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test

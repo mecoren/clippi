@@ -132,7 +132,7 @@ git push origin wait
 
 - `README.md` 与 `README_EN.md` 必须同步修改，且改动不要落在 bot 自动刷新的贡献墙段落。
 - 剪贴板内容属于用户敏感数据：禁止写入日志、提交信息、测试夹具或文档示例，测试用自造假数据。
-- 版本号、`RELEASES.md`、`.github/workflows/*`、`dist-workspace.toml`、`installer.nsi` 由发布流程维护，非任务要求不要改动。
+- 版本号、`RELEASES.md`、`release.yml` / `publish-oss.yml` / `contributors.yml`、`dist-workspace.toml`、`installer.nsi` 由发布流程维护，非任务要求不要改动。`ci.yml` 是本地校验门禁（见第 8 节），不归发布流程管，改校验规则时改它。
 
 ### 6.8 开关组件与动画（硬约束）
 
@@ -164,6 +164,7 @@ cargo test
 另外：
 
 - 主验证平台为 Windows，涉及平台差异的改动需说明另一平台是否受影响。
+- 推送 `wait`（或向 `wait` 开 PR）会触发 `.github/workflows/ci.yml`：`windows-latest` 上依次跑 `cargo fmt --all -- --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test`。它是上面那份校验的远端版本，红了就是没完成；工具链在文件里锁版本（新 stable 会带来新 clippy lint），调整时与本地同步。
 - 合并后执行一次 `git diff --stat wait@{1} wait`，确认改动规模与预期一致，没有意外的大面积回退。
 - 不要提交 `target/`、临时脚本、调试输出。
 
