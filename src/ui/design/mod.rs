@@ -18,6 +18,7 @@
 pub mod motion;
 pub mod palette;
 pub mod size;
+pub mod squircle;
 pub mod tokens;
 pub mod typography;
 
