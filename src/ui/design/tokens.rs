@@ -118,6 +118,7 @@ mod tests {
             "control",
             "control-hover",
             "control-checked",
+            "button-face",
             "flyout",
             "scrim",
             "accent",

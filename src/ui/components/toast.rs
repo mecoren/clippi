@@ -14,6 +14,7 @@
 use crate::ui::design::palette::Palette;
 use crate::ui::design::size::{Ctrl, Radius, Space};
 use crate::ui::design::typography::{self, type_role};
+use crate::ui::widgets;
 use std::rc::Rc;
 
 use gpui::*;
@@ -164,19 +165,13 @@ impl RenderOnce for Toast {
                     div()
                         .h(Ctrl::Chip.scaled())
                         .px(Space::Sm.scaled())
-                        .rounded(Radius::Sm.scaled())
+                        .rounded(Radius::Md.scaled())
                         .bg(btn_bg)
                         .flex()
                         .items_center()
                         .justify_center()
                         .cursor(CursorStyle::PointingHand)
-                        .hover(move |style| {
-                            style.bg(if is_primary {
-                                crate::ui::widgets::brighter(p.accent)
-                            } else {
-                                p.hover
-                            })
-                        })
+                        .hover(move |style| style.bg(widgets::hover_of(btn_bg, p.ink)))
                         .on_mouse_down(MouseButton::Left, move |_ev, window, cx| {
                             (action.on_click)(window, cx);
                         })

@@ -22,7 +22,7 @@ use super::components::reorder::{
     drag_grip, ease_in_out, row_drag_position, GRABBING_CURSOR, GRAB_CURSOR,
 };
 use super::design::palette::Palette;
-use super::design::size::{Radius, Space};
+use super::design::size::{Ctrl, Radius, Space};
 use super::design::typography::{self, type_role};
 use super::filter_bar::{filter_type_display, FilterBar};
 use super::widgets;
@@ -240,14 +240,14 @@ impl Render for TypeFilterConfigPanel {
                     .child(
                         div()
                             .relative()
-                            .w(px(22.))
-                            .h(px(22.))
-                            .rounded(px(4.))
+                            .w(Ctrl::Chip.scaled())
+                            .h(Ctrl::Chip.scaled())
+                            .rounded(Radius::Md.scaled())
                             .flex()
                             .items_center()
                             .justify_center()
                             .cursor(CursorStyle::PointingHand)
-                            .hover(|el| el.bg(btn_hover))
+                            .hover(move |el| el.bg(p.ink.opacity(0.06)))
                             .on_mouse_down(MouseButton::Left, move |_ev, _window, cx| {
                                 cx.stop_propagation();
                                 this.update(cx, |panel, cx| panel.close(cx));

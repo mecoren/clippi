@@ -10,6 +10,7 @@ use crate::core::i18n_keys::I18nKey;
 use crate::services::update::UpdatePhase;
 use crate::ui::design::size::Radius;
 use crate::ui::widgets;
+use crate::ui::widgets::ButtonExt;
 
 use super::SettingsPanel;
 
@@ -133,27 +134,20 @@ impl SettingsPanel {
                     })
                     // ── Right: action button ──
                     .child({
-                        let mut btn = div()
-                            .h(px(28.))
-                            .rounded(Radius::Md.scaled())
-                            .px(px(12.))
-                            .bg(if btn_disabled { divider } else { accent })
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(
-                                div()
-                                    .text_size(fs(12.))
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(if btn_disabled { text_3 } else { p.on_accent })
-                                    .child(btn_label),
-                            );
-                        if let (false, Some(handler)) = (btn_disabled, on_click.take()) {
-                            btn = btn
-                                .cursor(CursorStyle::PointingHand)
-                                .on_mouse_down(MouseButton::Left, handler);
-                        }
-                        btn
+                        let handler = on_click.take();
+                        widgets::btn_small(
+                            &p,
+                            "version-update-action",
+                            btn_label,
+                            None,
+                            widgets::Tone::Accent,
+                        )
+                        .inert_dimmed(btn_disabled)
+                        .when_some(handler, |button, handler| {
+                            button.on_mouse_down(MouseButton::Left, move |ev, window, cx| {
+                                handler(ev, window, cx)
+                            })
+                        })
                     }),
             )
             // Progress bar (only during download)

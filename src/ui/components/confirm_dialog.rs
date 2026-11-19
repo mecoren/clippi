@@ -263,10 +263,6 @@ impl ConfirmDialog {
         };
 
         let p = Palette::current(cx);
-        let confirm_color = if is_danger { p.danger } else { p.accent };
-        // 确认钮文字跟底色走语义对色（danger→on_danger，accent→on_accent），
-        // 不再写死白色。
-        let confirm_text = Rgba::from(if is_danger { p.on_danger } else { p.on_accent });
 
         if let Some(ref handle) = focus_handle {
             handle.focus(window, cx);
@@ -377,55 +373,38 @@ impl ConfirmDialog {
                             .gap(px(8.))
                             .mt(px(16.))
                             .child({
-                                let label = cancel_label.clone();
                                 let on_cancel = on_cancel.clone();
-                                div()
-                                    .h(px(24.))
-                                    .px(px(12.))
-                                    .rounded(px(4.))
-                                    .text_size(fs(12.))
-                                    .text_color(p.ink_2)
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .cursor(CursorStyle::PointingHand)
-                                    .hover({
-                                        let hover_bg = p.on_card("hover");
-                                        move |style| style.bg(hover_bg)
-                                    })
-                                    .on_mouse_down(MouseButton::Left, {
-                                        let on_cancel = on_cancel.clone();
-                                        move |_ev, _window, cx| {
-                                            cx.stop_propagation();
-                                            if let Some(ref handler) = on_cancel {
-                                                handler(_window, cx);
-                                            }
-                                        }
-                                    })
-                                    .child(label)
+                                widgets::btn_small(
+                                    &p,
+                                    "confirm-dialog-cancel",
+                                    cancel_label.clone(),
+                                    None,
+                                    widgets::Tone::Plain,
+                                )
+                                .on_click(move |_, window, cx| {
+                                    if let Some(ref handler) = on_cancel {
+                                        handler(window, cx);
+                                    }
+                                })
                             })
                             .child({
-                                let label = confirm_label.clone();
                                 let on_confirm = on_confirm.clone();
-                                div()
-                                    .h(px(24.))
-                                    .px(px(12.))
-                                    .rounded(px(4.))
-                                    .text_size(fs(12.))
-                                    .text_color(confirm_text)
-                                    .bg(confirm_color)
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .cursor(CursorStyle::PointingHand)
-                                    .hover(move |style| style.opacity(0.85))
-                                    .on_mouse_down(MouseButton::Left, move |_ev, _window, cx| {
-                                        cx.stop_propagation();
-                                        if let Some(ref handler) = on_confirm {
-                                            handler(_window, cx);
-                                        }
-                                    })
-                                    .child(label)
+                                widgets::btn_small(
+                                    &p,
+                                    "confirm-dialog-confirm",
+                                    confirm_label.clone(),
+                                    None,
+                                    if is_danger {
+                                        widgets::Tone::Danger
+                                    } else {
+                                        widgets::Tone::Accent
+                                    },
+                                )
+                                .on_click(move |_, window, cx| {
+                                    if let Some(ref handler) = on_confirm {
+                                        handler(window, cx);
+                                    }
+                                })
                             }),
                     ),
             )

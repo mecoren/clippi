@@ -1860,7 +1860,7 @@ impl RenderOnce for ClipboardCard {
                             .relative()
                             .w(sc(20.))
                             .h(sc(20.))
-                            .rounded(sc(4.))
+                            .rounded(Radius::Md.scaled())
                             .flex()
                             .items_center()
                             .justify_center()

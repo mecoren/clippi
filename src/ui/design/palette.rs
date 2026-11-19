@@ -28,18 +28,21 @@ pub struct Palette {
     // 交互叠加
     pub hover: Hsla,
     pub hover_strong: Hsla,
-    pub press: Hsla,
     // 控件
     pub control_face: Hsla,
     pub control_hover: Hsla,
     pub control_checked: Hsla,
     pub control_edge: Hsla,
+    /// 按钮的次级面（`Tone::Plain` / `Tone::Danger`）：Orbit 移动端的浅灰
+    /// 实心底——不描边，靠"比卡片深一档"读作可点。与输入框的 `control_face`
+    /// 分开口径：输入框是凹陷的白面，按钮是抬起/下沉的灰面。
+    pub button_face: Hsla,
     // 强调与语义
     pub accent: Hsla,
     pub on_accent: Hsla,
     pub fav: Hsla,
+    /// 破坏性动作：按钮不再铺红底（见 `widgets::Tone`），只用作红字与红图标。
     pub danger: Hsla,
-    pub on_danger: Hsla,
     /// 注意/警告（路径失效、同步异常），与收藏金、危险红区分。
     pub warn: Hsla,
     /// 成功/完成（传输完成、同步正常）。
@@ -103,16 +106,15 @@ impl Palette {
             stroke_strong: color("stroke-strong"),
             hover: theme.colors.list_hover,
             hover_strong: color("hover-strong"),
-            press: color("press"),
             control_face: color("control"),
             control_hover: color("control-hover"),
             control_checked: color("control-checked"),
             control_edge: remainder(color("stroke"), color("stroke-strong")),
+            button_face: color("button-face"),
             accent: theme.colors.primary,
             on_accent: theme.colors.primary_foreground,
             fav: color("fav"),
             danger: color("danger"),
-            on_danger: color("on-danger"),
             warn: color("warn"),
             ok: color("ok"),
             pin: color("pin"),
@@ -323,11 +325,11 @@ mod tests {
     /// 阻止继续变浅。正文、图标与 `ink`/`ink-2` 仍是 4.5 / 3.0，不放宽。
     const INK_3_MIN: f32 = 2.78;
 
-    /// 强调色下限。`accent` 是产品指定的卡布里蓝：暗色用原色 `#4aa8d8`，
-    /// 亮色压深一档到 `#3f93bd`——原色落在浅底上只有约 2.2:1，作图标与
-    /// 选中标记会糊。压深后两种模式都过 WCAG AA 大字与图形组件的 3:1。
-    /// 品牌色不可调，门禁只压到 3:1——强调色只用于填充、图标、选中标记与
-    /// 大字，不承担正文；`ink`/`ink-2` 仍是 4.5。
+    /// 强调色下限。`accent` 取 Orbit 移动端的主题强调色 `#207fff`
+    /// （`OrbitAccents.themeAccent` / `MiuixTheme.primary`，亮暗共用同一个
+    /// 值，移动端不在两套色板间切换强调色）。实测：亮色窗口底 3.42:1、
+    /// 卡片 3.60:1、暗色卡片 3.90:1，白字压在强调面上 3.79:1——全部过
+    /// WCAG 图形组件 3:1，因此门禁保持 3.0，不为品牌色放宽。
     const ACCENT_MIN: f32 = 3.0;
 
     /// FR-A11Y-03：正文 ≥ 4.5:1、辅助与图标 ≥ 3:1。底色覆盖窗口、卡片

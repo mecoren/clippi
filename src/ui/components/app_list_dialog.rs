@@ -10,7 +10,7 @@ use gpui::prelude::FluentBuilder;
 use gpui::*;
 
 use crate::ui::design::palette::Palette;
-use crate::ui::design::size::Radius;
+use crate::ui::design::size::{Ctrl, Radius};
 use crate::ui::widgets;
 use gpui_kit::component::scroll::{Scrollbar, ScrollbarAxis};
 
@@ -324,8 +324,6 @@ fn render_title_bar(
 ) -> impl IntoElement {
     let badge = badge.to_owned();
     let accent = theme.accent;
-    let divider = theme.stroke;
-    let btn_hover = theme.on_card("hover");
     let text_1 = theme.ink;
     let text_2 = theme.ink_2;
     let help_lines = help_text.map(|text| text.lines().map(str::to_owned).collect::<Vec<_>>());
@@ -378,16 +376,14 @@ fn render_title_bar(
                         div()
                             .id("app-list-help")
                             .relative()
-                            .w(px(20.))
-                            .h(px(20.))
-                            .rounded(px(10.))
-                            .border(px(1.))
-                            .border_color(divider)
+                            .w(Ctrl::Small.scaled())
+                            .h(Ctrl::Small.scaled())
+                            .rounded(Radius::Md.scaled())
                             .flex()
                             .items_center()
                             .justify_center()
                             .cursor(CursorStyle::PointingHand)
-                            .hover(move |style| style.bg(btn_hover).text_color(accent))
+                            .hover(move |style| style.bg(theme.ink.opacity(0.06)))
                             .tooltip(move |window, cx| {
                                 widgets::tooltip_lines(tooltip_lines.clone(), window, cx)
                             })
@@ -408,14 +404,14 @@ fn render_title_bar(
                     let close = on_close;
                     div()
                         .relative()
-                        .w(px(26.))
-                        .h(px(26.))
-                        .rounded(px(6.))
+                        .w(Ctrl::Small.scaled())
+                        .h(Ctrl::Small.scaled())
+                        .rounded(Radius::Md.scaled())
                         .flex()
                         .items_center()
                         .justify_center()
                         .cursor(CursorStyle::PointingHand)
-                        .hover(|style| style.bg(theme.on_card("hover")))
+                        .hover(move |style| style.bg(theme.ink.opacity(0.06)))
                         .on_mouse_down(MouseButton::Left, move |_ev, window, cx| {
                             cx.stop_propagation();
                             close(window, cx);

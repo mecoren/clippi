@@ -16,7 +16,7 @@ use crate::services::backends::local_folder::detect_presets;
 use crate::services::gpui_sync::test_webdav_connection;
 use crate::ui::design::motion;
 use crate::ui::design::palette::Palette;
-use crate::ui::design::size::{IconSize, Radius, Space};
+use crate::ui::design::size::{Ctrl, IconSize, Radius, Space};
 use crate::ui::design::typography::{self, type_role};
 use crate::ui::transition::keyed_transition;
 use crate::ui::widgets::{self, ButtonExt, Tone};
@@ -710,9 +710,15 @@ impl Render for AddBackendPanel {
                                                 .id("backend-back")
                                                 .role(Role::Button)
                                                 .tab_stop(true)
+                                                .flex_shrink_0()
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .w(Ctrl::Small.scaled())
+                                                .h(Ctrl::Small.scaled())
                                                 .cursor(CursorStyle::PointingHand)
                                                 .rounded(Radius::Md.scaled())
-                                                .hover(move |style| style.bg(p.hover))
+                                                .hover(move |style| style.bg(p.ink.opacity(0.06)))
                                                 .on_mouse_down(MouseButton::Left, {
                                                     let this = this.clone();
                                                     move |_ev, _window, cx| {
@@ -743,9 +749,15 @@ impl Render for AddBackendPanel {
                                     .id("backend-close")
                                     .role(Role::Button)
                                     .tab_stop(true)
+                                    .flex_shrink_0()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .w(Ctrl::Small.scaled())
+                                    .h(Ctrl::Small.scaled())
                                     .cursor(CursorStyle::PointingHand)
                                     .rounded(Radius::Md.scaled())
-                                    .hover(move |style| style.bg(p.hover))
+                                    .hover(move |style| style.bg(p.ink.opacity(0.06)))
                                     .on_mouse_down(MouseButton::Left, {
                                         let this = this.clone();
                                         move |_ev, _window, cx| {

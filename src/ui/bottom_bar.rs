@@ -142,12 +142,12 @@ impl RenderOnce for BottomBar {
                                 .aria_label(tooltip_label)
                                 .relative()
                                 .size(Ctrl::Chip.scaled())
-                                .rounded(Radius::Sm.scaled())
+                                .rounded(Radius::Md.scaled())
                                 .flex()
                                 .items_center()
                                 .justify_center()
                                 .cursor(CursorStyle::PointingHand)
-                                .hover(move |style| style.bg(p.hover))
+                                .hover(move |style| style.bg(p.ink.opacity(0.06)))
                                 .tooltip(move |window, cx| {
                                     widgets::tooltip(tooltip_label, window, cx)
                                 })
@@ -181,12 +181,12 @@ impl RenderOnce for BottomBar {
                                 .aria_label(I18nKey::BottomBarHotkeyBlacklist.text())
                                 .relative()
                                 .size(Ctrl::Chip.scaled())
-                                .rounded(Radius::Sm.scaled())
+                                .rounded(Radius::Md.scaled())
                                 .flex()
                                 .items_center()
                                 .justify_center()
                                 .cursor(CursorStyle::PointingHand)
-                                .hover(move |style| style.bg(p.hover))
+                                .hover(move |style| style.bg(p.ink.opacity(0.06)))
                                 .tooltip(|window, cx| {
                                     widgets::tooltip(
                                         I18nKey::BottomBarHotkeyBlacklist.text(),

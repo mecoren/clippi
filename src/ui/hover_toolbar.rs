@@ -526,13 +526,15 @@ impl RenderOnce for HoverToolbar {
                     .tab_stop(true)
                     .aria_label(tooltip.clone())
                     .w(sc(BUTTON_SIZE))
-                    // 只有图标本身：不画底框、不画描边，悬停只换色。
+                    // 只有图标本身：不画底框、不画描边，悬停叠一层墨色遮罩并换色。
                     .h(sc(BUTTON_SIZE))
                     .flex_shrink_0()
+                    .rounded(super::design::size::Radius::Md.scaled())
                     .flex()
                     .items_center()
                     .justify_center()
                     .cursor(CursorStyle::PointingHand)
+                    .hover(move |style| style.bg(p.ink.opacity(0.06)))
                     .on_hover(move |value, _window, cx| {
                         if *value && !cx.reduce_motion() {
                             super::icon_motion::trigger(&motion_control);

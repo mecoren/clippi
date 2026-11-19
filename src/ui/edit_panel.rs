@@ -824,32 +824,38 @@ impl Render for EditPanel {
                     .justify_end()
                     .items_center()
                     .gap(px(8.))
-                    .child(text_button(
-                        I18nKey::BtnCancel.text(),
-                        text_2,
-                        divider,
-                        Rgba::from(p.background.opacity(0.)),
-                        {
+                    .child(
+                        widgets::btn_small(
+                            &p,
+                            "edit-cancel",
+                            I18nKey::BtnCancel.text(),
+                            None,
+                            widgets::Tone::Plain,
+                        )
+                        .on_click({
                             let this = this.clone();
-                            move |_window, cx| {
+                            move |_, _window, cx| {
                                 this.update(cx, |_panel, cx| {
                                     cx.emit(EditPanelEvent::Back);
                                 });
                             }
-                        },
-                    ))
-                    .child(text_button(
-                        I18nKey::EditSave.text(),
-                        Rgba::from(p.on_accent),
-                        accent,
-                        accent,
-                        {
+                        }),
+                    )
+                    .child(
+                        widgets::btn_small(
+                            &p,
+                            "edit-save",
+                            I18nKey::EditSave.text(),
+                            None,
+                            widgets::Tone::Accent,
+                        )
+                        .on_click({
                             let this = this.clone();
-                            move |window, cx| {
+                            move |_, window, cx| {
                                 this.update(cx, |panel, cx| panel.save(window, cx));
                             }
-                        },
-                    )),
+                        }),
+                    ),
             )
             .when(self.type_menu_open, |panel| {
                 panel
@@ -1053,7 +1059,7 @@ fn icon_button(
         .relative()
         .w(Ctrl::Chip.scaled())
         .h(Ctrl::Chip.scaled())
-        .rounded(Radius::Sm.scaled())
+        .rounded(Radius::Md.scaled())
         .flex()
         .items_center()
         .justify_center()
@@ -1120,36 +1126,6 @@ fn find_field(
                 .px(px(0.))
                 .py(px(0.))
                 .text_size(typography::font(type_role::BODY)),
-        )
-}
-
-fn text_button(
-    label: &'static str,
-    text_color: Rgba,
-    border_color: Rgba,
-    bg: Rgba,
-    handler: impl Fn(&mut Window, &mut App) + 'static,
-) -> Div {
-    div()
-        .w(px(60.))
-        .h(Ctrl::Input.scaled())
-        .rounded(Radius::Md.scaled())
-        .border_1()
-        .border_color(border_color)
-        .bg(bg)
-        .flex()
-        .items_center()
-        .justify_center()
-        .cursor(CursorStyle::PointingHand)
-        .on_mouse_down(MouseButton::Left, move |_ev, window, cx| {
-            handler(window, cx)
-        })
-        .child(
-            div()
-                .text_size(typography::font(type_role::BODY))
-                .font_weight(typography::LABEL_WEIGHT)
-                .text_color(text_color)
-                .child(label),
         )
 }
 

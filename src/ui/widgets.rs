@@ -20,6 +20,7 @@
 //! 6. 图标只经 [`icon`] / [`icon_hover`]，名称先在 `ui/assets.rs` 的
 //!    `product_icons!` 表登记；SVG 不继承宿主文字色，颜色必须显式传入。
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::prelude::FluentBuilder;
@@ -219,7 +220,11 @@ pub fn icon_probe(control: impl Into<SharedString>, cursor: CursorStyle) -> Stat
 // 按钮
 // ---------------------------------------------------------------------------
 
-/// 按钮面色：普通、强调、危险、幽灵（无底无描边）。
+/// 按钮面色：普通、强调、危险、幽灵（无底）。
+///
+/// 口径对齐 Orbit 移动端 `OrbitButton`：**一律不描边**，靠面与字的对比分层，
+/// 悬停/按下统一叠一层 `ink` 遮罩而不是换底色。危险档不用红底——红底白字在
+/// 「取消 / 删除」并列时比主行动还抢眼，灰底红字才读作"危险但不推荐"。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tone {
     Plain,
@@ -229,37 +234,21 @@ pub enum Tone {
 }
 
 impl Tone {
-    /// (底, 字, 描边)
-    fn face(self, p: &Palette) -> (Hsla, Hsla, Hsla) {
-        let clear = p.background.opacity(0.);
+    /// (面, 字)
+    fn face(self, p: &Palette) -> (Hsla, Hsla) {
         match self {
-            Tone::Plain => (p.control_face, p.ink, p.stroke),
-            Tone::Accent => (p.accent, p.on_accent, clear),
-            Tone::Danger => (p.danger, p.on_danger, clear),
-            Tone::Ghost => (clear, p.ink, clear),
-        }
-    }
-
-    fn hover(self, p: &Palette) -> Hsla {
-        match self {
-            Tone::Plain => p.control_hover,
-            Tone::Ghost => p.hover,
-            Tone::Accent => brighter(p.accent),
-            Tone::Danger => brighter(p.danger),
-        }
-    }
-
-    /// (底, 字)
-    fn press(self, p: &Palette) -> (Hsla, Hsla) {
-        match self {
-            Tone::Plain | Tone::Ghost => (p.press, p.ink_2),
-            Tone::Accent => (p.accent.opacity(0.9), p.on_accent),
-            Tone::Danger => (p.danger.opacity(0.9), p.on_danger),
+            Tone::Plain => (solid(p.button_face), p.ink),
+            Tone::Accent => (p.accent, p.on_accent),
+            Tone::Danger => (solid(p.button_face), p.danger),
+            Tone::Ghost => (p.background.opacity(0.), p.accent),
         }
     }
 }
 
-/// 标准按钮（32 px）。返回值可继续链式 `.on_click(...)`。
+/// 标准按钮（32 px，超椭圆圆角 10）。返回值可继续链式 `.on_click(...)`。
+///
+/// 外观对齐 Orbit 移动端：纯色填充、无描边、文案居中，悬停/按下叠一层
+/// `ink` 遮罩；档位色板见 [`Tone`]。
 pub fn btn(
     p: &Palette,
     id: impl Into<ElementId>,
@@ -270,7 +259,7 @@ pub fn btn(
     button_face(p, id.into(), text.into(), glyph, tone, false, None)
 }
 
-/// 小号按钮（24 px）。
+/// 小号按钮（24 px，超椭圆圆角 8）：对话框与卡片内动作行使用。
 pub fn btn_small(
     p: &Palette,
     id: impl Into<ElementId>,
@@ -315,48 +304,22 @@ pub fn tool_icon_btn(
     disabled: bool,
     on_click: impl Fn(&mut Window, &mut App) + 'static,
 ) -> AnyElement {
-    let p = *p;
-    let size = Ctrl::Small.scaled();
-    let id: ElementId = id.into();
-    let control = element_control(&id);
-    let probe_control = control.clone();
     let on_click = std::rc::Rc::new(on_click);
-    div()
-        .id(id)
-        .role(Role::Button)
-        .tab_stop(!disabled)
+    let mut button = ghost_icon(p, id, glyph, Ctrl::Small, IconSize::Sm, tint)
         .aria_label(tooltip_text)
-        .relative()
-        .w(size)
-        .h(size)
-        .rounded(Radius::Md.scaled())
-        .flex()
-        .items_center()
-        .justify_center()
-        .cursor(if disabled {
-            CursorStyle::Arrow
-        } else {
-            CursorStyle::PointingHand
-        })
-        .when(!disabled, move |button| {
-            button
-                .hover(move |style| style.bg(p.hover))
-                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                    cx.stop_propagation();
-                    on_click(window, cx);
-                })
-                .child(icon_probe(probe_control, CursorStyle::PointingHand))
-        })
-        .when(disabled, |button| button.opacity(0.35))
-        .tooltip(move |window, cx| tooltip(tooltip_text, window, cx))
-        .child(icon_moving_hover(
-            control,
-            glyph,
-            IconSize::Sm.scaled(),
-            tint,
-            p.accent,
-        ))
-        .into_any_element()
+        .tooltip(move |window, cx| tooltip(tooltip_text, window, cx));
+    if disabled {
+        button = button
+            .tab_stop(false)
+            .cursor(CursorStyle::Arrow)
+            .opacity(0.35);
+    } else {
+        button = button.on_mouse_down(MouseButton::Left, move |_, window, cx| {
+            cx.stop_propagation();
+            on_click(window, cx);
+        });
+    }
+    button.into_any_element()
 }
 
 /// 只有图标的方形按钮（边长等于按钮高度）。
@@ -376,8 +339,55 @@ pub fn icon_btn(
         size == Ctrl::Small,
         None,
     );
-    button = button.h(size.px()).w(size.px()).justify_center();
+    button = button.h(size.scaled()).w(size.scaled()).justify_center();
     button
+}
+
+/// 幽灵图标钮：无面、无描边，悬停叠一层 `ink` 遮罩（6%，按下 10%）并把
+/// 图标提亮到强调色。返回 `Stateful<Div>`，调用方继续链式加
+/// `.on_click` / `.tooltip` / `.opacity`。
+///
+/// 标题栏、标签面板、类型筛选、底栏、卡片工具条此前各写一套私有
+/// `icon_button`（圆角 4/6/10 混用、悬停底色有 `p.hover` 也有 `btn_hover`），
+/// 现在统一从这里出：边长取 [`Ctrl`] 档位，圆角一律 [`Radius::Md`]。
+pub fn ghost_icon(
+    p: &Palette,
+    id: impl Into<ElementId>,
+    glyph: &str,
+    edge: Ctrl,
+    icon: IconSize,
+    tint: Hsla,
+) -> Stateful<Div> {
+    let p = *p;
+    let id: ElementId = id.into();
+    let control = element_control(&id);
+    let probe = control.clone();
+    let edge = edge.scaled();
+    let hover_scrim = p.ink.opacity(0.06);
+    let press_scrim = p.ink.opacity(0.10);
+    div()
+        .id(id)
+        .role(Role::Button)
+        .tab_stop(true)
+        .relative()
+        .w(edge)
+        .h(edge)
+        .flex_shrink_0()
+        .rounded(Radius::Md.scaled())
+        .flex()
+        .items_center()
+        .justify_center()
+        .cursor(CursorStyle::PointingHand)
+        .hover(move |style| style.bg(hover_scrim))
+        .active(move |style| style.bg(press_scrim))
+        .child(icon_probe(probe, CursorStyle::PointingHand))
+        .child(icon_moving_hover(
+            control,
+            glyph,
+            icon.scaled(),
+            tint,
+            p.accent,
+        ))
 }
 
 /// 禁用态的两个入口（Argus `ButtonExt`）：
@@ -393,12 +403,15 @@ pub trait ButtonExt {
 
 impl ButtonExt for Button {
     fn inert(self, disabled: bool) -> Self {
+        // 不可点时不给手指光标：否则指针承诺的动作和实际结果对不上。
         self.disabled(disabled)
+            .when(disabled, |button| button.cursor(CursorStyle::Arrow))
     }
 
     fn inert_dimmed(self, disabled: bool) -> Self {
-        self.disabled(disabled)
-            .when(disabled, |button| button.opacity(0.5))
+        self.disabled(disabled).when(disabled, |button| {
+            button.opacity(0.5).cursor(CursorStyle::Arrow)
+        })
     }
 }
 
@@ -426,48 +439,51 @@ fn button_face(
 ) -> Button {
     let p = *p;
     let control = element_control(&id);
-    let (bg, fg, border) = tone.face(&p);
+    let (face, fg) = tone.face(&p);
     let height = if small {
         Ctrl::Small.scaled()
     } else {
         Ctrl::Btn.scaled()
     };
+    // 内边距按 Orbit 移动端 16/12 取；圆角只从本项目的档位表里选：
+    // 32 高取 `Lg`（8）、24 高取 `Md`（6），8:32 = 6:24 = 0.25，与移动端
+    // 48 高 / 14 圆角（0.29）同量级，又不越过卡片（10）——按钮是行内控件，
+    // 不该比承载它的卡片还圆。
     let pad = if small {
-        Space::Md.scaled()
-    } else {
         Space::Lg.scaled()
+    } else {
+        Space::Xl.scaled()
     };
+    let radius = if small { Radius::Md } else { Radius::Lg };
     let icon_only = text.is_empty() && glyph.is_some() && glyph_size.is_none();
+    // 悬停与按下 = 一层 `ink` 遮罩（6% / 10%，与 Miuix 的 `kHoverAlphaDelta`
+    // / `kPressAlphaDelta` 同值）。遮罩叠在文字之上，按下时字也跟着暗一档。
+    let hover_scrim = p.ink.opacity(0.06);
+    let press_scrim = p.ink.opacity(0.10);
+    let scrim_id = ElementId::NamedChild(Arc::new(id.clone()), "scrim".into());
 
     let mut button = Button::new(id)
         .relative()
         .h(height)
         .flex_shrink_0()
-        .gap(Space::Sm.scaled())
-        .rounded(Radius::Sm.scaled())
-        .border_1()
-        .border_color(border)
-        .bg(bg)
+        .justify_center()
+        .gap(Space::Md.scaled())
+        .rounded(radius.scaled())
+        .cursor(CursorStyle::PointingHand)
         .text_color(fg)
         .text_size(typography::font(type_role::BASE))
         .font_weight(typography::LABEL_WEIGHT)
         .whitespace_nowrap()
-        .hover(move |style| style.bg(tone.hover(&p)))
-        .active(move |style| {
-            let (bg, fg) = tone.press(&p);
-            style.bg(bg).text_color(fg)
-        })
         .accessibility_label(text.clone())
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        // 面由超椭圆路径绘制：`rounded()` 只有圆弧圆角，画不出连续圆角的接缝。
+        .child(squircle_face(face, radius));
 
     button = if icon_only {
-        button.w(height).justify_center()
+        button.w(height)
     } else {
         button.px(pad)
     };
-    if tone == Tone::Plain {
-        button = button.child(control_edge(&p));
-    }
     if let Some(glyph) = glyph {
         let size = glyph_size.unwrap_or_else(|| IconSize::Sm.scaled());
         button = button
@@ -477,7 +493,44 @@ fn button_face(
     if !text.is_empty() {
         button = button.child(text);
     }
-    button
+    button.child(
+        // 交互遮罩：铺满整枚按钮（含内边距），命中区与按钮一致；点击照常
+        // 冒泡给按钮本身，这里只负责悬停/按下的那层薄薄的墨。
+        div()
+            .id(scrim_id)
+            .absolute()
+            .inset_0()
+            .rounded(radius.scaled())
+            .hover(move |style| style.bg(hover_scrim))
+            .active(move |style| style.bg(press_scrim)),
+    )
+}
+
+/// 悬停叠色：把 `ink` 以 6% 混进按钮当前的面色。
+///
+/// 按钮工厂的悬停是叠一层独立遮罩；手写按钮没有那层，而 `hover` 样式里的
+/// `bg` 是**替换**不是叠加——直接写 `bg(ink.opacity(0.06))` 会把实心底整块
+/// 换成半透明墨，悬停时按钮看上去"瘪下去"。凡是自带底色的手写按钮，用这个
+/// 函数先算出"底色 + 墨"的等效实色。
+pub fn hover_of(face: impl Into<Hsla>, ink: Hsla) -> Hsla {
+    motion::mix(face.into(), ink, 0.06)
+}
+
+/// 超椭圆实心底：按钮的面。`radius` 是设计档位，绘制时再按用户字号缩放，
+/// 与按钮圆角保持同一个值。
+fn squircle_face(face: Hsla, radius: Radius) -> AnyElement {
+    let corner = radius.scaled();
+    canvas(
+        |_, _, _| {},
+        move |bounds, _, window, _| {
+            if let Some(path) = super::design::squircle::fill_path(bounds, corner) {
+                window.paint_path(path, face);
+            }
+        },
+    )
+    .absolute()
+    .inset_0()
+    .into_any_element()
 }
 
 // ---------------------------------------------------------------------------

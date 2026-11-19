@@ -222,7 +222,6 @@ impl Render for TagFilterPanel {
         let input_bg = Rgba::from(p.on_card("control"));
         let sep_line = Rgba::from(p.stroke);
         let btn_hover = Rgba::from(p.on_card("hover"));
-        let accent_hover_bg = Rgba::from(p.accent.opacity(0.2));
         let panel_border = Rgba::from(p.stroke_strong);
         let active_bg = Rgba::from(p.accent.opacity(0.13));
         let danger_hover_bg = Rgba::from(p.danger.opacity(0.18));
@@ -306,6 +305,7 @@ impl Render for TagFilterPanel {
                     .h(px(26.))
                     .flex()
                     .flex_row()
+                    .items_center()
                     .gap(px(4.))
                     .child(
                         div()
@@ -345,32 +345,19 @@ impl Render for TagFilterPanel {
                     )
                     .child({
                         let this = this.clone();
-                        div()
-                            .w(px(26.))
-                            .h(px(26.))
-                            .rounded(Radius::Md.scaled())
-                            .bg(btn_hover)
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .cursor(CursorStyle::PointingHand)
-                            .hover(move |style| style.bg(accent_hover_bg))
-                            .child(
-                                div()
-                                    .text_size(typography::font(type_role::BASE))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(accent)
-                                    .child(I18nKey::TagFilterAdd.text()),
-                            )
-                            .on_mouse_down(MouseButton::Left, {
-                                let this = this.clone();
-                                move |_ev, window, cx| {
-                                    this.update(cx, |panel, cx| {
-                                        panel.create_tag_from_input(window, cx);
-                                        cx.notify();
-                                    });
-                                }
-                            })
+                        widgets::btn_small(
+                            &p,
+                            "tag-filter-add",
+                            I18nKey::TagFilterAdd.text(),
+                            None,
+                            widgets::Tone::Plain,
+                        )
+                        .on_click(move |_, window, cx| {
+                            this.update(cx, |panel, cx| {
+                                panel.create_tag_from_input(window, cx);
+                                cx.notify();
+                            });
+                        })
                     })
             })
             .child(div().h(px(1.)).w_full().bg(sep_line))
@@ -624,15 +611,12 @@ pub fn render_edit_panel(
     on_color: impl Fn(&mut Window, &mut App, String) + 'static,
     on_save: impl Fn(&mut Window, &mut App, String, String) + 'static,
 ) -> impl IntoElement {
-    let accent = Rgba::from(p.accent);
     let text_1 = Rgba::from(p.ink);
     let text_2 = Rgba::from(p.ink_2);
     let surface = Rgba::from(p.flyout);
     let input_bg = Rgba::from(p.on_card("control"));
     let sep_line = Rgba::from(p.stroke);
-    let btn_hover = Rgba::from(p.on_card("hover"));
     let panel_border = Rgba::from(p.stroke_strong);
-    let accent_hover = Rgba::from(p.accent.opacity(0.8));
     let current_color = parse_hex_to_rgba(color, Rgba::from(p.accent));
     let presets: Vec<Rgba> = tag_preset_colors()
         .iter()
@@ -737,52 +721,39 @@ pub fn render_edit_panel(
                 .h(px(26.))
                 .flex()
                 .flex_row()
+                .items_center()
                 .justify_end()
                 .gap(px(6.))
                 .child(
-                    div()
-                        .w(px(52.))
-                        .h(px(26.))
-                        .rounded(Radius::Md.scaled())
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .cursor(CursorStyle::PointingHand)
-                        .hover(|style| style.bg(btn_hover))
-                        .text_size(typography::font(type_role::BODY))
-                        .text_color(text_2)
-                        .child(I18nKey::BtnCancel.text())
-                        .occlude()
-                        .on_mouse_down(MouseButton::Left, {
-                            let on_cancel = on_cancel.clone();
-                            move |_ev, w, cx| on_cancel(w, cx)
-                        }),
+                    widgets::btn_small(
+                        &p,
+                        "tag-editor-cancel",
+                        I18nKey::BtnCancel.text(),
+                        None,
+                        widgets::Tone::Plain,
+                    )
+                    .on_click({
+                        let on_cancel = on_cancel.clone();
+                        move |_, window, cx| on_cancel(window, cx)
+                    }),
                 )
                 .child(
-                    div()
-                        .w(px(52.))
-                        .h(px(26.))
-                        .rounded(Radius::Md.scaled())
-                        .bg(accent)
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .cursor(CursorStyle::PointingHand)
-                        .hover(move |style| style.bg(accent_hover))
-                        .text_size(typography::font(type_role::BODY))
-                        .font_weight(typography::LABEL_WEIGHT)
-                        .text_color(Rgba::from(p.on_accent))
-                        .child(I18nKey::BackendSave.text())
-                        .occlude()
-                        .on_mouse_down(MouseButton::Left, {
-                            let on_save = on_save.clone();
-                            let name_input = name_input.clone();
-                            let hex = hex_save.clone();
-                            move |_ev, w, cx| {
-                                let name = name_input.read(cx).value().to_string();
-                                on_save(w, cx, name, hex.clone())
-                            }
-                        }),
+                    widgets::btn_small(
+                        &p,
+                        "tag-editor-save",
+                        I18nKey::BackendSave.text(),
+                        None,
+                        widgets::Tone::Accent,
+                    )
+                    .on_click({
+                        let on_save = on_save.clone();
+                        let name_input = name_input.clone();
+                        let hex = hex_save.clone();
+                        move |_, window, cx| {
+                            let name = name_input.read(cx).value().to_string();
+                            on_save(window, cx, name, hex.clone())
+                        }
+                    }),
                 )
         })
 }
@@ -802,8 +773,8 @@ fn icon_btn(
         .role(Role::Button)
         .tab_stop(true)
         .relative()
-        .w(px(22.))
-        .h(px(22.))
+        .w(Ctrl::Chip.scaled())
+        .h(Ctrl::Chip.scaled())
         .rounded(Radius::Md.scaled())
         .flex()
         .items_center()
@@ -841,7 +812,7 @@ fn small_btn(
         .relative()
         .w(px(18.))
         .h(px(18.))
-        .rounded(px(4.))
+        .rounded(Radius::Sm.scaled())
         .flex()
         .items_center()
         .justify_center()
@@ -864,7 +835,7 @@ fn small_btn_visual(icon: &'static str, color: Rgba) -> Div {
     div()
         .w(px(18.))
         .h(px(18.))
-        .rounded(px(4.))
+        .rounded(Radius::Sm.scaled())
         .flex()
         .items_center()
         .justify_center()

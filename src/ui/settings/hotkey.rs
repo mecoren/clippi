@@ -19,7 +19,7 @@ use crate::core::settings::LatestHotkeyEntry;
 use crate::platform::hotkey::hotkey_display;
 use crate::state::app::AppState;
 use crate::ui::design::palette::Palette;
-use crate::ui::design::size::Radius;
+use crate::ui::design::size::{Ctrl, Radius};
 use crate::ui::font::fs;
 use crate::ui::window_manager::{WinVTakeoverStatus, WindowManager};
 
@@ -204,29 +204,15 @@ impl SettingsPanel {
                     // still runs the exact same clear callback.
                     .when(options.neutral_clear, |row| {
                         row.when_some(clear_btn.clone(), |d, clear| {
-                            let neutral = p.ink_2;
                             d.child(
-                                div()
-                                    .h(px(28.))
-                                    .px(px(8.))
-                                    .rounded(Radius::Md.scaled())
-                                    .flex_shrink_0()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .cursor(CursorStyle::PointingHand)
-                                    .hover(move |style| style.bg(neutral).opacity(0.15))
-                                    .on_mouse_down(MouseButton::Left, move |_ev, window, cx| {
-                                        cx.stop_propagation();
-                                        clear(window, cx);
-                                    })
-                                    .child(
-                                        div()
-                                            .text_size(fs(12.))
-                                            .font_weight(FontWeight::BOLD)
-                                            .text_color(neutral)
-                                            .child(I18nKey::BtnReset.text()),
-                                    ),
+                                widgets::btn_small(
+                                    p,
+                                    ElementId::Name(format!("hotkey-reset:{control}").into()),
+                                    I18nKey::BtnReset.text(),
+                                    None,
+                                    widgets::Tone::Plain,
+                                )
+                                .on_click(move |_, window, cx| clear(window, cx)),
                             )
                         })
                     })
@@ -240,8 +226,9 @@ impl SettingsPanel {
                             .items_center()
                             .justify_center()
                             .when(!recording || waiting, |d| {
-                                d.cursor(CursorStyle::PointingHand)
-                                    .hover(move |style| style.opacity(0.85))
+                                d.cursor(CursorStyle::PointingHand).hover(move |style| {
+                                    style.bg(widgets::hover_of(recording_btn_bg, p.ink))
+                                })
                             })
                             .on_mouse_down(MouseButton::Left, move |_ev, window, cx| {
                                 if recording && !waiting {
@@ -270,7 +257,7 @@ impl SettingsPanel {
                             d.child(
                                 div()
                                     .relative()
-                                    .w(px(22.))
+                                    .w(Ctrl::Chip.scaled())
                                     .h(px(28.))
                                     .rounded(Radius::Md.scaled())
                                     .flex_shrink_0()
@@ -278,7 +265,7 @@ impl SettingsPanel {
                                     .items_center()
                                     .justify_center()
                                     .cursor(CursorStyle::PointingHand)
-                                    .hover(move |style| style.bg(danger).opacity(0.15))
+                                    .hover(move |style| style.bg(danger.opacity(0.15)))
                                     .on_mouse_down(MouseButton::Left, move |_ev, window, cx| {
                                         cx.stop_propagation();
                                         clear(window, cx);
@@ -407,15 +394,15 @@ impl SettingsPanel {
                 d.child(
                     div()
                         .relative()
-                        .w(px(22.))
-                        .h(px(22.))
+                        .w(Ctrl::Chip.scaled())
+                        .h(Ctrl::Chip.scaled())
                         .rounded(Radius::Md.scaled())
                         .flex_shrink_0()
                         .flex()
                         .items_center()
                         .justify_center()
                         .cursor(CursorStyle::PointingHand)
-                        .hover(move |style| style.bg(danger).opacity(0.15))
+                        .hover(move |style| style.bg(danger.opacity(0.15)))
                         .on_mouse_down(MouseButton::Left, {
                             let clr = clr.clone();
                             move |_ev, window, cx| {
@@ -528,14 +515,14 @@ impl SettingsPanel {
                                 let close_text = p.ink_2;
                                 div()
                                     .relative()
-                                    .w(px(26.))
-                                    .h(px(26.))
-                                    .rounded(px(6.))
+                                    .w(Ctrl::Small.scaled())
+                                    .h(Ctrl::Small.scaled())
+                                    .rounded(Radius::Md.scaled())
                                     .flex()
                                     .items_center()
                                     .justify_center()
                                     .cursor(CursorStyle::PointingHand)
-                                    .hover(|style| style.bg(Rgba::from(p.hover)))
+                                    .hover(move |style| style.bg(p.ink.opacity(0.06)))
                                     .on_mouse_down(MouseButton::Left, move |_ev, _window, cx| {
                                         cx.stop_propagation();
                                         close.update(cx, |panel, cx| {
@@ -715,14 +702,13 @@ impl SettingsPanel {
             WinVTakeoverStatus::Disabled => I18nKey::WinVTakeoverDesc.text(),
         };
         let show_recheck = takeover_status == WinVTakeoverStatus::HotkeyUnavailable;
-        let on_accent = Rgba::from(self.palette.on_accent);
         let show_manual = matches!(
             takeover_status,
             WinVTakeoverStatus::RegistryError | WinVTakeoverStatus::RegistryUpdateRequired
         );
 
-        let accent = self.palette.accent;
-        let text_3 = self.palette.ink_3;
+        let p = self.palette;
+        let text_3 = p.ink_3;
 
         let state_toggle = self.state.clone();
         let this_toggle = cx.entity().clone();
@@ -763,24 +749,21 @@ impl SettingsPanel {
                         .pb(px(8.))
                         .when(show_recheck, move |row| {
                             row.child(
-                                div()
-                                    .px(px(8.))
-                                    .py(px(4.))
-                                    .rounded(Radius::Md.scaled())
-                                    .bg(accent)
-                                    .text_size(fs(10.))
-                                    .text_color(on_accent)
-                                    .cursor(CursorStyle::PointingHand)
-                                    .hover(|style| style.opacity(0.85))
-                                    .on_mouse_down(MouseButton::Left, move |_ev, _window, cx| {
-                                        wm_recheck.update(cx, |wm, cx| {
-                                            wm.recheck_win_v_takeover(cx);
-                                        });
-                                        this_recheck.update(cx, |_panel, cx| {
-                                            cx.notify();
-                                        });
-                                    })
-                                    .child(I18nKey::WinVRecheckBtn.text()),
+                                widgets::btn_small(
+                                    &p,
+                                    "win-v-recheck",
+                                    I18nKey::WinVRecheckBtn.text(),
+                                    None,
+                                    widgets::Tone::Accent,
+                                )
+                                .on_click(move |_, _window, cx| {
+                                    wm_recheck.update(cx, |wm, cx| {
+                                        wm.recheck_win_v_takeover(cx);
+                                    });
+                                    this_recheck.update(cx, |_panel, cx| {
+                                        cx.notify();
+                                    });
+                                }),
                             )
                         })
                         .when(show_manual, move |row| {
@@ -788,10 +771,11 @@ impl SettingsPanel {
                                 div()
                                     .px(px(6.))
                                     .py(px(4.))
+                                    .rounded(Radius::Md.scaled())
                                     .text_size(fs(10.))
                                     .text_color(text_3)
                                     .cursor(CursorStyle::PointingHand)
-                                    .hover(|style| style.opacity(0.7))
+                                    .hover(move |style| style.bg(p.ink.opacity(0.06)))
                                     .on_mouse_down(MouseButton::Left, move |_ev, _window, cx| {
                                         this_manual.update(cx, |_panel, cx| {
                                             cx.emit(super::SettingsEvent::ShowHotkeyConfirm(

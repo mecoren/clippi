@@ -18,6 +18,9 @@ use super::widgets;
 /// add `.aria_label(...)` so the accessible name matches the tooltip.
 fn titlebar_button(id: &'static str, p: &Palette) -> Stateful<Div> {
     let p = *p;
+    // 悬停/按下与按钮工厂同源：叠一层 `ink` 遮罩，而不是换一整块灰底。
+    let hover_scrim = p.ink.opacity(0.06);
+    let press_scrim = p.ink.opacity(0.10);
     div()
         .id(id)
         .role(Role::Button)
@@ -30,7 +33,8 @@ fn titlebar_button(id: &'static str, p: &Palette) -> Stateful<Div> {
         .items_center()
         .justify_center()
         .cursor_pointer()
-        .hover(move |style| style.bg(p.hover))
+        .hover(move |style| style.bg(hover_scrim))
+        .active(move |style| style.bg(press_scrim))
 }
 
 /// In-app titlebar name: `Clippi`, or `Clippi (dev)` for a build that is not

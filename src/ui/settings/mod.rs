@@ -559,12 +559,14 @@ impl Render for SettingsPanel {
                     .child(
                         div()
                             .relative()
-                            .w(px(28.))
-                            .h(px(28.))
+                            .w(Ctrl::Input.scaled())
+                            .h(Ctrl::Input.scaled())
+                            .rounded(Radius::Md.scaled())
                             .flex()
                             .items_center()
                             .justify_center()
                             .cursor(CursorStyle::PointingHand)
+                            .hover(move |style| style.bg(p.ink.opacity(0.06)))
                             .on_mouse_down(MouseButton::Left, {
                                 let this = this.clone();
                                 move |_ev, _window, cx| {
@@ -1052,6 +1054,7 @@ impl SettingsPanel {
                     .border(px(1.))
                     .border_color(p.stroke)
                     .cursor(CursorStyle::PointingHand)
+                    .hover(move |style| style.bg(p.ink.opacity(0.06)))
                     .on_mouse_down(MouseButton::Left, move |_ev, window, cx| {
                         cx.stop_propagation();
                         on_click(window, cx);

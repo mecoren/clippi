@@ -13,6 +13,7 @@ use crate::ui::design::size::{Ctrl, Radius};
 use crate::ui::font::fs;
 use crate::ui::settings::SettingsEvent;
 use crate::ui::widgets;
+use crate::ui::widgets::ButtonExt;
 
 use super::SettingsPanel;
 use crate::core::backup::{BackupContents, PreparedRestore};
@@ -435,8 +436,6 @@ impl SettingsPanel {
 
             let text_1 = p.ink;
             let text_2 = p.ink_2;
-            let text_3 = p.ink_3;
-            let accent = p.accent;
 
             div()
                 .h(px(76.))
@@ -458,6 +457,7 @@ impl SettingsPanel {
                     div()
                         .flex()
                         .flex_row()
+                        .items_center()
                         .gap(px(6.))
                         // --- Path display (flex_1, left-elided via overflow) ---
                         .child({
@@ -482,139 +482,106 @@ impl SettingsPanel {
                         .child({
                             let state = state.clone();
                             let this = this.clone();
-                            div()
-                                .h(px(28.))
-                                .px(px(8.))
-                                .rounded(Radius::Md.scaled())
-                                .bg(accent)
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .opacity(if maintenance_running { 0.55 } else { 1.0 })
-                                .cursor(if maintenance_running {
-                                    CursorStyle::Arrow
-                                } else {
-                                    CursorStyle::PointingHand
-                                })
-                                .hover(move |s| {
-                                    s.opacity(if maintenance_running { 0.55 } else { 0.85 })
-                                })
-                                .on_mouse_down(MouseButton::Left, move |_ev, _window, _cx| {
-                                    let Some(storage_guard) = this
-                                        .read(_cx)
-                                        .window_manager
-                                        .read(_cx)
-                                        .try_start_data_operation()
-                                    else {
+                            widgets::btn_small(
+                                &p,
+                                "db-path-change",
+                                I18nKey::BtnChange.text(),
+                                None,
+                                widgets::Tone::Accent,
+                            )
+                            .inert_dimmed(maintenance_running)
+                            .on_click(move |_, _window, _cx| {
+                                let Some(storage_guard) = this
+                                    .read(_cx)
+                                    .window_manager
+                                    .read(_cx)
+                                    .try_start_data_operation()
+                                else {
+                                    return;
+                                };
+                                let dialog_guard = this
+                                    .read(_cx)
+                                    .window_manager
+                                    .read(_cx)
+                                    .suspend_auto_hide_for_dialog();
+                                let dialog = rfd::AsyncFileDialog::new()
+                                    .set_file_name("clippi.db")
+                                    .save_file();
+                                let state = state.clone();
+                                let task_panel = this.clone();
+                                let task = _cx.spawn(async move |cx| {
+                                    let _storage_guard = storage_guard;
+                                    let selected = dialog.await;
+                                    drop(dialog_guard);
+                                    let Some(new_path) = selected else {
                                         return;
                                     };
-                                    let dialog_guard = this
-                                        .read(_cx)
-                                        .window_manager
-                                        .read(_cx)
-                                        .suspend_auto_hide_for_dialog();
-                                    let dialog = rfd::AsyncFileDialog::new()
-                                        .set_file_name("clippi.db")
-                                        .save_file();
-                                    let state = state.clone();
-                                    let task_panel = this.clone();
-                                    let task = _cx.spawn(async move |cx| {
-                                        let _storage_guard = storage_guard;
-                                        let selected = dialog.await;
-                                        drop(dialog_guard);
-                                        let Some(new_path) = selected else {
-                                            return;
-                                        };
-                                        let new_path = new_path.path().to_path_buf();
-                                        let path_str = new_path.to_string_lossy().to_string();
-                                        let old = cx.read_entity(&state, |s, _cx| {
-                                            s.settings.resolve_db_path()
+                                    let new_path = new_path.path().to_path_buf();
+                                    let path_str = new_path.to_string_lossy().to_string();
+                                    let old = cx
+                                        .read_entity(&state, |s, _cx| s.settings.resolve_db_path());
+                                    if old == new_path {
+                                        return;
+                                    }
+                                    // AppState mutations run on this thread; drain usage jobs
+                                    // before checkpointing and copying, with no await in between.
+                                    if !crate::services::usage_touch::flush() {
+                                        task_panel.update(cx, |_panel, cx| {
+                                            cx.emit(SettingsEvent::DataError(
+                                                I18nKey::ErrUsagePending.text().into(),
+                                            ));
                                         });
-                                        if old == new_path {
-                                            return;
-                                        }
-                                        // AppState mutations run on this thread; drain usage jobs
-                                        // before checkpointing and copying, with no await in between.
-                                        if !crate::services::usage_touch::flush() {
-                                            task_panel.update(cx, |_panel, cx| {
-                                                cx.emit(SettingsEvent::DataError(
-                                                    I18nKey::ErrUsagePending.text().into(),
-                                                ));
+                                        return;
+                                    }
+                                    if let Err(e) = cx.read_entity(&state, |s, _cx| {
+                                        s.db.checkpoint_for_migration()
+                                    }) {
+                                        log::error!("checkpoint failed before migration: {e}");
+                                        task_panel.update(cx, |_panel, cx| {
+                                            cx.emit(SettingsEvent::DataError(format!(
+                                                "{}: {e}",
+                                                I18nKey::ErrDataOp.text()
+                                            )));
+                                        });
+                                        return;
+                                    }
+                                    match migrate_database(&old, &new_path) {
+                                        Ok(()) => {
+                                            state.update(cx, |s, _cx| {
+                                                s.settings.db_path = path_str;
+                                                s.settings.save();
                                             });
-                                            return;
+                                            let _ = crate::core::settings::spawn_new_process();
+                                            cx.update(|cx| cx.quit());
                                         }
-                                        if let Err(e) = cx.read_entity(&state, |s, _cx| {
-                                            s.db.checkpoint_for_migration()
-                                        }) {
-                                            log::error!("checkpoint failed before migration: {e}");
+                                        Err(e) => {
                                             task_panel.update(cx, |_panel, cx| {
-                                                cx.emit(SettingsEvent::DataError(format!(
-                                                    "{}: {e}",
-                                                    I18nKey::ErrDataOp.text()
-                                                )));
+                                                cx.emit(SettingsEvent::DataError(e));
                                             });
-                                            return;
                                         }
-                                        match migrate_database(&old, &new_path) {
-                                            Ok(()) => {
-                                                state.update(cx, |s, _cx| {
-                                                    s.settings.db_path = path_str;
-                                                    s.settings.save();
-                                                });
-                                                let _ = crate::core::settings::spawn_new_process();
-                                                cx.update(|cx| cx.quit());
-                                            }
-                                            Err(e) => {
-                                                task_panel.update(cx, |_panel, cx| {
-                                                    cx.emit(SettingsEvent::DataError(e));
-                                                });
-                                            }
-                                        }
-                                    });
-                                    this.update(_cx, |panel, _cx| {
-                                        panel._db_path_dialog_task = Some(task);
-                                    });
-                                })
-                                .child(
-                                    div()
-                                        .text_size(fs(12.))
-                                        .font_weight(FontWeight::BOLD)
-                                        .text_color(Rgba::from(p.on_accent))
-                                        .child(I18nKey::BtnChange.text()),
-                                )
+                                    }
+                                });
+                                this.update(_cx, |panel, _cx| {
+                                    panel._db_path_dialog_task = Some(task);
+                                });
+                            })
                         })
                         // --- Reset button ---
                         .child({
                             let this = this.clone();
-                            div()
-                                .h(px(28.))
-                                .px(px(8.))
-                                .rounded(Radius::Md.scaled())
-                                .bg(Rgba::from(Hsla::transparent_black()))
-                                .border(px(1.))
-                                .border_color(text_3)
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .opacity(if maintenance_running { 0.55 } else { 1.0 })
-                                .cursor(if maintenance_running {
-                                    CursorStyle::Arrow
-                                } else {
-                                    CursorStyle::PointingHand
-                                })
-                                .hover(move |s| s.bg(Rgba::from(p.hover)))
-                                .on_mouse_down(MouseButton::Left, move |_ev, _window, _cx| {
-                                    this.update(_cx, |panel, cx| {
-                                        panel.show_reset_data_dialog(cx);
-                                    });
-                                })
-                                .child(
-                                    div()
-                                        .text_size(fs(12.))
-                                        .font_weight(FontWeight::BOLD)
-                                        .text_color(text_3)
-                                        .child(I18nKey::BtnReset.text()),
-                                )
+                            widgets::btn_small(
+                                &p,
+                                "db-path-reset",
+                                I18nKey::BtnReset.text(),
+                                None,
+                                widgets::Tone::Plain,
+                            )
+                            .inert_dimmed(maintenance_running)
+                            .on_click(move |_, _window, _cx| {
+                                this.update(_cx, |panel, cx| {
+                                    panel.show_reset_data_dialog(cx);
+                                });
+                            })
                         }),
                 )
         }
@@ -725,6 +692,9 @@ impl SettingsPanel {
                                     .items_center()
                                     .justify_center()
                                     .cursor(CursorStyle::PointingHand)
+                                    .hover(move |style| {
+                                        style.bg(widgets::hover_of(p.control_face, p.ink))
+                                    })
                                     .on_mouse_down(MouseButton::Left, {
                                         let this = this.clone();
                                         move |_ev, _window, cx| {
@@ -830,6 +800,9 @@ impl SettingsPanel {
                                     .items_center()
                                     .justify_center()
                                     .cursor(CursorStyle::PointingHand)
+                                    .hover(move |style| {
+                                        style.bg(widgets::hover_of(p.control_face, p.ink))
+                                    })
                                     .on_mouse_down(MouseButton::Left, {
                                         let this = this.clone();
                                         move |_ev, _window, cx| {
@@ -891,7 +864,6 @@ impl SettingsPanel {
 
             let divider = p.stroke;
             let text_1 = p.ink;
-            let text_2 = p.ink_2;
             let text_3 = p.ink_3;
             let accent = p.accent;
             let btn_hover = p.hover;
@@ -1039,58 +1011,32 @@ impl SettingsPanel {
                                     let cleanup_interval = cleanup_interval.clone();
                                     move |(key, label)| {
                                         let selected = *key == cleanup_interval;
-                                        let btn_bg = if selected {
-                                            accent
-                                        } else {
-                                            p.background.opacity(0.)
-                                        };
-                                        let btn_text = if selected { p.on_accent } else { text_2 };
-                                        let btn_weight = if selected {
-                                            FontWeight::BOLD
-                                        } else {
-                                            FontWeight::default()
-                                        };
                                         let key = *key;
                                         let state = state.clone();
+                                        let tone = if selected {
+                                            widgets::Tone::Accent
+                                        } else {
+                                            widgets::Tone::Plain
+                                        };
 
-                                        div()
-                                            .h(px(26.))
-                                            .rounded(Radius::Md.scaled())
-                                            .px(px(8.))
-                                            .bg(btn_bg)
-                                            .when(!selected, |d| {
-                                                d.border(px(1.)).border_color(divider)
-                                            })
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .opacity(if maintenance_running { 0.55 } else { 1.0 })
-                                            .cursor(if maintenance_running {
-                                                CursorStyle::Arrow
-                                            } else {
-                                                CursorStyle::PointingHand
-                                            })
-                                            .on_mouse_down(
-                                                MouseButton::Left,
-                                                move |_ev, _window, cx| {
-                                                    cx.stop_propagation();
-                                                    if maintenance_running {
-                                                        return;
-                                                    }
-                                                    state.update(cx, |s, _cx| {
-                                                        s.settings.cleanup_interval =
-                                                            key.to_string();
-                                                        s.settings.save();
-                                                    });
-                                                },
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_size(fs(12.))
-                                                    .font_weight(btn_weight)
-                                                    .text_color(btn_text)
-                                                    .child(*label),
-                                            )
+                                        widgets::btn_small(
+                                            &p,
+                                            ElementId::Name(
+                                                format!("cleanup-interval:{key}").into(),
+                                            ),
+                                            *label,
+                                            None,
+                                            tone,
+                                        )
+                                        .inert_dimmed(maintenance_running)
+                                        .on_click(
+                                            move |_, _window, cx| {
+                                                state.update(cx, |s, _cx| {
+                                                    s.settings.cleanup_interval = key.to_string();
+                                                    s.settings.save();
+                                                });
+                                            },
+                                        )
                                     }
                                 }))
                         })
@@ -1098,49 +1044,36 @@ impl SettingsPanel {
                         .child({
                             let this = this.clone();
                             let window_manager = window_manager.clone();
-                            div()
-                                .h(px(26.))
-                                .px(px(8.))
-                                .rounded(Radius::Md.scaled())
-                                .bg(if maintenance_running { divider } else { accent })
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .cursor(if maintenance_running {
-                                    CursorStyle::Arrow
-                                } else {
-                                    CursorStyle::PointingHand
-                                })
-                                .when(!maintenance_running, |button| {
-                                    button.hover(|s| s.opacity(0.85)).on_mouse_down(
-                                        MouseButton::Left,
-                                        move |_ev, _window, cx| {
-                                            cx.stop_propagation();
-                                            let accepted = window_manager
-                                                .update(cx, |wm, cx| wm.request_cleanup(cx));
-                                            if accepted {
-                                                this.update(cx, |_panel, cx| {
-                                                    cx.emit(SettingsEvent::DataToast(
-                                                        I18nKey::BtnCleaning.text().to_string(),
-                                                    ));
-                                                });
-                                            }
-                                        },
-                                    )
-                                })
-                                .child(
-                                    div()
-                                        .text_size(fs(12.))
-                                        .font_weight(FontWeight::BOLD)
-                                        .text_color(Rgba::from(p.on_accent))
-                                        .child(if storage_operation_running {
-                                            I18nKey::LocalBackupBusy.text()
-                                        } else if maintenance_running {
-                                            I18nKey::BtnCleaning.text()
-                                        } else {
-                                            I18nKey::BtnCleanupNow.text()
-                                        }),
-                                )
+                            let label = if storage_operation_running {
+                                I18nKey::LocalBackupBusy.text()
+                            } else if maintenance_running {
+                                I18nKey::BtnCleaning.text()
+                            } else {
+                                I18nKey::BtnCleanupNow.text()
+                            };
+                            widgets::btn_small(
+                                &p,
+                                "cleanup-now",
+                                label,
+                                None,
+                                widgets::Tone::Accent,
+                            )
+                            // 清理进行中直接压暗并挡住点击：以前是灰底白字，
+                            // 字几乎看不见，也和同页的主行动按钮不同族。
+                            .when(maintenance_running, |button| {
+                                button.disabled(true).opacity(0.5)
+                            })
+                            .on_click(move |_, _window, cx| {
+                                let accepted =
+                                    window_manager.update(cx, |wm, cx| wm.request_cleanup(cx));
+                                if accepted {
+                                    this.update(cx, |_panel, cx| {
+                                        cx.emit(SettingsEvent::DataToast(
+                                            I18nKey::BtnCleaning.text().to_string(),
+                                        ));
+                                    });
+                                }
+                            })
                         }),
                 )
         }

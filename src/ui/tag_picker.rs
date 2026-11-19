@@ -123,7 +123,6 @@ impl RenderOnce for TagPickerPanel {
         let text_3 = Rgba::from(palette.ink_3);
         let accent = Rgba::from(palette.accent);
         let btn_hover = Rgba::from(palette.on_card("hover"));
-        let accent_hover_bg = Rgba::from(palette.accent.opacity(0.2));
         let sep_line = Rgba::from(palette.stroke);
         let panel_border = Rgba::from(palette.stroke_strong);
         let active_bg = Rgba::from(palette.accent.opacity(0.13));
@@ -203,6 +202,7 @@ impl RenderOnce for TagPickerPanel {
                     .h(px(26.))
                     .flex()
                     .flex_row()
+                    .items_center()
                     .gap(px(4.))
                     .child(
                         div()
@@ -258,43 +258,33 @@ impl RenderOnce for TagPickerPanel {
                         let on_toggle = on_toggle.clone();
                         let input = input.clone();
                         let tags_for_search = tags_for_search.clone();
-                        div()
-                            .w(px(26.))
-                            .h(px(26.))
-                            .rounded(Radius::Md.scaled())
-                            .bg(btn_hover)
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .cursor(CursorStyle::PointingHand)
-                            .hover(move |style| style.bg(accent_hover_bg))
-                            .child(
-                                div()
-                                    .text_size(typography::font(type_role::BASE))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(accent)
-                                    .child(I18nKey::TagFilterAdd.text()),
-                            )
-                            .on_mouse_down(MouseButton::Left, move |_ev, window, cx| {
-                                let name = input.read(cx).value().to_string();
-                                let trimmed = name.trim();
-                                if !trimmed.is_empty() {
-                                    // Exact name match → toggle; no match → create
-                                    let exact = tags_for_search
-                                        .iter()
-                                        .find(|(t, _)| t.name.eq_ignore_ascii_case(trimmed));
-                                    if let Some((tag, state)) = exact {
-                                        if let Some(ref handler) = on_toggle {
-                                            handler(tag.id, *state, window, cx);
-                                        }
-                                    } else if let Some(ref handler) = on_create {
-                                        handler(trimmed.to_string(), window, cx);
+                        widgets::btn_small(
+                            &palette,
+                            "tag-picker-add",
+                            I18nKey::TagFilterAdd.text(),
+                            None,
+                            widgets::Tone::Plain,
+                        )
+                        .on_click(move |_, window, cx| {
+                            let name = input.read(cx).value().to_string();
+                            let trimmed = name.trim();
+                            if !trimmed.is_empty() {
+                                // Exact name match → toggle; no match → create
+                                let exact = tags_for_search
+                                    .iter()
+                                    .find(|(t, _)| t.name.eq_ignore_ascii_case(trimmed));
+                                if let Some((tag, state)) = exact {
+                                    if let Some(ref handler) = on_toggle {
+                                        handler(tag.id, *state, window, cx);
                                     }
-                                    input.update(cx, |input, cx| {
-                                        input.set_value("", window, cx);
-                                    });
+                                } else if let Some(ref handler) = on_create {
+                                    handler(trimmed.to_string(), window, cx);
                                 }
-                            })
+                                input.update(cx, |input, cx| {
+                                    input.set_value("", window, cx);
+                                });
+                            }
+                        })
                     })
             })
             .child(div().h(px(1.)).w_full().bg(sep_line))
@@ -422,8 +412,8 @@ fn icon_button(
         .role(Role::Button)
         .tab_stop(enabled)
         .relative()
-        .w(px(22.))
-        .h(px(22.))
+        .w(Ctrl::Chip.scaled())
+        .h(Ctrl::Chip.scaled())
         .rounded(Radius::Md.scaled())
         .flex()
         .items_center()
