@@ -635,9 +635,12 @@ impl SettingsPanel {
                         .flex_row()
                         .items_center()
                         .gap(px(6.))
-                        // --- Path display (flex_1, left-elided via overflow) ---
+                        // --- Path display (flex_1, right-clipped via overflow; full path on hover) ---
                         .child({
+                            let db_path_str = db_path_str.clone();
+                            let db_path_tip = db_path_str.clone();
                             div()
+                                .id("db-path-display")
                                 .flex_1()
                                 .h(px(28.))
                                 .rounded(Radius::Md.scaled())
@@ -646,6 +649,14 @@ impl SettingsPanel {
                                 .flex()
                                 .items_center()
                                 .overflow_hidden()
+                                .tooltip(move |window, cx| {
+                                    widgets::wrapping_tooltip(
+                                        db_path_tip.clone(),
+                                        px(420.),
+                                        window,
+                                        cx,
+                                    )
+                                })
                                 .child(
                                     div()
                                         .text_size(fs(10.))
