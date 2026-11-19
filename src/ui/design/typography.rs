@@ -24,19 +24,12 @@ pub mod type_role {
     pub const BASE: f32 = 13.;
     /// 设置页标题、对话框标题
     pub const TITLE: f32 = 16.;
-    /// 大数字、空状态主标题
-    pub const DISPLAY: f32 = 26.;
 }
 
 /// 设计字号 → 实际像素（叠加用户字号缩放）。
 #[inline]
 pub fn font(size: f32) -> Pixels {
     super::super::font::fs(size)
-}
-
-/// 取 `layout` 里的字号令牌（随用户缩放）。
-pub fn font_dimension(key: &str) -> Pixels {
-    font(f32::from(super::tokens::dimension(key)))
 }
 
 /// 基准字号（13）随用户缩放后的值；rem 联动用。
@@ -135,11 +128,6 @@ pub fn tooltip_family(cx: &App) -> SharedString {
     installed_family("tooltip", cx)
 }
 
-/// 等宽族（地址、路径、代码）。
-pub fn mono_family(cx: &App) -> SharedString {
-    installed_family("mono", cx)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,7 +139,6 @@ mod tests {
             type_role::BODY,
             type_role::BASE,
             type_role::TITLE,
-            type_role::DISPLAY,
         ];
         assert!(roles.windows(2).all(|pair| pair[0] < pair[1]), "{roles:?}");
     }

@@ -31,6 +31,7 @@ use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
 use super::design::motion;
 use super::design::palette::Palette;
 use super::design::size::{Ctrl, IconSize, Radius, Space};
+use super::design::tokens;
 use super::design::typography::{self, type_role};
 
 // ---------------------------------------------------------------------------
@@ -1136,7 +1137,7 @@ pub fn row_text(p: &Palette, label: &str, desc: &str) -> Div {
             div()
                 .w_full()
                 .text_size(typography::font(type_role::CAPTION))
-                .line_height(relative(1.4))
+                .line_height(tokens::line_height())
                 .text_color(p.ink_3)
                 .child(desc.to_owned()),
         )

@@ -45,11 +45,6 @@ pub fn ease_out(t: f32) -> f32 {
     bezier(0.1, 0.9, 0.2, 1., t)
 }
 
-/// Fluent 的加速退场曲线。
-pub fn ease_in(t: f32) -> f32 {
-    bezier(0.7, 0., 1., 0.5, t)
-}
-
 /// 位移曲线：滑块、抽屉、分段指示器滑移。
 pub fn ease_move(t: f32) -> f32 {
     bezier(0.33, 0., 0.1, 1., t)
@@ -58,12 +53,6 @@ pub fn ease_move(t: f32) -> f32 {
 /// 页面/标签滑入曲线（不淡入）。
 pub fn ease_enter(t: f32) -> f32 {
     bezier(0.33, 1., 0.68, 1., t)
-}
-
-/// 既有 toggle/reorder 使用的三次缓动；保留为唯一自写曲线。
-pub fn ease_in_out(t: f32) -> f32 {
-    let t = t.clamp(0., 1.);
-    t * t * (3. - 2. * t)
 }
 
 /// 对称二次缓动（ease-in-out quad）：拖拽换位与落位共用。

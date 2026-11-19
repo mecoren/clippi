@@ -26,20 +26,6 @@ pub fn token(name: &str, dark: bool) -> Hsla {
     )
 }
 
-/// 同 [`token`]，返回 `Rgba`（现有组件层仍以 `Rgba` 为通行类型）。
-pub fn color(name: &str, dark: bool) -> Rgba {
-    token(name, dark).into()
-}
-
-/// 半透明令牌叠在「窗口底 + 卡片」上的不透明等效色：透明窗口上多层
-/// 半透明叠加会发暗，卡片内的小控件面需实色化（Argus `on_card`）。
-pub fn on_card(name: &str, dark: bool) -> Rgba {
-    let color = token("window-bg", dark)
-        .blend(token("layer", dark))
-        .blend(token(name, dark));
-    Hsla { a: 1., ..color }.into()
-}
-
 /// 一个布局令牌（`layout` 段），单位像素。
 pub fn dimension(key: &str) -> Pixels {
     px(design()["layout"][key]
