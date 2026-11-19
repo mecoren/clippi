@@ -271,12 +271,24 @@ impl SettingsPanel {
             .unwrap_or_default();
         let open = self.config_sync_menu_open && names.len() > 1;
 
+        // 没有可用后端时，把提示语当成唯一（禁用）选项：按钮里只有一段文字，
+        // 会走和正常选项一样的省略号裁切，不再在按钮末尾另挂一个节点把宽度
+        // 撑爆（旧写法会与 chevron 叠在一起）。
+        let (select_options, select_selected) = if no_backends {
+            (
+                vec![I18nKey::ConfigSyncNoBackend.text().to_string()],
+                Some(0),
+            )
+        } else {
+            (names.clone(), selected_index)
+        };
+
         let select = widgets::select(
             &p,
             "config-sync-backend",
             I18nKey::ConfigSyncTargetBackend.text(),
-            &names,
-            selected_index,
+            &select_options,
+            select_selected,
             open,
             no_backends,
             {
@@ -292,18 +304,12 @@ impl SettingsPanel {
 
         let mut select_area = div()
             .relative()
-            .flex_shrink_0()
-            .child(select.max_w(px(170.)).when(no_backends, |button| {
-                button.child(
-                    div()
-                        .text_size(typography::font(type_role::CAPTION))
-                        .text_color(p.ink_3)
-                        .child(I18nKey::ConfigSyncNoBackend.text()),
-                )
-            }));
+            .w_full()
+            // 占满一行：内部内容列已 `min_w(0)` + 省略号，窄窗口下按容器裁切。
+            .child(select.w_full().min_w(px(0.)));
         if open {
             select_area = select_area.child(
-                deferred(div().absolute().top(px(38.)).left_0().w(px(190.)).child(
+                deferred(div().absolute().top(px(38.)).left_0().w_full().child(
                     widgets::select_list(&p, "config-sync-backend-list", &names, selected_index, {
                         let this = this.clone();
                         move |index, _window, cx| {
@@ -393,15 +399,24 @@ impl SettingsPanel {
             ))
             .child(div().h(px(1.)).bg(p.stroke))
             .child(
+                // 两行：后端下拉独占一行，上传/应用平分第二行。三个控件挤一行
+                // 时按钮文字会被卡片边界裁掉（下拉的最小宽度 + 两个按钮的最小
+                // 内容宽度之和超过可用宽度）。
                 div()
                     .px(Space::Lg.scaled())
                     .py(Space::Md.scaled())
                     .flex()
-                    .items_center()
+                    .flex_col()
                     .gap(Space::Sm.scaled())
                     .child(select_area)
-                    .child(upload)
-                    .child(apply),
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap(Space::Sm.scaled())
+                            .child(upload)
+                            .child(apply),
+                    ),
             );
 
         self.settings_group(
