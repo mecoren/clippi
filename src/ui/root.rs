@@ -39,7 +39,9 @@ use super::clipboard_list::{ClipboardListEvent, ClipboardListView, ConfirmDialog
 use super::components::app_list_dialog::{
     render_app_list_dialog, AppListDialogEntry, AppListDialogParams,
 };
-use super::components::confirm_dialog::ConfirmDialog;
+use super::components::confirm_dialog::{
+    start_hold_countdown, ConfirmDialog, ConfirmStep, HoldCountdown,
+};
 use super::components::spinner::activity_spinner;
 use super::components::toast::Toast;
 use super::context_menu::{ContextMenu, MenuItemContext};
@@ -102,6 +104,10 @@ impl PanelFade {
     }
 }
 
+// 清空数据确认的两步口径（对齐 orbit 危险操作确认）：
+// 第 1 步确认包含范围，第 2 步复述后果再点一次，每步各有一次冷静期。
+// 根级渲染（在设置列表裁剪之外）；包含范围本身存在 `AppState`，
+// 冷静期由共享的 `HoldCountdown` + `start_hold_countdown` 驱动。
 pub struct RootView {
     state: Entity<AppState>,
     window_manager: Entity<WindowManager>,
@@ -155,7 +161,9 @@ pub struct RootView {
     focus_recovery_pending: bool,
     /// Root-level clear-data dialog state, outside the clipped settings list.
     /// The include-* selection itself lives in `AppState`.
-    clear_data_confirm: bool,
+    clear_data_confirm: Option<ConfirmStep>,
+    /// 清空数据当前步的冷静期倒计时（两步各一次）。
+    clear_data_hold: Option<HoldCountdown>,
     /// 窗口显示/隐藏时的面板透明度过渡。
     panel_fade: Option<PanelFade>,
     _wm_subscription: Subscription,
@@ -707,7 +715,7 @@ impl RootView {
                         let blocked = this.pending_tag_delete.is_some()
                             || this.list_view.read(cx).confirm_dialog_state().is_some()
                             || this.settings_panel.read(cx).hotkey_confirm.is_some()
-                            || this.clear_data_confirm;
+                            || this.clear_data_confirm.is_some();
                         if !blocked {
                             this.pending_tag_delete = Some(target.clone());
                         }
@@ -914,10 +922,7 @@ impl RootView {
                         cx.notify();
                     }
                     SettingsEvent::ShowClearDataConfirm => {
-                        this.clear_data_confirm = true;
-                        this.state
-                            .update(cx, |state, _cx| state.reset_clear_data_selection());
-                        cx.notify();
+                        this.open_clear_data_confirm(cx);
                     }
                 },
             ),
@@ -972,7 +977,8 @@ impl RootView {
             needs_auto_focus: true,
             mode_focus_pending: false,
             focus_recovery_pending: false,
-            clear_data_confirm: false,
+            clear_data_confirm: None,
+            clear_data_hold: None,
             panel_fade: None,
             _wm_subscription,
             _activation_subscription,
@@ -980,6 +986,17 @@ impl RootView {
             _appearance_subscription: Some(appearance_sub),
             focus_handle: cx.focus_handle(),
         }
+    }
+}
+
+impl RootView {
+    /// 打开「清空数据」两步确认（第 1 步），并为该步启动冷静期。
+    fn open_clear_data_confirm(&mut self, cx: &mut Context<Self>) {
+        self.state
+            .update(cx, |state, _cx| state.reset_clear_data_selection());
+        self.clear_data_confirm = Some(ConfirmStep::Scope);
+        start_hold_countdown(self, cx, |root| &mut root.clear_data_hold);
+        cx.notify();
     }
 }
 
@@ -1115,7 +1132,7 @@ impl Render for RootView {
         let confirm_dialog_visible = confirm_dialog_open && is_clipboard;
         let tag_delete_confirm_visible = is_clipboard && self.pending_tag_delete.is_some();
         let hotkey_confirm_visible = !is_edit && hotkey_confirm_open;
-        let clear_data_confirm_visible = is_settings && self.clear_data_confirm;
+        let clear_data_confirm_visible = is_settings && self.clear_data_confirm.is_some();
         let backend_panel_visible = is_settings && backend_panel_open;
         let hotkey_blacklist_popup_visible =
             is_settings && active_settings_tab == 2 && hotkey_blacklist_popup_open;
@@ -1182,8 +1199,15 @@ impl Render for RootView {
         let tag_delete_confirm_gen =
             self.overlay_generation("tag-delete-confirm", tag_delete_confirm_visible);
         let hotkey_confirm_gen = self.overlay_generation("hotkey-confirm", hotkey_confirm_visible);
-        let clear_data_confirm_gen =
-            self.overlay_generation("clear-data-confirm", clear_data_confirm_visible);
+        // 两步各用独立动画键：进入第 2 步重新走入场，与重新起算的冷静期对齐。
+        let clear_data_final_visible =
+            clear_data_confirm_visible && self.clear_data_confirm == Some(ConfirmStep::Final);
+        let clear_data_confirm_gen = self.overlay_generation(
+            "clear-data-confirm",
+            clear_data_confirm_visible && !clear_data_final_visible,
+        );
+        let clear_data_final_gen =
+            self.overlay_generation("clear-data-confirm-final", clear_data_final_visible);
         let backend_panel_gen = self.overlay_generation("backend-panel", backend_panel_visible);
         let hotkey_blacklist_popup_gen =
             self.overlay_generation("hotkey-blacklist-popup", hotkey_blacklist_popup_visible);
@@ -2706,6 +2730,16 @@ impl Render for RootView {
                     cx,
                 ))
             })
+            // --- 危险数据操作两步确认（6.9）：本地恢复 / 存储重置，
+            // --- 盖在各自第 1 步弹窗（内容选择 / 重置数据目录）之上。
+            .when(is_settings, |root| {
+                root.child(self.settings_panel.update(cx, |panel, cx| {
+                    panel.render_restore_confirm_dialog(window, cx).into_any_element()
+                }))
+                .child(self.settings_panel.update(cx, |panel, cx| {
+                    panel.render_reset_confirm_dialog(window, cx).into_any_element()
+                }))
+            })
             // --- Changelog notes (one release, opened from the version list) ---
             .when(changelog_detail_visible, |root| {
                 let settings = self.settings_panel.clone();
@@ -2743,7 +2777,7 @@ impl Render for RootView {
                     on_add: None,
                 }))
             })
-            // --- Root-level clear-data ConfirmDialog ---
+            // --- Root-level clear-data ConfirmDialog（两步 + 每步冷静期） ---
             .when(clear_data_confirm_visible, |root| {
                 let app_state = self.state.clone();
                 let state = app_state.read(cx);
@@ -2756,7 +2790,17 @@ impl Render for RootView {
                     .sync_backends
                     .iter()
                     .any(|backend| backend.enabled);
-                let mut message = I18nKey::ConfirmClearDataMsg.fmt(&[&items_count.to_string()]);
+                // 第 1 步确认范围，第 2 步复述后果；每步确认钮都先禁用冷静期秒数。
+                let final_step = self.clear_data_confirm == Some(ConfirmStep::Final);
+                let hold_remaining = self
+                    .clear_data_hold
+                    .as_ref()
+                    .map_or(0, HoldCountdown::remaining);
+                let mut message = if final_step {
+                    I18nKey::ConfirmClearDataStep2Msg.fmt(&[&items_count.to_string()])
+                } else {
+                    I18nKey::ConfirmClearDataMsg.fmt(&[&items_count.to_string()])
+                };
                 if has_enabled_sync {
                     message.push('\n');
                     message.push_str(I18nKey::ConfirmClearDataSyncWarning.text());
@@ -2770,84 +2814,115 @@ impl Render for RootView {
                         .inset_0()
                         .child(
                             ConfirmDialog::new()
-                                .title(I18nKey::ConfirmClearDataTitle.text())
+                                .title(if final_step {
+                                    I18nKey::ConfirmClearDataStep2Title.text()
+                                } else {
+                                    I18nKey::ConfirmClearDataStep1Title.text()
+                                })
                                 .message(message)
-                                .option(
-                                    I18nKey::ConfirmClearDataIncludeFavorites.text(),
-                                    include_favorites,
-                                    {
-                                        let app_state = app_state.clone();
-                                        move |_window, cx| {
-                                            app_state.update(cx, |state, cx| {
-                                                state.set_clear_data_selection(
-                                                    !include_favorites,
-                                                    include_tagged,
-                                                    include_noted,
-                                                );
-                                                // Root re-renders on the state
-                                                // observer, so the checkmark and
-                                                // the reported count refresh now
-                                                // instead of on the next hover.
-                                                cx.notify();
-                                            });
-                                        }
-                                    },
-                                )
-                                .option(
-                                    I18nKey::ConfirmClearDataIncludeTagged.text(),
-                                    include_tagged,
-                                    {
-                                        let app_state = app_state.clone();
-                                        move |_window, cx| {
-                                            app_state.update(cx, |state, cx| {
-                                                state.set_clear_data_selection(
-                                                    include_favorites,
-                                                    !include_tagged,
-                                                    include_noted,
-                                                );
-                                                cx.notify();
-                                            });
-                                        }
-                                    },
-                                )
-                                .option(
-                                    I18nKey::ConfirmClearDataIncludeNoted.text(),
-                                    include_noted,
-                                    {
-                                        let app_state = app_state.clone();
-                                        move |_window, cx| {
-                                            app_state.update(cx, |state, cx| {
-                                                state.set_clear_data_selection(
-                                                    include_favorites,
-                                                    include_tagged,
-                                                    !include_noted,
-                                                );
-                                                cx.notify();
-                                            });
-                                        }
-                                    },
-                                )
-                                .confirm_label(I18nKey::BtnClearData.text())
+                                // 第 2 步只复述后果，不再改动包含范围。
+                                .when(!final_step, |dialog| {
+                                    dialog
+                                        .option(
+                                            I18nKey::ConfirmClearDataIncludeFavorites.text(),
+                                            include_favorites,
+                                            {
+                                                let app_state = app_state.clone();
+                                                move |_window, cx| {
+                                                    app_state.update(cx, |state, cx| {
+                                                        state.set_clear_data_selection(
+                                                            !include_favorites,
+                                                            include_tagged,
+                                                            include_noted,
+                                                        );
+                                                        // Root re-renders on the state
+                                                        // observer, so the checkmark and
+                                                        // the reported count refresh now
+                                                        // instead of on the next hover.
+                                                        cx.notify();
+                                                    });
+                                                }
+                                            },
+                                        )
+                                        .option(
+                                            I18nKey::ConfirmClearDataIncludeTagged.text(),
+                                            include_tagged,
+                                            {
+                                                let app_state = app_state.clone();
+                                                move |_window, cx| {
+                                                    app_state.update(cx, |state, cx| {
+                                                        state.set_clear_data_selection(
+                                                            include_favorites,
+                                                            !include_tagged,
+                                                            include_noted,
+                                                        );
+                                                        cx.notify();
+                                                    });
+                                                }
+                                            },
+                                        )
+                                        .option(
+                                            I18nKey::ConfirmClearDataIncludeNoted.text(),
+                                            include_noted,
+                                            {
+                                                let app_state = app_state.clone();
+                                                move |_window, cx| {
+                                                    app_state.update(cx, |state, cx| {
+                                                        state.set_clear_data_selection(
+                                                            include_favorites,
+                                                            include_tagged,
+                                                            !include_noted,
+                                                        );
+                                                        cx.notify();
+                                                    });
+                                                }
+                                            },
+                                        )
+                                })
+                                .confirm_label(if final_step {
+                                    I18nKey::BtnClearData.text()
+                                } else {
+                                    I18nKey::DialogStepContinue.text()
+                                })
                                 .danger(true)
+                                .hold_seconds(hold_remaining)
                                                                 .on_confirm({
                                     let root_entity = root_entity.clone();
                                     let app_state = app_state.clone();
                                     move |_window, cx| {
-                                        let accepted = wm.update(cx, |wm, cx| {
-                                            wm.request_clear_data(
-                                                include_favorites,
-                                                include_tagged,
-                                                include_noted,
-                                                cx,
-                                            )
-                                        });
+                                        // 第 2 步才真正清空；第 1 步推进到第 2 步。
+                                        // 确认钮在冷静期内已禁用，这里再挡一次兜底。
+                                        let mut accepted = true;
+                                        if final_step {
+                                            accepted = wm.update(cx, |wm, cx| {
+                                                wm.request_clear_data(
+                                                    include_favorites,
+                                                    include_tagged,
+                                                    include_noted,
+                                                    cx,
+                                                )
+                                            });
+                                        }
                                         root_entity.update(cx, |root, cx| {
-                                            root.clear_data_confirm = false;
-                                            if !accepted {
-                                                app_state.update(cx, |state, _cx| {
-                                                    state.toast_message = Some(
-                                                        I18nKey::BtnCleaning.text().to_string(),
-                                                    );
+                                            if final_step {
+                                                root.clear_data_confirm = None;
+                                                root.clear_data_hold = None;
+                                                if !accepted {
+                                                    app_state.update(cx, |state, _cx| {
+                                                        state.toast_message = Some(
+                                                            I18nKey::BtnCleaning.text().to_string(),
+                                                        );
+                                                    });
+                                                }
+                                            } else if root
+                                                .clear_data_hold
+                                                .as_ref()
+                                                .is_none_or(|h| h.remaining() == 0)
+                                            {
+                                                // 兜底：冷静期内确认钮已禁用，这里再挡一次。
+                                                root.clear_data_confirm = Some(ConfirmStep::Final);
+                                                start_hold_countdown(root, cx, |r| {
+                                                    &mut r.clear_data_hold
                                                 });
                                             }
                                             cx.notify();
@@ -2858,13 +2933,22 @@ impl Render for RootView {
                                     let root_entity = root_entity.clone();
                                     move |_window, cx| {
                                         root_entity.update(cx, |root, cx| {
-                                            root.clear_data_confirm = false;
+                                            root.clear_data_confirm = None;
+                                            root.clear_data_hold = None;
                                             cx.notify();
                                         });
                                     }
                                 })
                                 .focus_handle(dialog_focus)
-                                .render_animated(window, cx, clear_data_confirm_gen),
+                                .render_animated(
+                                    window,
+                                    cx,
+                                    if final_step {
+                                        clear_data_final_gen
+                                    } else {
+                                        clear_data_confirm_gen
+                                    },
+                                ),
                         ),
                 )
             })
@@ -3429,7 +3513,7 @@ impl RootView {
             && !self.filter_bar.read(cx).filter_config_open()
             && self.settings_panel.read(cx).hotkey_confirm.is_none()
             && self.pending_tag_delete.is_none()
-            && !self.clear_data_confirm
+            && self.clear_data_confirm.is_none()
     }
 
     fn hotkeys_shortcut_available(&self, cx: &App) -> bool {

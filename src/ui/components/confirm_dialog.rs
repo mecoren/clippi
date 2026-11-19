@@ -12,6 +12,12 @@
 //! --- .on_cancel(|_window, cx| { /* dismiss */ }) ---
 //! --- .render_animated(window, cx, generation) // generation: u64, bump on each show ---
 //! --- ``` ---
+//!
+//! --- # 危险操作冷静期（时停） ---
+//!
+//! --- `.hold_seconds(n)`：确认钮在 n 秒倒计时走完前禁用，文案换成 ---
+//! --- 「请阅读后果（Ns）」，Enter 也不放行（对齐 orbit DangerousConfirmDialog） ---
+//! --- 的强制阅读口径）。倒计时本身由调用方维护并每秒重渲染。 ---
 
 use crate::ui::font::fs;
 use std::rc::Rc;
@@ -26,6 +32,7 @@ use crate::ui::design::palette::Palette;
 use crate::ui::design::size::Radius;
 use crate::ui::transition::keyed_transition;
 use crate::ui::widgets;
+use crate::ui::widgets::ButtonExt;
 
 type DialogHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 
@@ -42,17 +49,98 @@ fn dialog_anim_duration() -> Duration {
 
 // --- Component ---
 
+// --- 危险数据操作两步确认（AGENTS 6.9）---
+
+/// 两步危险确认的步骤：第 1 步确认影响范围 / 做出选择，第 2 步复述后果后
+/// 最终执行。每步各有一次冷静期，第 1 → 第 2 步切换时重新起算。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ConfirmStep {
+    /// 第 1 步：确认影响范围 / 做出选择。
+    Scope,
+    /// 第 2 步：最终确认。
+    Final,
+}
+
+/// 重要数据操作两步确认的冷静期（秒）：每步各一次，期间确认钮禁用。
+pub const DANGEROUS_HOLD_SECONDS: u32 = 5;
+
+/// 冷静期倒计时状态：挂在使用方自己的字段里，由 [`start_hold_countdown`] 驱动。
+///
+/// `epoch` 让旧倒计时任务在弹窗关闭重开、或步骤切换重新起算时自动退出，
+/// 避免旧任务把新一轮冷静期多减一秒。
+#[derive(Clone, Copy)]
+pub struct HoldCountdown {
+    epoch: u64,
+    /// 剩余秒数：>0 时确认钮禁用并显示倒计时文案。
+    remaining: u32,
+}
+
+impl HoldCountdown {
+    /// 剩余秒数；0 表示冷静期已走完，确认钮可用。
+    pub fn remaining(&self) -> u32 {
+        self.remaining
+    }
+}
+
+/// 启动/重启一段冷静期倒计时：重置 `hold` 字段并每秒递减，归零停表。
+/// 字段被清空（弹窗关闭）或被新一轮倒计时取代（epoch 不匹配）时自动结束，
+/// 任务自行退出，调用方不需要保存或取消它。
+pub fn start_hold_countdown<T: 'static>(
+    this: &mut T,
+    cx: &mut Context<T>,
+    hold: impl Fn(&mut T) -> &mut Option<HoldCountdown> + Copy + 'static,
+) {
+    let epoch = {
+        let slot = hold(this);
+        let count = slot.get_or_insert_with(|| HoldCountdown {
+            epoch: 0,
+            remaining: 0,
+        });
+        count.epoch += 1;
+        count.remaining = DANGEROUS_HOLD_SECONDS;
+        count.epoch
+    };
+    cx.spawn(async move |this, cx| {
+        loop {
+            cx.background_executor().timer(Duration::from_secs(1)).await;
+            let Ok(done) = this.update(cx, |this, cx| match hold(this) {
+                Some(h) if h.epoch == epoch => {
+                    if h.remaining > 0 {
+                        h.remaining -= 1;
+                        cx.notify();
+                    }
+                    h.remaining == 0
+                }
+                // 弹窗已关闭或已被新一轮倒计时取代：本轮作废。
+                _ => true,
+            }) else {
+                return;
+            };
+            if done {
+                return;
+            }
+        }
+    })
+    .detach();
+}
+
 pub struct ConfirmDialog {
     title: String,
     message: String,
     confirm_label: String,
     cancel_label: String,
     danger: bool,
+    /// 危险操作冷静期（秒）：>0 时确认钮禁用并显示倒计时文案。
+    hold_seconds: u32,
     on_confirm: Option<DialogHandler>,
     on_cancel: Option<DialogHandler>,
     options: Vec<DialogOption>,
     focus_handle: Option<FocusHandle>,
 }
+
+/// 构建器条件的 fluent 入口（`when` / `map`）：默认实现仅要求 `Sized`，
+/// 不依赖 `IntoElement`，供调用方按状态条件追加 option 等配置。
+impl FluentBuilder for ConfirmDialog {}
 
 impl ConfirmDialog {
     pub fn new() -> Self {
@@ -62,6 +150,7 @@ impl ConfirmDialog {
             confirm_label: I18nKey::DialogConfirm.text().into(),
             cancel_label: I18nKey::BtnCancel.text().into(),
             danger: false,
+            hold_seconds: 0,
             on_confirm: None,
             on_cancel: None,
             options: Vec::new(),
@@ -88,6 +177,13 @@ impl ConfirmDialog {
 
     pub fn danger(mut self, danger: bool) -> Self {
         self.danger = danger;
+        self
+    }
+
+    /// 危险操作冷静期（时停）：倒计时走完前确认钮禁用、显示剩余秒数，
+    /// Enter 同样不放行。秒数由调用方维护（每秒重渲染即可刷新文案）。
+    pub fn hold_seconds(mut self, seconds: u32) -> Self {
+        self.hold_seconds = seconds;
         self
     }
 
@@ -231,11 +327,21 @@ impl ConfirmDialog {
             confirm_label,
             cancel_label,
             danger: is_danger,
+            hold_seconds,
             on_confirm,
             on_cancel,
             options,
             focus_handle,
         } = self;
+        // 冷静期未走完：确认钮禁用，原确认文案后接「（Ns）」括号秒数（同字体）。
+        let holding = hold_seconds > 0;
+        let confirm_label: SharedString = if holding {
+            I18nKey::DialogHoldLabel
+                .fmt(&[&confirm_label, &hold_seconds.to_string()])
+                .into()
+        } else {
+            confirm_label.into()
+        };
 
         let animating = generation != 0;
         let (opacity, scale) = if animating {
@@ -287,8 +393,11 @@ impl ConfirmDialog {
                     }
                     "enter" => {
                         cx.stop_propagation();
-                        if let Some(ref handler) = on_confirm {
-                            handler(window, cx);
+                        // 冷静期内 Enter 不放行：与禁用的确认钮口径一致。
+                        if !holding {
+                            if let Some(ref handler) = on_confirm {
+                                handler(window, cx);
+                            }
                         }
                     }
                     _ => {}
@@ -400,6 +509,7 @@ impl ConfirmDialog {
                                         widgets::Tone::Accent
                                     },
                                 )
+                                .inert_dimmed(holding)
                                 .on_click(move |_, window, cx| {
                                     if let Some(ref handler) = on_confirm {
                                         handler(window, cx);

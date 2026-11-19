@@ -8,6 +8,7 @@ use gpui::*;
 
 use crate::core::i18n_keys::I18nKey;
 use crate::core::settings::migrate_database;
+use crate::ui::components::confirm_dialog::{start_hold_countdown, ConfirmDialog, ConfirmStep};
 use crate::ui::design::palette::Palette;
 use crate::ui::design::size::{Ctrl, Radius};
 use crate::ui::font::fs;
@@ -238,6 +239,170 @@ impl SettingsPanel {
         }));
     }
 
+    /// 内容选择弹窗点了「恢复并重启」：进入两步危险确认（第 1 步）。
+    /// 恢复载荷（`prepared`）仍留在 `local_backup_dialog`，最终确认时消费。
+    pub fn open_restore_confirm(&mut self, cx: &mut Context<Self>) {
+        if self.restore_data_confirm.is_some() {
+            return;
+        }
+        self.restore_data_confirm = Some(ConfirmStep::Scope);
+        self.restore_confirm_gen = self.restore_confirm_gen.wrapping_add(1);
+        start_hold_countdown(self, cx, |panel| &mut panel.restore_data_hold);
+        cx.notify();
+    }
+
+    /// 本地备份恢复的两步危险确认（6.9）：盖在内容选择弹窗之上。
+    /// 第 1 步复述恢复范围与后果，第 2 步最终确认；每步各一次冷静期。
+    pub fn render_restore_confirm_dialog(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some(step) = self.restore_data_confirm else {
+            return div().into_any_element();
+        };
+        let final_step = step == ConfirmStep::Final;
+        let hold = self.restore_data_hold.as_ref().map_or(0, |h| h.remaining());
+        let message = if final_step {
+            I18nKey::RestoreConfirmStep2Msg.text().to_string()
+        } else {
+            let mut msg = I18nKey::RestoreConfirmStep1Msg.text().to_string();
+            if let Some(dialog) = self.local_backup_dialog.as_ref() {
+                if dialog.selected.settings {
+                    msg.push_str(&format!("\n· {}", I18nKey::BackupSettings.text()));
+                }
+                if dialog.selected.data {
+                    msg.push_str(&format!("\n· {}", I18nKey::BackupData.text()));
+                }
+            }
+            msg
+        };
+
+        let this = cx.entity().clone();
+        let dialog_focus = cx.focus_handle();
+
+        ConfirmDialog::new()
+            .title(if final_step {
+                I18nKey::RestoreConfirmStep2Title.text()
+            } else {
+                I18nKey::RestoreConfirmStep1Title.text()
+            })
+            .message(message)
+            .confirm_label(if final_step {
+                I18nKey::RestoreConfirmFinalLabel.text()
+            } else {
+                I18nKey::DialogStepContinue.text()
+            })
+            .danger(true)
+            .hold_seconds(hold)
+            .on_confirm({
+                let this = this.clone();
+                move |_window, cx| {
+                    this.update(cx, |panel, cx| {
+                        if panel.restore_data_confirm == Some(ConfirmStep::Final) {
+                            panel.restore_data_confirm = None;
+                            panel.restore_data_hold = None;
+                            // 恢复载荷在内容选择弹窗里，交给既有执行路径。
+                            panel.confirm_local_backup(cx);
+                        } else if panel
+                            .restore_data_hold
+                            .as_ref()
+                            .is_none_or(|h| h.remaining() == 0)
+                        {
+                            // 冷静期内确认钮已禁用，这里再挡一次兜底。
+                            panel.restore_data_confirm = Some(ConfirmStep::Final);
+                            panel.restore_confirm_gen += 1;
+                            start_hold_countdown(panel, cx, |p| &mut p.restore_data_hold);
+                        }
+                        cx.notify();
+                    });
+                }
+            })
+            .on_cancel({
+                let this = this.clone();
+                move |_window, cx| {
+                    this.update(cx, |panel, cx| {
+                        panel.restore_data_confirm = None;
+                        panel.restore_data_hold = None;
+                        cx.notify();
+                    });
+                }
+            })
+            .focus_handle(dialog_focus)
+            .render_animated(window, cx, self.restore_confirm_gen)
+            .into_any_element()
+    }
+
+    /// 存储位置重置第 1 步（选择弹窗）点了确认：关闭第 1 步，进入第 2 步。
+    pub fn advance_reset_data_dir(&mut self, cx: &mut Context<Self>) {
+        if self
+            .reset_data_hold
+            .as_ref()
+            .is_some_and(|h| h.remaining() > 0)
+        {
+            return;
+        }
+        if self.reset_data_dialog.is_none() {
+            return;
+        }
+        self.reset_data_dialog = None;
+        self.reset_data_confirm = true;
+        self.reset_confirm_gen += 1;
+        start_hold_countdown(self, cx, |panel| &mut panel.reset_data_hold);
+        cx.notify();
+    }
+
+    /// 存储位置重置的第 2 步确认（6.9）：复述迁移/合并后果后执行。
+    pub fn render_reset_confirm_dialog(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        if !self.reset_data_confirm {
+            return div().into_any_element();
+        }
+        let hold = self.reset_data_hold.as_ref().map_or(0, |h| h.remaining());
+        let this = cx.entity().clone();
+        let dialog_focus = cx.focus_handle();
+
+        ConfirmDialog::new()
+            .title(I18nKey::ResetDataDirStep2Title.text())
+            .message(I18nKey::ResetDataDirStep2Msg.text())
+            .confirm_label(I18nKey::ResetDataDirFinalLabel.text())
+            .danger(true)
+            .hold_seconds(hold)
+            .on_confirm({
+                let this = this.clone();
+                move |_window, cx| {
+                    this.update(cx, |panel, cx| {
+                        if panel
+                            .reset_data_hold
+                            .as_ref()
+                            .is_some_and(|h| h.remaining() > 0)
+                        {
+                            return;
+                        }
+                        panel.reset_data_confirm = false;
+                        panel.reset_data_hold = None;
+                        panel.apply_reset_data_dir(cx);
+                    });
+                }
+            })
+            .on_cancel({
+                let this = this.clone();
+                move |_window, cx| {
+                    this.update(cx, |panel, cx| {
+                        panel.reset_data_confirm = false;
+                        panel.reset_data_hold = None;
+                        cx.notify();
+                    });
+                }
+            })
+            .focus_handle(dialog_focus)
+            .render_animated(window, cx, self.reset_confirm_gen)
+            .into_any_element()
+    }
+
     pub fn render_local_backup_dialog_overlay(
         panel: Entity<Self>,
         layout: (f32, f32, f32, f32, f32),
@@ -347,7 +512,18 @@ impl SettingsPanel {
             on_shortcut_click: None,
             on_cancel_recording: None,
             on_add: Some(Rc::new(move |_, cx| {
-                panel.update(cx, |panel, cx| panel.confirm_local_backup(cx))
+                panel.update(cx, |panel, cx| {
+                    // 恢复覆盖现有数据（6.9）：先走两步危险确认；纯备份直接执行。
+                    if panel
+                        .local_backup_dialog
+                        .as_ref()
+                        .is_some_and(|dialog| dialog.prepared.is_some())
+                    {
+                        panel.open_restore_confirm(cx);
+                    } else {
+                        panel.confirm_local_backup(cx);
+                    }
+                })
             })),
         })
         .into_any_element()
@@ -1178,12 +1354,15 @@ impl SettingsPanel {
             portable_path,
             system_path,
         });
+        // 第 1 步的确认钮同样吃时停（6.9）；第 2 步在 advance_reset_data_dir 里重算。
+        start_hold_countdown(self, cx, |panel| &mut panel.reset_data_hold);
         cx.notify();
     }
 
     /// Dismiss the reset-data-directory dialog.
     pub fn dismiss_reset_dialog(&mut self, cx: &mut Context<Self>) {
         self.reset_data_dialog = None;
+        self.reset_data_hold = None;
         cx.notify();
     }
 
@@ -1458,7 +1637,7 @@ impl SettingsPanel {
                             .text_size(fs(16.))
                             .font_weight(FontWeight::BOLD)
                             .text_color(text_1)
-                            .child(I18nKey::BtnResetDataDir.text()),
+                            .child(I18nKey::ResetDataDirStep1Title.text()),
                     )
                     // --- Description ---
                     .child(
@@ -1577,17 +1756,35 @@ impl SettingsPanel {
                             // --- Apply ---
                             .child({
                                 let this = this.clone();
+                                // 第 1 步的确认钮：冷静期未走完时禁用，原文案后接秒数。
+                                let holding = self
+                                    .reset_data_hold
+                                    .as_ref()
+                                    .is_some_and(|h| h.remaining() > 0);
+                                let label: String = if holding {
+                                    I18nKey::DialogHoldLabel.fmt(&[
+                                        I18nKey::DialogStepContinue.text(),
+                                        &self
+                                            .reset_data_hold
+                                            .as_ref()
+                                            .map_or(0, |h| h.remaining())
+                                            .to_string(),
+                                    ])
+                                } else {
+                                    I18nKey::DialogStepContinue.text().into()
+                                };
                                 widgets::btn_small(
                                     &p,
                                     "reset-data-apply",
-                                    I18nKey::BtnApply.text(),
+                                    label,
                                     None,
-                                    widgets::Tone::Accent,
+                                    widgets::Tone::Danger,
                                 )
+                                .inert_dimmed(holding)
                                 .on_click(move |_, _window, cx| {
                                     cx.stop_propagation();
                                     this.update(cx, |panel, cx| {
-                                        panel.apply_reset_data_dir(cx);
+                                        panel.advance_reset_data_dir(cx);
                                     });
                                 })
                             }),

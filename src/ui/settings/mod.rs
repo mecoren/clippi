@@ -34,7 +34,7 @@ use hotkey::HotkeyConfirmAction;
 use crate::core::i18n_keys::I18nKey;
 use crate::state::app::AppState;
 use crate::ui::add_backend::AddBackendPanel;
-use crate::ui::components::confirm_dialog::ConfirmDialog;
+use crate::ui::components::confirm_dialog::{ConfirmDialog, ConfirmStep, HoldCountdown};
 use crate::ui::components::slider::{
     SliderDetent, SliderDragState, SteppedSlider, SteppedSliderColors,
 };
@@ -109,6 +109,14 @@ pub struct SettingsPanel {
     pub pending_paste_shortcut: Option<(String, String)>,
     /// Reset-data-directory dialog state (portable mode only).
     pub reset_data_dialog: Option<ResetDataDirState>,
+    reset_data_hold: Option<HoldCountdown>,
+    /// 存储位置重置第 2 步确认（6.9 两次时停）；第 1 步是重置弹窗本身。
+    pub reset_data_confirm: bool,
+    reset_confirm_gen: u64,
+    /// 本地备份恢复两步确认（6.9 两次时停）；恢复载荷仍留在 `local_backup_dialog`。
+    pub restore_data_confirm: Option<ConfirmStep>,
+    restore_data_hold: Option<HoldCountdown>,
+    restore_confirm_gen: u64,
     /// Pending backend deletion confirmation (backend id).
     pub delete_backend_confirm: Option<String>,
     delete_backend_confirm_gen: u64,
@@ -253,6 +261,12 @@ impl SettingsPanel {
             recording_paste_shortcut: None,
             pending_paste_shortcut: None,
             reset_data_dialog: None,
+            reset_data_hold: None,
+            reset_data_confirm: false,
+            reset_confirm_gen: 0,
+            restore_data_confirm: None,
+            restore_data_hold: None,
+            restore_confirm_gen: 0,
             delete_backend_confirm: None,
             delete_backend_confirm_gen: 0,
             delete_backend_confirm_started: None,
@@ -316,6 +330,9 @@ impl SettingsPanel {
         self.paste_shortcuts_popup_open = false;
         self.app_blacklist_popup_open = false;
         self.privacy_types_popup_open = false;
+        // 恢复确认弹窗依附于内容选择弹窗，一并关闭（含冷静期）。
+        self.restore_data_confirm = None;
+        self.restore_data_hold = None;
     }
 
     pub fn toggle_hotkey_blacklist_popup(&mut self) {
