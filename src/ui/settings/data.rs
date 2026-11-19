@@ -1508,7 +1508,8 @@ impl SettingsPanel {
         };
 
         let p = self.palette;
-        let surface = p.layer;
+        // 对话框是不透底浮层，不能用半透明的卡片面 `layer`。
+        let surface = p.flyout;
         let accent = p.accent;
         let accent_soft = p.accent_soft();
         let text_1 = p.ink;

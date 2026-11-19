@@ -93,7 +93,13 @@ impl Palette {
             background: color("window-bg"),
             layer: color("layer"),
             layer_strong: color("layer-strong"),
-            flyout: color("flyout"),
+            // 浮层面必须不透底：令牌值带 0.9 上下的 alpha（便于未来接 Mica），
+            // 直接铺在面板上会透出下层图标与文字。与 `apply()` 里
+            // `colors.surface` 的处理保持一致，浮层阴影也不再透上来发灰。
+            flyout: Hsla {
+                a: 1.,
+                ..color("flyout")
+            },
             stroke: theme.colors.border,
             stroke_strong: color("stroke-strong"),
             hover: theme.colors.list_hover,

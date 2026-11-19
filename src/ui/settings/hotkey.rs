@@ -474,7 +474,7 @@ impl SettingsPanel {
                     .w(px(popup_width))
                     .max_w(px(popup_width))
                     .rounded(px(8.))
-                    .bg(p.layer)
+                    .bg(p.flyout)
                     .border(px(1.))
                     .border_color(p.stroke)
                     .shadow_none()
