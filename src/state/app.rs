@@ -149,6 +149,10 @@ pub struct AppState {
     /// popup reloads itself whenever it opens (`WindowManager::show_quick_window`),
     /// so a hidden page can stay stale and the rebuild is skipped.
     pub quick_window_visible: bool,
+    /// Whether the standalone preview window is currently on screen. The
+    /// hover flyout stays closed while it is: two previews for the same item
+    /// are noise, and the big window already owns the content.
+    pub preview_window_open: bool,
     /// Whether the Alt modifier is currently held down.
     ///
     /// Updated from the window's modifiers-changed callback; drives the
@@ -591,6 +595,7 @@ impl AppState {
             quick_items: Vec::new(),
             quick_keyword: String::new(),
             quick_window_visible: false,
+            preview_window_open: false,
             alt_pressed: false,
             main_window_active: false,
             alt_hint_gated: false,
@@ -1163,6 +1168,22 @@ impl AppState {
         self.quick_window_visible = visible;
         if !visible {
             self.quick_keyword.clear();
+        }
+    }
+
+    pub fn set_preview_window_open(&mut self, open: bool) {
+        self.preview_window_open = open;
+    }
+
+    /// Read one full entry for preview. The list deliberately keeps trimmed
+    /// rows (text 8 KB, HTML 4 KB), so preview must not reuse `self.items`.
+    pub fn load_full_item(&self, id: i64) -> Option<ClipboardItem> {
+        match self.db.get_by_id_with_tags(id) {
+            Ok(item) => item,
+            Err(error) => {
+                log::warn!("load_full_item({id}): {error}");
+                None
+            }
         }
     }
 
@@ -4238,6 +4259,7 @@ mod tests {
             quick_items: Vec::new(),
             quick_keyword: String::new(),
             quick_window_visible: false,
+            preview_window_open: false,
             alt_pressed: false,
             main_window_active: false,
             alt_hint_gated: false,

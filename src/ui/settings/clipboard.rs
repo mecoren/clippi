@@ -39,6 +39,8 @@ impl SettingsPanel {
         let copy_as_plain_text = app.settings.copy_as_plain_text;
         let edit_auto_save = app.settings.edit_auto_save;
         let show_original_on_hover = app.settings.show_original_on_hover;
+        let preview_hover_enabled = app.settings.preview_hover_enabled;
+        let preview_hover_delay = app.settings.preview_hover_delay_normalized();
         let ocr_enabled = app.settings.ocr_enabled;
         let qr_enabled = app.settings.qr_enabled;
         let auto_detect_links = app.settings.auto_detect_links;
@@ -341,6 +343,74 @@ impl SettingsPanel {
         .into_any_element()];
         container =
             container.child(self.settings_group(I18nKey::GroupCardLayout.text(), card_rows));
+
+        // --- Hover preview ---
+        let mut preview_rows: Vec<AnyElement> = vec![self
+            .render_toggle_row(
+                I18nKey::SettingPreviewHover,
+                I18nKey::DescPreviewHoverOn,
+                I18nKey::DescPreviewHoverOff,
+                preview_hover_enabled,
+                window,
+                cx,
+                |state, this, _window, _cx| {
+                    state.update(_cx, |s, _cx| {
+                        s.settings.preview_hover_enabled = !s.settings.preview_hover_enabled;
+                        s.settings.save();
+                    });
+                    this.update(_cx, |_panel, cx| {
+                        cx.emit(super::SettingsEvent::ClipboardSettingsChanged {
+                            reload_items: false,
+                            scroll_to_top: false,
+                        });
+                        cx.notify();
+                    });
+                },
+            )
+            .into_any_element()];
+        if preview_hover_enabled {
+            let delay_key = match preview_hover_delay {
+                300 => "300",
+                1000 => "1000",
+                _ => "500",
+            };
+            preview_rows.push(
+                self.setting_row_with_tabs(
+                    I18nKey::SettingPreviewDelay.text(),
+                    I18nKey::DescPreviewDelay.text(),
+                    "settings-preview-delay",
+                    &[
+                        ("300", I18nKey::PreviewDelayFast.text()),
+                        ("500", I18nKey::PreviewDelayNormal.text()),
+                        ("1000", I18nKey::PreviewDelaySlow.text()),
+                    ],
+                    delay_key,
+                    {
+                        let state = state.clone();
+                        let this = this.clone();
+                        move |key, _window, _cx| {
+                            let delay = key.parse::<u32>().unwrap_or(500);
+                            state.update(_cx, |s, _cx| {
+                                s.settings.preview_hover_delay_ms = delay;
+                                s.settings.save();
+                            });
+                            this.update(_cx, |_panel, cx| {
+                                cx.emit(super::SettingsEvent::ClipboardSettingsChanged {
+                                    reload_items: false,
+                                    scroll_to_top: false,
+                                });
+                                cx.notify();
+                            });
+                        }
+                    },
+                    window,
+                    cx,
+                )
+                .into_any_element(),
+            );
+        }
+        container =
+            container.child(self.settings_group(I18nKey::GroupPreview.text(), preview_rows));
 
         // --- Copy & paste ---
         let paste_rows: Vec<AnyElement> = vec![

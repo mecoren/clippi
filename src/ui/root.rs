@@ -234,7 +234,10 @@ impl RootView {
         let list_view = cx.new(|cx| {
             ClipboardListView::new(items, state.clone(), window, cx, window_manager.clone())
         });
-        list_view.update(cx, |list, cx| list.focus(window, cx));
+        list_view.update(cx, |list, cx| {
+            list.attach_preview_panel(cx);
+            list.focus(window, cx);
+        });
         let titlebar = cx.new(|_cx| Titlebar::new(state.clone(), list_view.clone()));
         let search_box = cx.new(|cx| SearchBox::new(state.clone(), list_view.clone(), window, cx));
         let filter_bar = cx.new(|_cx| FilterBar::new(state.clone(), list_view.clone()));
@@ -384,6 +387,8 @@ impl RootView {
                     });
                 }
                 WindowManagerEvent::WindowHiding => {
+                    this.list_view
+                        .update(cx, |list, cx| list.hide_preview_panel(cx));
                     this.fade_panel_to(0.);
                     cx.notify();
                 }
@@ -748,6 +753,45 @@ impl RootView {
                             cx.notify();
                         }
                     }
+                    ClipboardListEvent::OpenPreview(id) => {
+                        this.window_manager
+                            .update(cx, |wm, cx| wm.open_preview(*id, cx));
+                        cx.notify();
+                    }
+                    ClipboardListEvent::PreviewFlyoutShow(target) => {
+                        // The list can retarget from inside its render pass;
+                        // creating or moving a native window there is unsafe.
+                        let target = target.clone();
+                        let wm = this.window_manager.clone();
+                        cx.defer(move |cx| {
+                            wm.update(cx, |wm, cx| wm.show_preview_flyout(&target, cx));
+                        });
+                    }
+                    ClipboardListEvent::PreviewFlyoutCollapse { retarget } => {
+                        let retarget = retarget.clone();
+                        let wm = this.window_manager.clone();
+                        cx.defer(move |cx| {
+                            wm.update(cx, |wm, cx| wm.collapse_preview_flyout(&retarget, cx));
+                        });
+                    }
+                    ClipboardListEvent::PreviewFlyoutHide => {
+                        this.window_manager
+                            .update(cx, |wm, cx| wm.hide_preview_flyout(cx));
+                    }
+                    ClipboardListEvent::PreviewFlyoutExpand(id) => {
+                        let id = *id;
+                        let wm = this.window_manager.clone();
+                        cx.defer(move |cx| {
+                            wm.update(cx, |wm, cx| wm.expand_preview_flyout(id, cx));
+                        });
+                    }
+                    ClipboardListEvent::PreviewFlyoutPrewarm(id) => {
+                        let id = *id;
+                        let wm = this.window_manager.clone();
+                        cx.defer(move |cx| {
+                            wm.update(cx, |wm, cx| wm.prewarm_preview_flyout(id, cx));
+                        });
+                    }
                     ClipboardListEvent::RequestHide => {
                         this.window_manager.update(cx, |wm, cx| {
                             wm.hide_with_reason("list_request", cx);
@@ -1040,6 +1084,21 @@ impl Render for RootView {
         let is_clipboard = self.current_view == "clipboard";
         let is_settings = self.current_view == "settings";
         let is_edit = self.current_view == "edit";
+        // Leaving the clipboard view retires both previews; otherwise the
+        // flyout would float over settings/edit and the big window would keep
+        // a stale entry open.
+        if !is_clipboard {
+            self.list_view
+                .update(cx, |list, cx| list.hide_preview_panel(cx));
+            if self.state.read(cx).preview_window_open {
+                // Window removal is a native operation; defer it out of the
+                // main window's render pass.
+                let wm = self.window_manager.clone();
+                cx.defer(move |cx| {
+                    wm.update(cx, |wm, cx| wm.close_preview(false, cx));
+                });
+            }
+        }
         let shortcuts_available = self.alt_shortcuts_available(cx);
         let emoji_shortcut_available = self.emoji_shortcut_available(cx);
         let hotkeys_shortcut_available = self.hotkeys_shortcut_available(cx);

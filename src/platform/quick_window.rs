@@ -20,9 +20,10 @@ use windows_sys::Win32::{
     UI::WindowsAndMessaging::{
         GetWindowLongW, SetWindowLongW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE, HTCLIENT,
         HWND_TOPMOST, MA_NOACTIVATE, PA_NOACTIVATE, SWP_FRAMECHANGED, SWP_HIDEWINDOW,
-        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW,
-        WM_DISPLAYCHANGE, WM_MOUSEACTIVATE, WM_NCCALCSIZE, WM_NCDESTROY, WM_NCHITTEST,
-        WM_POINTERACTIVATE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_THICKFRAME,
+        SWP_NOACTIVATE, SWP_NOCOPYBITS, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER,
+        SWP_SHOWWINDOW, WM_DISPLAYCHANGE, WM_MOUSEACTIVATE, WM_NCCALCSIZE, WM_NCDESTROY,
+        WM_NCHITTEST, WM_POINTERACTIVATE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+        WS_THICKFRAME,
     },
 };
 
@@ -31,15 +32,26 @@ const SUBCLASS_ID: usize = 0x434C_5050;
 /// Install the mandatory non-activating policy before the popup can be shown.
 /// Failure leaves the caller responsible for keeping the popup hidden.
 pub fn install(hwnd: isize) -> Result<(), &'static str> {
+    install_policy(hwnd, true)
+}
+
+/// Same policy without `WS_EX_TOPMOST`, for a popup owned by the main window
+/// (the preview flyout). The owner relationship keeps it above the main window
+/// while the main is foreground, without floating over other applications.
+pub fn install_owned(hwnd: isize) -> Result<(), &'static str> {
+    install_policy(hwnd, false)
+}
+
+fn install_policy(hwnd: isize, topmost: bool) -> Result<(), &'static str> {
     let hwnd = hwnd as HWND;
     if hwnd.is_null() {
-        return Err("missing quick window handle");
+        return Err("missing popup window handle");
     }
     // SAFETY: the caller supplies its own GPUI window on the owning UI thread.
     // The subclass only makes activation decisions and forwards other messages.
     unsafe {
         if SetWindowSubclass(hwnd, Some(window_proc), SUBCLASS_ID, 0) == 0 {
-            return Err("could not install quick window input policy");
+            return Err("could not install popup input policy");
         }
         // Let DWM draw the popup frame: rounded corners plus the system 1px
         // stroke. The popup paints square, so the corners are the system's and
@@ -59,8 +71,14 @@ pub fn install(hwnd: isize) -> Result<(), &'static str> {
             &border as *const _ as _,
             size,
         );
-        let style = GetWindowLongW(hwnd, GWL_EXSTYLE)
-            | (WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST) as i32;
+        let mut extra = WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
+        if topmost {
+            extra |= WS_EX_TOPMOST;
+        }
+        let mut style = GetWindowLongW(hwnd, GWL_EXSTYLE) | extra as i32;
+        if !topmost {
+            style &= !(WS_EX_TOPMOST as i32);
+        }
         SetWindowLongW(hwnd, GWL_EXSTYLE, style);
         if GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_NOACTIVATE as i32 == 0 {
             return Err("could not apply WS_EX_NOACTIVATE");
@@ -86,7 +104,7 @@ pub fn install(hwnd: isize) -> Result<(), &'static str> {
                 | SWP_NOZORDER,
         ) == 0
         {
-            return Err("could not initialize non-activating quick window");
+            return Err("could not initialize non-activating popup window");
         }
     }
     Ok(())
@@ -104,6 +122,24 @@ pub fn show_at(hwnd: isize, x: i32, y: i32, width: i32, height: i32) -> bool {
             width,
             height,
             SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW,
+        ) != 0
+    }
+}
+
+/// Show an owned popup at an exact rectangle without changing the z-order.
+/// The owner relationship with the main window keeps it above the main while
+/// leaving other applications free to cover it.
+pub fn show_at_owned(hwnd: isize, x: i32, y: i32, width: i32, height: i32) -> bool {
+    // SAFETY: the caller supplies the installed popup's HWND on the UI thread.
+    unsafe {
+        SetWindowPos(
+            hwnd as HWND,
+            std::ptr::null_mut(),
+            x,
+            y,
+            width,
+            height,
+            SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER | SWP_NOCOPYBITS | SWP_SHOWWINDOW,
         ) != 0
     }
 }
@@ -328,6 +364,30 @@ mod tests {
     #[test]
     fn missing_window_cannot_install_policy() {
         assert!(install(0).is_err());
+        assert!(install_owned(0).is_err());
+    }
+
+    #[test]
+    fn owned_policy_is_not_topmost_and_never_activates() {
+        let owner = TestWindow::new(std::ptr::null_mut());
+        let popup = TestWindow::new(owner.0);
+        install_owned(popup.0 as isize).expect("install owned policy");
+
+        // SAFETY: read-only style query on our own live window.
+        let style = unsafe { GetWindowLongW(popup.0, GWL_EXSTYLE) };
+        assert_ne!(style & WS_EX_NOACTIVATE as i32, 0);
+        assert_ne!(style & WS_EX_TOOLWINDOW as i32, 0);
+        assert_eq!(style & WS_EX_TOPMOST as i32, 0);
+
+        let windows = [popup.0, owner.0];
+        let before = owned_by_test(input_snapshot(), windows);
+        assert!(show_at_owned(popup.0 as isize, -32000, -32000, 1, 1));
+        assert_eq!(
+            owned_by_test(input_snapshot(), windows),
+            before,
+            "owned show changed input ownership"
+        );
+        assert!(hide(popup.0 as isize));
     }
 
     /// The regression the loop above must still catch: input moving onto either

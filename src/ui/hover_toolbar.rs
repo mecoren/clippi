@@ -283,6 +283,13 @@ pub fn buttons_for(props: &HoverToolbarProps, p: &Palette) -> Vec<ToolbarButton>
             Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
         );
 
+        // --- Preview (single item) ---
+        push(
+            "PreviewIcon",
+            "preview",
+            Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
+        );
+
         // --- Paste Plain Text (only when item has actual rich formatting) ---
         if props.has_rich_content {
             push(
@@ -474,6 +481,7 @@ impl RenderOnce for HoverToolbar {
                 let tooltip = match action {
                     "more" => I18nKey::CardMoreActions.text().to_string(),
                     "copy" => I18nKey::CtxCopy.text().to_string(),
+                    "preview" => I18nKey::CtxPreview.text().to_string(),
                     "extract_links" => I18nKey::ExtractLinks.text().to_string(),
                     "paste_plain" => I18nKey::CtxPastePlain.text().to_string(),
                     "paste_image_bitmap" => I18nKey::CtxPasteImageBitmap.text().to_string(),

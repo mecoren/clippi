@@ -70,6 +70,7 @@ product_icons! {
 
     // 动作
     "CopyIcon" => Copy,
+    "PreviewIcon" => Eye,
     "PasteIcon" => ClipboardPaste,
     "EditIcon" => Pencil,
     "NoteIcon" => StickyNote,

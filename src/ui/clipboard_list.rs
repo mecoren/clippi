@@ -4,6 +4,7 @@
 //! --- of clipboard items with dynamic card heights (68— 28px). ---
 
 use crate::ui::font::fs;
+use std::time::Instant;
 use std::{cell::Cell, collections::HashSet, rc::Rc};
 
 use gpui::prelude::FluentBuilder;
@@ -21,9 +22,11 @@ use crate::state::app::AppState;
 
 use super::clipboard_card::{estimate_card_height, ClipboardCard};
 use super::components::reorder::DragAutoScroll;
+use super::components::smooth_scroll::SmoothScroll;
 use super::design::palette::Palette;
 use super::font::sx;
 use super::hover_toolbar::ToolbarBounds;
+use super::preview::{PreviewPanelEvent, PreviewPanelView};
 use super::search_box::SearchBox;
 use super::tag_picker::TagState;
 
@@ -158,6 +161,22 @@ pub(crate) enum ConfirmDialogState {
 
 pub enum ClipboardListEvent {
     OpenEdit(i64),
+    /// Open the standalone preview window for this item.
+    OpenPreview(i64),
+    /// Show (or retarget) the native hover flyout beside the main window.
+    PreviewFlyoutShow(crate::ui::preview::PreviewFlyoutTarget),
+    /// Shrink the expanded flyout back to the compact sheet at this target:
+    /// the pointer returned to the clipboard list and now hovers this card.
+    PreviewFlyoutCollapse {
+        retarget: crate::ui::preview::PreviewFlyoutTarget,
+    },
+    /// Hide the native hover flyout.
+    PreviewFlyoutHide,
+    /// Grow the same flyout window into the full preview.
+    PreviewFlyoutExpand(i64),
+    /// Build the full preview off-canvas during the hover dwell so promotion
+    /// reveals an already-measured document instead of parsing on the fly.
+    PreviewFlyoutPrewarm(i64),
     RequestHide,
 }
 
@@ -401,6 +420,7 @@ pub struct ClipboardListView {
     /// cached heights are recomputed on the next refresh.
     sizes_font_scale: f32,
     scroll_handle: VirtualListScrollHandle,
+    wheel_scroll: SmoothScroll,
     focus_handle: FocusHandle,
     selected_ids: Vec<i64>,
     selected_index: Option<usize>,
@@ -416,6 +436,32 @@ pub struct ClipboardListView {
     hover_viewport: Bounds<Pixels>,
     hover_blocked: bool,
     last_hover_pos: Option<Point<Pixels>>,
+    // --- Hover preview flyout ---
+    preview_panel: Entity<PreviewPanelView>,
+    /// Index the pending hover timer belongs to; `None` means no timer.
+    preview_hover_index: Option<usize>,
+    preview_hover_generation: u64,
+    preview_hover_task: Option<Task<()>>,
+    preview_hide_generation: u64,
+    preview_hide_task: Option<Task<()>>,
+    /// Pointer is inside the flyout: keep the card hover and the panel alive.
+    preview_panel_hovered: bool,
+    /// Main window rect / scale, used by the flyout cursor watchdog.
+    main_screen_bounds: Bounds<Pixels>,
+    main_scale_factor: f32,
+    preview_watch_task: Option<Task<()>>,
+    /// When the pointer entered the flyout; drives the auto-expand dwell.
+    preview_panel_hover_since: Option<Instant>,
+    /// The same flyout window has been promoted to the full preview.
+    preview_expanded: bool,
+    /// Item whose full preview has been prewarmed this hover session; avoids
+    /// re-emitting the off-canvas build on every watchdog tick.
+    preview_prewarm_id: Option<i64>,
+    /// Once entered, leaving the flyout dismisses it (even back over the list).
+    preview_panel_entered: bool,
+    /// Grace while the pointer crosses the gap between main and flyout.
+    preview_left_both_since: Option<Instant>,
+    _preview_subscription: Option<Subscription>,
     // --- Context menu state ---
     context_menu_visible: bool,
     context_menu_x: f32,
@@ -471,13 +517,17 @@ impl ClipboardListView {
     ) -> Self {
         let card_height_mode = state.read(cx).settings.card_height_mode.clone();
         let item_sizes = Rc::new(Self::compute_sizes(&items, &card_height_mode));
+        let preview_panel = cx.new(|cx| PreviewPanelView::new(cx));
+        let scroll_handle = VirtualListScrollHandle::new();
+        let wheel_scroll = SmoothScroll::new(scroll_handle.base_handle());
         Self {
             items,
             pending_images: Vec::new(),
             item_sizes,
             card_height_mode,
             sizes_font_scale: crate::ui::font::scale(),
-            scroll_handle: VirtualListScrollHandle::new(),
+            scroll_handle,
+            wheel_scroll,
             focus_handle: cx.focus_handle(),
             selected_ids: Vec::new(),
             selected_index: None,
@@ -490,6 +540,22 @@ impl ClipboardListView {
             hover_viewport: Bounds::default(),
             hover_blocked: false,
             last_hover_pos: None,
+            preview_panel,
+            preview_hover_index: None,
+            preview_hover_generation: 0,
+            preview_hover_task: None,
+            preview_hide_generation: 0,
+            preview_hide_task: None,
+            preview_panel_hovered: false,
+            main_screen_bounds: Bounds::default(),
+            main_scale_factor: 1.0,
+            preview_watch_task: None,
+            preview_panel_hover_since: None,
+            preview_expanded: false,
+            preview_prewarm_id: None,
+            preview_panel_entered: false,
+            preview_left_both_since: None,
+            _preview_subscription: None,
             context_menu_visible: false,
             context_menu_x: 0.0,
             context_menu_y: 0.0,
@@ -523,6 +589,10 @@ impl ClipboardListView {
     }
 
     pub fn set_items(&mut self, items: Vec<ClipboardItem>, cx: &mut Context<Self>) {
+        // A passive refresh (thumbnail ready, usage count) must not yank the
+        // flyout away while the pointer is still on the same card. Only drop
+        // it when the previewed entry is gone.
+        let previewed_id = self.preview_panel.read(cx).item_id();
         self.state
             .update(cx, |state, _| state.clear_usage_sync_request());
         self.pending_images = self.state.read(cx).pending_images.clone();
@@ -576,6 +646,11 @@ impl ClipboardListView {
                 self.select_index_without_scroll(idx, cx);
             }
         }
+        if let Some(id) = previewed_id {
+            if !self.items.iter().any(|item| item.id == id) {
+                self.hide_preview_panel(cx);
+            }
+        }
         cx.notify();
     }
 
@@ -624,6 +699,7 @@ impl ClipboardListView {
     /// separate Vec for virtual scrolling. Without clearing both, hidden
     /// windows can retain large clipboard payloads until the next reload.
     pub fn release_items_for_hide(&mut self, cx: &mut Context<Self>) {
+        self.hide_preview_panel(cx);
         if let Some(idx) = self.selected_index {
             if let Some(item) = self.items.get(idx) {
                 self.last_selected_id = Some(item.id);
@@ -659,6 +735,7 @@ impl ClipboardListView {
     /// deleted/removed items are repaired so the list never keeps a dead
     /// multi-select state.
     pub(crate) fn sync_items_from_state(&mut self, cx: &mut Context<Self>) {
+        self.hide_preview_panel(cx);
         self.state
             .update(cx, |state, _| state.clear_usage_sync_request());
         let app_items = self.state.read(cx).visible_items();
@@ -872,7 +949,16 @@ impl ClipboardListView {
         scroll_to_top: bool,
         cx: &mut Context<Self>,
     ) {
-        let card_height_mode = self.state.read(cx).settings.card_height_mode.clone();
+        let (card_height_mode, preview_hover_enabled) = {
+            let settings = &self.state.read(cx).settings;
+            (
+                settings.card_height_mode.clone(),
+                settings.preview_hover_enabled,
+            )
+        };
+        if !preview_hover_enabled {
+            self.hide_preview_panel(cx);
+        }
         let scale_changed = self.sizes_font_scale != crate::ui::font::scale();
         if self.card_height_mode != card_height_mode || scale_changed {
             self.card_height_mode = card_height_mode;
@@ -1515,16 +1601,26 @@ impl ClipboardListView {
     /// Run on pointer movement and after layout so wheel/scrollbar/programmatic
     /// scrolling works even when the pointer is stationary.
     fn refresh_pointer_hover(&mut self, window: &Window, cx: &mut Context<Self>) {
+        self.main_screen_bounds = window.bounds();
+        self.main_scale_factor = window.scale_factor();
         let scroll_y = self.scroll_handle.offset().y;
         if scroll_y != self.hover_scroll_y {
             self.toolbar_bounds.set(None);
             self.hover_scroll_y = scroll_y;
+            self.hide_preview_panel(cx);
         }
         let pointer = window.mouse_position();
         let bounds = self.scroll_handle.bounds();
         if bounds != self.hover_viewport {
             self.toolbar_bounds.set(None);
             self.hover_viewport = bounds;
+        }
+        // The flyout overlays the list, so the geometric hit test would keep
+        // reporting a card behind it. While the pointer is inside the panel,
+        // the previous card stays hovered and the panel must not retarget.
+        if self.preview_panel_hovered {
+            self.last_hover_pos = Some(pointer);
+            return;
         }
         let toolbar = self.toolbar_bounds.get().filter(|(id, _)| {
             self.hovered_index
@@ -1554,6 +1650,461 @@ impl ClipboardListView {
         if next.is_some() {
             self.last_hover_pos = Some(pointer);
         }
+        self.refresh_preview_hover(pointer, cx);
+    }
+
+    fn refresh_preview_hover(&mut self, pointer: Point<Pixels>, cx: &mut Context<Self>) {
+        let (enabled, delay, window_open) = {
+            let state = self.state.read(cx);
+            (
+                state.settings.preview_hover_enabled,
+                state.settings.preview_hover_delay_normalized(),
+                state.preview_window_open,
+            )
+        };
+        if !enabled || window_open {
+            self.hide_preview_panel(cx);
+            return;
+        }
+        let Some(index) = self.hovered_index else {
+            self.preview_hover_index = None;
+            self.preview_hover_generation = self.preview_hover_generation.wrapping_add(1);
+            self.preview_hover_task = None;
+            if self.preview_panel.read(cx).is_visible() {
+                self.schedule_preview_hide(cx);
+            }
+            return;
+        };
+        let Some(item) = self.items.get(index) else {
+            self.preview_hover_index = None;
+            return;
+        };
+        let item_id = item.id;
+        let blocked =
+            item_is_pending(item) || self.selected_count > 1 || self.has_any_panel_or_editing();
+        if blocked {
+            self.hide_preview_panel(cx);
+            return;
+        }
+
+        let (visible, current_id) = {
+            let panel = self.preview_panel.read(cx);
+            (panel.is_visible(), panel.item_id())
+        };
+        if visible {
+            if current_id != Some(item_id) {
+                if let Some(card) = self.preview_card_bounds(index) {
+                    self.open_preview_panel(item_id, card, pointer, cx);
+                }
+            }
+            self.preview_hover_index = Some(index);
+            return;
+        }
+        if self.preview_hover_index == Some(index) {
+            return;
+        }
+        self.preview_hover_index = Some(index);
+        self.schedule_preview_hover(index, delay, cx);
+    }
+
+    fn preview_card_bounds(&self, index: usize) -> Option<Bounds<Pixels>> {
+        if self.hover_viewport.size.width <= px(0.) || index >= self.items.len() {
+            return None;
+        }
+        let mut top = self.hover_viewport.top() + self.scroll_handle.offset().y;
+        for (current, card_size) in self.item_sizes.iter().take(self.items.len()).enumerate() {
+            if current == index {
+                let card_left = self.hover_viewport.left() + px(CLIPBOARD_ROW_HORIZONTAL_PADDING);
+                let card_width = (self.hover_viewport.size.width
+                    - px(CLIPBOARD_ROW_HORIZONTAL_PADDING * 2.)
+                    - px(CLIPBOARD_SCROLLBAR_WIDTH))
+                .max(px(0.));
+                return Some(Bounds::new(
+                    point(card_left, top + px(4.)),
+                    gpui::size(card_width, (card_size.height - px(8.)).max(px(0.))),
+                ));
+            }
+            top += card_size.height;
+        }
+        None
+    }
+
+    fn open_preview_panel(
+        &mut self,
+        item_id: i64,
+        card: Bounds<Pixels>,
+        pointer: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_preview_panel_for(item_id, card, pointer, false, cx);
+    }
+
+    /// Show or retarget the compact flyout. `collapse` switches the emitted
+    /// event so the WindowManager shrinks the **expanded** flyout into this
+    /// compact target instead of ignoring a stale compact show.
+    fn open_preview_panel_for(
+        &mut self,
+        item_id: i64,
+        card: Bounds<Pixels>,
+        pointer: Point<Pixels>,
+        collapse: bool,
+        cx: &mut Context<Self>,
+    ) {
+        // Collapsing back onto the item already shown keeps its content and
+        // fade state untouched: only the native window shrinks. Rebuilding the
+        // model here would restart the entrance fade and read as a flicker.
+        let keep_content = {
+            let panel = self.preview_panel.read(cx);
+            collapse && panel.is_visible() && panel.item_id() == Some(item_id)
+        };
+        let size = if keep_content {
+            match self.preview_panel.read(cx).current_size() {
+                Some(size) => size,
+                None => return,
+            }
+        } else {
+            let Some(item) = self.state.read(cx).load_full_item(item_id) else {
+                return;
+            };
+            let privacy = self
+                .state
+                .read(cx)
+                .settings
+                .privacy_protection_types
+                .clone();
+            self.preview_panel
+                .update(cx, |panel, cx| panel.show_native(&item, &privacy, cx))
+        };
+        // The connector overlay works in screen coordinates: translate the
+        // window-local card by the main window's origin.
+        let origin = self.main_screen_bounds.origin;
+        let target = crate::ui::preview::PreviewFlyoutTarget {
+            panel: self.preview_panel.clone(),
+            card_top: f32::from(card.top()),
+            size,
+            prefer_right: pointer.x >= card.center().x,
+            card: Bounds::new(
+                point(card.origin.x + origin.x, card.origin.y + origin.y),
+                card.size,
+            ),
+        };
+        if collapse {
+            cx.emit(ClipboardListEvent::PreviewFlyoutCollapse { retarget: target });
+        } else {
+            cx.emit(ClipboardListEvent::PreviewFlyoutShow(target));
+        }
+        self.start_preview_watch(cx);
+        cx.notify();
+    }
+
+    fn schedule_preview_hover(&mut self, index: usize, delay_ms: u32, cx: &mut Context<Self>) {
+        self.preview_hover_generation = self.preview_hover_generation.wrapping_add(1);
+        let generation = self.preview_hover_generation;
+        self.preview_hover_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(delay_ms as u64))
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.preview_hover_generation != generation
+                    || this.preview_hover_index != Some(index)
+                    || this.preview_panel_hovered
+                {
+                    return;
+                }
+                let Some(item) = this.items.get(index) else {
+                    return;
+                };
+                let item_id = item.id;
+                let pointer = this.last_hover_pos.unwrap_or_default();
+                let Some(card) = this.preview_card_bounds(index) else {
+                    return;
+                };
+                this.open_preview_panel(item_id, card, pointer, cx);
+            });
+        }));
+    }
+
+    fn schedule_preview_hide(&mut self, cx: &mut Context<Self>) {
+        self.preview_hide_generation = self.preview_hide_generation.wrapping_add(1);
+        let generation = self.preview_hide_generation;
+        // Replacing the handle also cancels a previous grace timer.
+        self.preview_hide_task = Some(cx.spawn(async move |this, cx| {
+            // Longer than the in-window sheet: the pointer has to cross the
+            // main window and the desktop gap to reach the native flyout, and
+            // the flyout's own hover event may arrive a frame later.
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(350))
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.preview_hide_generation != generation || this.preview_panel_hovered {
+                    return;
+                }
+                if this.hovered_index.is_none() {
+                    this.hide_preview_panel(cx);
+                }
+            });
+        }));
+    }
+
+    /// Non-activating popups do not reliably deliver hover-out, so a periodic
+    /// cursor check decides whether the pointer is still over the flyout or the
+    /// main window. This also keeps the list's hover flag truthful.
+    fn start_preview_watch(&mut self, cx: &mut Context<Self>) {
+        self.preview_watch_task = Some(cx.spawn(async move |this, cx| loop {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(120))
+                .await;
+            let keep = this.update(cx, |this, cx| {
+                if !this.preview_panel.read(cx).is_visible() {
+                    return false;
+                }
+                let panel = this.preview_panel.read(cx).screen_bounds();
+                if panel.size.width <= px(0.) || panel.size.height <= px(0.) {
+                    return true;
+                }
+                let Some((x, y)) = crate::platform::monitor::get_cursor_pos() else {
+                    return true;
+                };
+                let scale = this.main_scale_factor.max(0.5);
+                let cursor = point(px(x as f32 / scale), px(y as f32 / scale));
+                let in_panel = panel.contains(&cursor);
+                this.preview_panel_hovered = in_panel;
+                if in_panel {
+                    this.preview_panel_entered = true;
+                    this.preview_hide_generation = this.preview_hide_generation.wrapping_add(1);
+                    this.preview_hide_task = None;
+                    // Dwell on the flyout for the same delay the list uses
+                    // before a card preview appears, then promote it to the
+                    // standalone preview window.
+                    let elapsed = this
+                        .preview_panel_hover_since
+                        .get_or_insert_with(Instant::now)
+                        .elapsed();
+                    let delay_ms = this
+                        .state
+                        .read(cx)
+                        .settings
+                        .preview_hover_delay_normalized();
+                    // Build the full preview off-canvas once the entrance
+                    // fade (167 ms) has settled, so the one-time parse and
+                    // measure never drop a frame of the compact animation.
+                    if !this.preview_expanded
+                        && this.preview_panel.read(cx).auto_expand_allowed()
+                        && elapsed >= std::time::Duration::from_millis(200)
+                    {
+                        if let Some(id) = this.preview_panel.read(cx).item_id() {
+                            if this.preview_prewarm_id != Some(id) {
+                                this.preview_prewarm_id = Some(id);
+                                cx.emit(ClipboardListEvent::PreviewFlyoutPrewarm(id));
+                            }
+                        }
+                    }
+                    if elapsed >= std::time::Duration::from_millis(delay_ms as u64)
+                        && !this.preview_expanded
+                        && this.preview_panel.read(cx).auto_expand_allowed()
+                    {
+                        if let Some(id) = this.preview_panel.read(cx).item_id() {
+                            this.preview_expanded = true;
+                            // Same window grows; keep watching so leaving the
+                            // enlarged preview still dismisses it.
+                            cx.emit(ClipboardListEvent::PreviewFlyoutExpand(id));
+                        }
+                    }
+                } else {
+                    this.preview_panel_hover_since = None;
+                    let in_main = this.main_screen_bounds.contains(&cursor);
+                    if this.preview_expanded {
+                        // The pointer left the enlarged preview back over the
+                        // list: shrink to the hovered card (same card → only
+                        // shrink; another card → shrink and retarget) instead
+                        // of dismissing the flyout.
+                        if in_main {
+                            this.collapse_flyout_to_hovered(&cursor, cx);
+                        }
+                        // Crossing the gap (in neither window) falls through
+                        // to the shared grace timer below.
+                    } else if this.preview_panel_entered && in_main {
+                        // Back over the list from the compact sheet: keep the
+                        // preview; the regular hover machinery retargets it
+                        // from the next mouse move.
+                        this.preview_panel_entered = false;
+                    }
+                }
+                let in_main = this.main_screen_bounds.contains(&cursor);
+                if !in_panel && !in_main {
+                    let since = this
+                        .preview_left_both_since
+                        .get_or_insert_with(Instant::now);
+                    if since.elapsed() >= std::time::Duration::from_millis(350) {
+                        this.hide_preview_panel(cx);
+                        return false;
+                    }
+                } else {
+                    this.preview_left_both_since = None;
+                }
+                true
+            });
+            if !matches!(keep, Ok(true)) {
+                break;
+            }
+        }));
+    }
+
+    /// The pointer left the enlarged preview back over the clipboard list:
+    /// shrink the flyout to the compact sheet docked at the hovered card
+    /// instead of dismissing it.
+    fn collapse_flyout_to_hovered(&mut self, cursor: &Point<Pixels>, cx: &mut Context<Self>) {
+        self.preview_expanded = false;
+        self.preview_prewarm_id = None;
+        self.preview_panel_entered = false;
+        self.preview_panel_hover_since = None;
+        // While the pointer hovered the flyout, hover updates were frozen;
+        // recompute the hovered card from the cursor position directly.
+        let origin = self.main_screen_bounds.origin;
+        let pointer = point(cursor.x - origin.x, cursor.y - origin.y);
+        let viewport = self.hover_viewport;
+        let scroll_y = self.scroll_handle.offset().y;
+        let index = pointer_hover_index(
+            pointer,
+            viewport,
+            scroll_y,
+            &self.item_sizes,
+            self.items.len(),
+            self.hovered_index,
+            None,
+        )
+        .filter(|&index| {
+            !self.items.get(index).is_some_and(item_is_pending)
+                && self.selected_count <= 1
+                && !self.has_any_panel_or_editing()
+        });
+        let Some(index) = index else {
+            self.hide_preview_panel(cx);
+            return;
+        };
+        let Some(item) = self.items.get(index) else {
+            self.hide_preview_panel(cx);
+            return;
+        };
+        let item_id = item.id;
+        let Some(card) = self.preview_card_bounds(index) else {
+            self.hide_preview_panel(cx);
+            return;
+        };
+        self.open_preview_panel_for(item_id, card, pointer, true, cx);
+    }
+
+    /// The pointer left the flyout window: close it unless it comes straight
+    /// back. This is independent of the main window's stale hover geometry.
+    fn schedule_preview_leave_hide(&mut self, cx: &mut Context<Self>) {
+        self.preview_hide_generation = self.preview_hide_generation.wrapping_add(1);
+        let generation = self.preview_hide_generation;
+        self.preview_hide_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(150))
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.preview_hide_generation == generation && !this.preview_panel_hovered {
+                    this.hide_preview_panel(cx);
+                }
+            });
+        }));
+    }
+
+    /// Close the hover flyout and cancel every pending hover/grace timer.
+    pub fn hide_preview_panel(&mut self, cx: &mut Context<Self>) {
+        self.preview_hover_generation = self.preview_hover_generation.wrapping_add(1);
+        self.preview_hide_generation = self.preview_hide_generation.wrapping_add(1);
+        self.preview_hover_task = None;
+        self.preview_hide_task = None;
+        self.preview_hover_index = None;
+        self.preview_panel_hovered = false;
+        self.preview_panel_hover_since = None;
+        self.preview_expanded = false;
+        self.preview_prewarm_id = None;
+        self.preview_panel_entered = false;
+        self.preview_left_both_since = None;
+        let visible = self.preview_panel.read(cx).is_visible();
+        if visible {
+            self.preview_panel.update(cx, |panel, cx| panel.hide(cx));
+            cx.emit(ClipboardListEvent::PreviewFlyoutHide);
+            cx.notify();
+        }
+    }
+
+    /// Wire the flyout's events once the entity exists. `App::subscribe` has
+    /// no `&mut Self`, so this cannot live in `new`.
+    pub(crate) fn attach_preview_panel(&mut self, cx: &mut Context<Self>) {
+        if self._preview_subscription.is_some() {
+            return;
+        }
+        let panel = self.preview_panel.clone();
+        self._preview_subscription = Some(cx.subscribe(
+            &panel,
+            |this, _panel, event: &PreviewPanelEvent, cx| match event {
+                // The event is emitted from inside the panel's own update;
+                // touching it again here would re-enter that entity. Defer to
+                // the next tick.
+                PreviewPanelEvent::Expand(id) => {
+                    let id = *id;
+                    let list = cx.entity();
+                    cx.defer(move |cx| {
+                        list.update(cx, |this, cx| {
+                            if this.preview_expanded {
+                                return;
+                            }
+                            this.preview_expanded = true;
+                            // Enlarge this same flyout window; do not open the
+                            // standalone preview window.
+                            cx.emit(ClipboardListEvent::PreviewFlyoutExpand(id));
+                        });
+                    });
+                }
+                PreviewPanelEvent::Copy(id) => {
+                    let id = *id;
+                    let list = cx.entity();
+                    cx.defer(move |cx| {
+                        list.update(cx, |this, cx| {
+                            let plain = this.state.read(cx).settings.copy_as_plain_text;
+                            this.state
+                                .update(cx, |state, _cx| state.copy_item(id, plain));
+                            this.sync_items_from_state_for_usage(cx);
+                            cx.notify();
+                        });
+                    });
+                }
+                PreviewPanelEvent::HoverChanged(hovered) => {
+                    this.preview_panel_hovered = *hovered;
+                    if *hovered {
+                        this.preview_hide_generation = this.preview_hide_generation.wrapping_add(1);
+                        this.preview_hide_task = None;
+                    } else {
+                        // Leaving the flyout itself is decisive; do not wait for
+                        // the main list to re-evaluate hover (its window may not
+                        // receive a mouse move when the pointer goes elsewhere).
+                        // While expanded the compact sheet is no longer rendered,
+                        // so its hover-out is just the content swap — the cursor
+                        // watchdog owns dismissal of the enlarged preview.
+                        // Back over the list (e.g. just collapsed) the regular
+                        // hover machinery keeps or retargets the sheet in place;
+                        // hiding here would flash it out and re-show it later.
+                        let over_main =
+                            crate::platform::monitor::get_cursor_pos().is_some_and(|(x, y)| {
+                                let scale = this.main_scale_factor.max(0.5);
+                                this.main_screen_bounds
+                                    .contains(&point(px(x as f32 / scale), px(y as f32 / scale)))
+                            });
+                        if !this.preview_expanded && !over_main {
+                            this.schedule_preview_leave_hide(cx);
+                        }
+                    }
+                    // Recompute the list's own hover against the live pointer;
+                    // otherwise leaving the flyout can leave a stale
+                    // `hovered_index` until the pointer happens to move again.
+                    cx.notify();
+                }
+            },
+        ));
     }
 
     fn pointer_tag_picker_y(&self) -> f32 {
@@ -1677,6 +2228,11 @@ impl ClipboardListView {
             self.escape_consumed_inline = mark_inline_bubble_guard;
             return true;
         }
+        if self.preview_panel.read(cx).is_visible() {
+            self.hide_preview_panel(cx);
+            self.escape_consumed_inline = mark_inline_bubble_guard;
+            return true;
+        }
         if self.has_any_panel_or_editing() {
             self.dismiss_all_panels(cx);
             self.editing_note_id = -1;
@@ -1769,6 +2325,7 @@ impl ClipboardListView {
 
     /// Dismiss all floating panels (context menu, tag picker).
     pub fn dismiss_all_panels(&mut self, cx: &mut Context<Self>) {
+        self.hide_preview_panel(cx);
         self.context_menu_visible = false;
         self.context_menu_item = None;
         self.context_menu_is_batch = false;
@@ -2095,6 +2652,7 @@ impl ClipboardListView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.hide_preview_panel(cx);
         let plain = self.state.read(cx).settings.copy_as_plain_text;
         match action {
             "copy" => {
@@ -2102,6 +2660,11 @@ impl ClipboardListView {
                     let item_id = item.id;
                     self.state.update(cx, |s, _cx| s.copy_item(item_id, plain));
                     self.sync_items_from_state_for_usage(cx);
+                }
+            }
+            "preview" => {
+                if let Some(ref item) = self.context_menu_item {
+                    cx.emit(ClipboardListEvent::OpenPreview(item.id));
                 }
             }
             "paste" => {
@@ -2344,9 +2907,13 @@ impl ClipboardListView {
             }
             self.select_index_without_scroll(index, cx);
         }
+        self.hide_preview_panel(cx);
 
         let plain = self.state.read(cx).settings.copy_as_plain_text;
         match action {
+            "preview" => {
+                cx.emit(ClipboardListEvent::OpenPreview(item_id));
+            }
             "extract_links" => {
                 self.state.update(cx, |s, _| s.extract_item_links(item_id));
                 self.sync_items_from_state(cx);
@@ -2706,6 +3273,12 @@ impl Render for ClipboardListView {
             .role(Role::List)
             .tab_stop(true)
             .track_focus(&focus_handle)
+            // A click on the list (card, scrollbar, empty area) retires the
+            // flyout; clicks inside the flyout never reach this handler.
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.hide_preview_panel(cx)),
+            )
             .on_key_down(
                 window.listener_for(&view, |this, event: &KeyDownEvent, window, cx| {
                     let key = event.keystroke.key.as_str();
@@ -2732,9 +3305,24 @@ impl Render for ClipboardListView {
                         }
                     }
 
+                    // Any real key press retires the hover flyout; Esc below
+                    // closes it through the shared escape chain instead.
+                    if key != "escape" && this.preview_panel.read(cx).is_visible() {
+                        this.hide_preview_panel(cx);
+                    }
+
                     // --- Ctrl+Key shortcuts ---
                     if ctrl {
                         match key {
+                            "p" if !this.has_any_panel_or_editing() => {
+                                // Ctrl/Cmd+P — open the standalone preview.
+                                if let Some(idx) = this.selected_index {
+                                    if let Some(item) = this.items.get(idx) {
+                                        cx.emit(ClipboardListEvent::OpenPreview(item.id));
+                                    }
+                                }
+                                cx.stop_propagation();
+                            }
                             "f" => {
                                 // Ctrl+F / Cmd+F — focus search bar (always works)
                                 if let Some(ref search_bar) = this.search_bar {
@@ -2800,11 +3388,13 @@ impl Render for ClipboardListView {
                     // --- Modifier-free keys ---
                     match key {
                         "up" => {
+                            this.wheel_scroll.cancel();
                             this.dismiss_all_panels(cx);
                             this.select_previous(ScrollStrategy::Top, cx);
                             cx.stop_propagation();
                         }
                         "down" => {
+                            this.wheel_scroll.cancel();
                             this.dismiss_all_panels(cx);
                             this.select_next(ScrollStrategy::Bottom, cx);
                             cx.stop_propagation();
@@ -2905,6 +3495,9 @@ impl Render for ClipboardListView {
                     .flex_1()
                     .w_full()
                     .overflow_hidden()
+                    .when(self.inline_locked_item_id().is_none(), |el| {
+                        el.child(self.wheel_scroll.overlay())
+                    })
                     .child(
                         v_virtual_list(
                             view.clone(),

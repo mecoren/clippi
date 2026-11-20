@@ -911,7 +911,7 @@ fn image_is_waiting_for_sync(item: &ClipboardItem) -> bool {
 /// Check if a favicon is cached for a URL's domain.
 /// Only checks the local cache — no network fetch during rendering.
 /// Format a file size in bytes to a human-readable string.
-fn format_file_size(bytes: i64) -> String {
+pub(crate) fn format_file_size(bytes: i64) -> String {
     if bytes < 1024 {
         format!("{} B", bytes)
     } else if bytes < 1024 * 1024 {

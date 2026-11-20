@@ -8,6 +8,7 @@ pub mod reorder;
 pub mod sensitive_text;
 pub mod shortcut_hint;
 pub mod slider;
+pub mod smooth_scroll;
 pub mod spinner;
 pub mod toast;
 pub mod wait_switch;

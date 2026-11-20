@@ -168,6 +168,15 @@ impl ContextMenu {
             fav: false,
             shortcut: ctrl_shortcut("C"),
         });
+        // --- Preview ---
+        items.push(RawMenuItem {
+            label: I18nKey::CtxPreview.text().into(),
+            action: "preview".into(),
+            icon: "PreviewIcon".into(),
+            danger: false,
+            fav: false,
+            shortcut: ctrl_shortcut("P"),
+        });
         // --- Paste ---
         items.push(RawMenuItem {
             label: I18nKey::CtxPaste.text().into(),

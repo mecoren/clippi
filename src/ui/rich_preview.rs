@@ -87,6 +87,26 @@ pub fn parse_embedded_stylesheet(raw_html: &str) -> EmbeddedStyleMap {
 /// Returns `None` when no recognisable style applies, so callers fall back
 /// to `TextView::html`/plain text.
 pub fn parse_styled_html_lines_full(raw_html: &str) -> Option<Vec<Vec<StyledHtmlSpan>>> {
+    parse_styled_html_lines_inner(raw_html, None)
+}
+
+/// Like [`parse_styled_html_lines_full`], but stops once `max_lines` rows plus
+/// one proven-non-empty extra row exist, so a compact sheet never pays for
+/// parsing a whole large document. Returns the first `max_lines` rows and
+/// whether the document had more.
+pub fn parse_styled_html_lines_capped(
+    raw_html: &str,
+    max_lines: usize,
+) -> Option<(Vec<Vec<StyledHtmlSpan>>, bool)> {
+    let lines = parse_styled_html_lines_inner(raw_html, Some(max_lines))?;
+    let clipped = lines.len() > max_lines;
+    Some((lines.into_iter().take(max_lines).collect(), clipped))
+}
+
+fn parse_styled_html_lines_inner(
+    raw_html: &str,
+    max_lines: Option<usize>,
+) -> Option<Vec<Vec<StyledHtmlSpan>>> {
     let style_map = parse_embedded_stylesheet(raw_html);
     let html = normalize_clipboard_html_for_render(raw_html);
 
@@ -99,6 +119,17 @@ pub fn parse_styled_html_lines_full(raw_html: &str) -> Option<Vec<Vec<StyledHtml
     let mut skip_depth = 0usize;
 
     while idx < html.len() {
+        // A row past the cap only proves clipping once it carries text: a
+        // trailing empty row would be trimmed away by the full parse.
+        if let Some(max) = max_lines {
+            if lines.len() > max
+                && lines[max..]
+                    .iter()
+                    .any(|line| line.iter().any(|span| !span.text.trim().is_empty()))
+            {
+                break;
+            }
+        }
         let rest = &html[idx..];
         if let Some(tag_start_rel) = rest.find('<') {
             let text = &rest[..tag_start_rel];
@@ -1279,9 +1310,47 @@ fn looks_like_url(after_paren: &str) -> bool {
 mod tests {
     use super::{
         focus_styled_html_lines, highlight_styled_html_lines, normalize_clipboard_html_for_render,
-        parse_embedded_stylesheet, parse_styled_html_lines_full, strip_html_links,
+        parse_embedded_stylesheet, parse_styled_html_lines_capped, parse_styled_html_lines_full,
+        strip_html_links,
     };
     use gpui::{rgb, FontStyle, FontWeight};
+
+    fn line_texts(lines: &[Vec<super::StyledHtmlSpan>]) -> Vec<String> {
+        lines
+            .iter()
+            .map(|line| line.iter().map(|span| span.text.as_str()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn capped_parse_stops_early_and_reports_clipping() {
+        let mut html = String::from(r#"<p><span style="color: red">row</span></p>"#);
+        for _ in 0..40 {
+            html.push_str("<p>more text here</p>");
+        }
+        let (lines, clipped) = parse_styled_html_lines_capped(&html, 10).unwrap();
+        assert!(clipped);
+        assert_eq!(lines.len(), 10);
+        let full = parse_styled_html_lines_full(&html).unwrap();
+        assert_eq!(line_texts(&lines), line_texts(&full[..10]));
+    }
+
+    #[test]
+    fn capped_parse_of_a_fitting_document_is_not_clipped() {
+        let html = "<p><b>one</b></p><p>two</p>";
+        let (lines, clipped) = parse_styled_html_lines_capped(html, 10).unwrap();
+        assert!(!clipped);
+        assert_eq!(
+            line_texts(&lines),
+            line_texts(&parse_styled_html_lines_full(html).unwrap())
+        );
+    }
+
+    #[test]
+    fn capped_parse_keeps_unstyled_documents_unstyled() {
+        let html = "<p>plain</p><p>text</p>";
+        assert!(parse_styled_html_lines_capped(html, 10).is_none());
+    }
 
     #[test]
     fn styled_html_skips_head_style_and_office_xml() {

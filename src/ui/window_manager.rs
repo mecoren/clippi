@@ -37,6 +37,10 @@ use crate::services::gpui_sync::GpuiSyncService;
 use crate::services::transfer_station::GpuiTransferService;
 use crate::services::update;
 use crate::state::app::AppState;
+use crate::ui::preview::{
+    dock_preview_bounds, PreviewConnectorView, PreviewFlyoutTarget, PreviewFlyoutView,
+    PreviewPanelView, PreviewWindowEvent, PreviewWindowView,
+};
 #[cfg(target_os = "macos")]
 use crate::ui::quick_paste::QUICK_WINDOW_CORNER_RADIUS;
 use crate::ui::quick_paste::{
@@ -45,6 +49,88 @@ use crate::ui::quick_paste::{
 
 /// Shared foreground app name for cross-service coordination.
 pub type ForegroundAppName = Arc<Mutex<String>>;
+
+/// Native window handle for a GPUI window (HWND / NSWindow).
+fn native_window_handle(window: &Window) -> Option<isize> {
+    match raw_window_handle::HasWindowHandle::window_handle(window)
+        .ok()?
+        .as_raw()
+    {
+        #[cfg(target_os = "windows")]
+        raw_window_handle::RawWindowHandle::Win32(handle) => Some(handle.hwnd.get()),
+        #[cfg(target_os = "macos")]
+        raw_window_handle::RawWindowHandle::AppKit(handle) => {
+            let view = handle.ns_view.as_ptr() as *mut objc2::runtime::AnyObject;
+            let native: *mut objc2_app_kit::NSWindow = unsafe { objc2::msg_send![view, window] };
+            Some(native as isize)
+        }
+        _ => None,
+    }
+}
+
+/// A logical-screen `Bounds` as a connector `ScreenRect`.
+fn screen_rect_of(bounds: &Bounds<Pixels>) -> crate::ui::preview::connector::ScreenRect {
+    (
+        f32::from(bounds.origin.x),
+        f32::from(bounds.origin.y),
+        f32::from(bounds.size.width),
+        f32::from(bounds.size.height),
+    )
+}
+
+/// One flyout rect animation, stepped once per rendered frame. Carried between
+/// `on_next_frame` callbacks; the generation token lets a retarget or hide stop
+/// the previous animation without a cancellable task handle.
+struct FlyoutAnim {
+    attachment: Rc<crate::platform::preview_flyout::Attachment>,
+    wm: Entity<WindowManager>,
+    from: crate::platform::preview_flyout::LogicalRect,
+    to: crate::platform::preview_flyout::LogicalRect,
+    start: Instant,
+    duration: Duration,
+    generation: Rc<Cell<u64>>,
+    my_generation: u64,
+}
+
+/// Advance the flyout card by one vsync. Runs inside GPUI's frame callback: the
+/// native canvas never resizes, only the in-app card rect moves, so paint and
+/// composite land together instead of stretching a stale swapchain against a
+/// freshly resized native window (which read as jitter). The connector line is
+/// fed the same rect each step.
+fn flyout_anim_step(window: &mut Window, cx: &mut App, anim: FlyoutAnim) {
+    if anim.generation.get() != anim.my_generation {
+        return;
+    }
+    let t =
+        (anim.start.elapsed().as_millis() as f32 / anim.duration.as_millis().max(1) as f32).min(1.);
+    let rect = crate::ui::preview::connector::lerp_rect(
+        anim.from,
+        anim.to,
+        crate::ui::design::motion::ease_move(t),
+    );
+    if !anim.attachment.place(rect) {
+        return;
+    }
+    // The first place creates the work-area canvas; its re-entrant `WM_SIZE`
+    // bounds callback is skipped while the App is borrowed here, so sync the
+    // viewport explicitly before the draw that follows.
+    window.bounds_changed(cx);
+    let origin = anim.attachment.canvas_origin().unwrap_or((rect.0, rect.1));
+    if let Some(view) = anim.wm.read(cx).preview_flyout_view.clone() {
+        view.update(cx, |view, cx| view.set_card_screen_rect(origin, rect, cx));
+    }
+    if let Some(connector) = anim.wm.read(cx).preview_connector_view.clone() {
+        connector.update(cx, |view, cx| view.set_target_rect(rect, cx));
+    }
+    if t >= 1. {
+        // Hand the frame back to the settled card's content view.
+        if let Some(view) = anim.wm.read(cx).preview_flyout_view.clone() {
+            view.update(cx, |view, cx| view.set_anim_size(None, cx));
+        }
+        return;
+    }
+    window.on_next_frame(move |window, cx| flyout_anim_step(window, cx, anim));
+}
 
 /// UI-thread-only, scoped suspension for native dialogs. Separate from the
 /// user's auto-hide preference; overlapping dialogs each retain their scope.
@@ -604,6 +690,34 @@ pub struct WindowManager {
     quick_hwnd: isize,
     #[cfg(target_os = "macos")]
     quick_ns_window: isize,
+    // --- Standalone preview window ---
+    preview_window: Option<AnyWindowHandle>,
+    preview_window_id: Option<WindowId>,
+    preview_view: Option<Entity<PreviewWindowView>>,
+    /// When the preview closes, hand focus back to the main panel only for a
+    /// user-initiated close. Hiding the main panel must not steal focus from
+    /// whatever app the user switched to.
+    preview_close_focus_main: bool,
+    _preview_subscription: Option<Subscription>,
+    _preview_closed_subscription: Option<Subscription>,
+    // --- Hover preview flyout (owned, non-activating popup) ---
+    preview_flyout_window: Option<AnyWindowHandle>,
+    preview_flyout_view: Option<Entity<PreviewFlyoutView>>,
+    preview_flyout_attachment: Option<Rc<crate::platform::preview_flyout::Attachment>>,
+    preview_flyout_expanded: bool,
+    /// The flyout's native handle; owner of the connector overlay window.
+    preview_flyout_native: Option<isize>,
+    /// Generation token for the flyout rect animation: each retarget bumps it
+    /// so the previous frame-stepped callback stops instead of fighting the new
+    /// one. The animation runs on `on_next_frame`, not a free-running timer.
+    preview_flyout_anim_gen: Rc<Cell<u64>>,
+    _preview_flyout_closed_subscription: Option<Subscription>,
+    // --- Card → flyout connector overlay (click-through) ---
+    preview_connector_window: Option<AnyWindowHandle>,
+    preview_connector_view: Option<Entity<PreviewConnectorView>>,
+    preview_connector_overlay: Option<Rc<crate::platform::preview_overlay::Overlay>>,
+    /// In-flight connector overlay placement (native window move).
+    preview_connector_place_task: Option<Task<()>>,
     // --- Monitor topology cache (issue-75 P2, Windows only) ---
     /// Last seen monitor snapshot; compared every 200 ms poll to detect
     /// topology / work-area changes (04-spec C1). Seeded on the first poll
@@ -814,6 +928,23 @@ impl WindowManager {
             quick_hwnd: 0,
             #[cfg(target_os = "macos")]
             quick_ns_window: 0,
+            preview_window: None,
+            preview_window_id: None,
+            preview_view: None,
+            preview_close_focus_main: false,
+            _preview_subscription: None,
+            _preview_closed_subscription: None,
+            preview_flyout_window: None,
+            preview_flyout_view: None,
+            preview_flyout_attachment: None,
+            preview_flyout_expanded: false,
+            preview_flyout_native: None,
+            preview_flyout_anim_gen: Rc::new(Cell::new(0)),
+            _preview_flyout_closed_subscription: None,
+            preview_connector_window: None,
+            preview_connector_view: None,
+            preview_connector_overlay: None,
+            preview_connector_place_task: None,
             #[cfg(target_os = "windows")]
             last_monitor_snapshot: None,
             #[cfg(target_os = "windows")]
@@ -2237,6 +2368,7 @@ impl WindowManager {
             || !self.visible
             || self.is_suppressed()
             || is_own_fg
+            || self.preview_window.is_some()
             || !self.main_foreground_since_show
             || recording_system_menu
         {
@@ -3420,6 +3552,11 @@ impl WindowManager {
         if self.quick_visible {
             self.hide_quick_window(cx);
         }
+        // Re-summoning the main panel retires the preview instead of stacking
+        // two views of the same entry; focus then goes to the main window.
+        if self.preview_window.is_some() {
+            self.close_preview(false, cx);
+        }
         // Armed at the state-bit flip *and* again once the window is really on
         // screen (`after_main_window_shown`). This first copy only has to cover
         // the sub-millisecond gap until the show task runs; keeping it also
@@ -4165,6 +4302,9 @@ impl WindowManager {
     /// once. Every hide runs a synchronous WAL checkpoint and a settings write,
     /// so a slow hide is itself worth seeing in a user's log.
     pub fn hide_with_reason(&mut self, reason: &str, cx: &mut Context<Self>) {
+        // The flyout is a separate native window, so it has to leave at the
+        // first hide request rather than fade with the main panel.
+        self.hide_preview_flyout(cx);
         // 已经在淡出：后来的隐藏请求不重复触发，也不打断当前淡出。快速粘贴
         // 窗接管时必须立即让位——主窗与快速窗不允许同时可见。
         if self.closing_started.is_some() {
@@ -4208,6 +4348,7 @@ impl WindowManager {
     /// The real hide: everything `hide_with_reason` used to do in one go.
     fn hide_now(&mut self, reason: &str, cx: &mut Context<Self>) {
         self.closing_started = None;
+        self.hide_preview_flyout(cx);
         #[cfg(target_os = "windows")]
         crate::platform::focus_restore::clear();
         let started = Instant::now();
@@ -4245,6 +4386,11 @@ impl WindowManager {
         self.main_show_pending = false;
         if self.quick_visible {
             self.hide_quick_window(cx);
+        }
+        // The preview belongs to the main panel: hiding the panel must take
+        // the preview with it. `false` keeps focus where the user left it.
+        if self.preview_window.is_some() {
+            self.close_preview(false, cx);
         }
         // The hidden window stops receiving key events, so an Alt held at
         // hide time would otherwise leave the badge state stuck on next show.
@@ -4883,6 +5029,790 @@ impl WindowManager {
                 }
             },
         ));
+    }
+
+    // --- Native hover preview flyout ---
+
+    /// Show (or retarget) the hover flyout in its own non-activating window.
+    /// Retargeting while the flyout is visible animates the window rect from
+    /// its current position to the new card (EcoPaste-style panel motion).
+    pub fn show_preview_flyout(&mut self, target: &PreviewFlyoutTarget, cx: &mut Context<Self>) {
+        // The list defers this call out of render; the pointer may have left
+        // and hidden the panel in the meantime.
+        if !target.panel.read(cx).is_visible() {
+            return;
+        }
+        if self.preview_flyout_expanded {
+            // Hovering another card while enlarged swaps the full preview in
+            // place (same item: nothing to do); the rect stays put.
+            let Some(id) = target.panel.read(cx).item_id() else {
+                return;
+            };
+            let Some(view) = self.preview_flyout_view.clone() else {
+                return;
+            };
+            if view.read(cx).item_id(cx) == Some(id) {
+                return;
+            }
+            let Some(item) = self.state.read(cx).load_full_item(id) else {
+                return;
+            };
+            view.update(cx, |view, cx| view.expand(item, cx));
+            return;
+        }
+        if self.preview_flyout_window.is_none()
+            && !self.create_preview_flyout(target.panel.clone(), target.size, cx)
+        {
+            return;
+        }
+        log::info!("preview flyout show: panel visible, window ready");
+        // A stale compact show must never shrink an expanded flyout, but a
+        // wrapper still in full mode without the flag is reset to compact.
+        if let Some(view) = &self.preview_flyout_view {
+            if view.read(cx).is_expanded() {
+                view.update(cx, |view, cx| view.collapse(cx));
+            }
+        }
+        let Some(attachment) = self.preview_flyout_attachment.clone() else {
+            return;
+        };
+        let Some(docked) = attachment.docked_rect(
+            target.card_top,
+            f32::from(target.card.size.height),
+            f32::from(target.size.width),
+            f32::from(target.size.height),
+            target.prefer_right,
+        ) else {
+            return;
+        };
+        // The first show jumps into place; every retarget slides.
+        let animate = attachment.is_shown();
+        let card = screen_rect_of(&target.card);
+        self.update_connector(Some(card), docked, animate, cx);
+        self.animate_flyout_to(docked, animate, cx);
+    }
+
+    pub fn hide_preview_flyout(&mut self, cx: &mut Context<Self>) {
+        if let Some(view) = &self.preview_flyout_view {
+            view.update(cx, |view, cx| view.collapse(cx));
+        }
+        self.preview_flyout_expanded = false;
+        self.cancel_flyout_anim();
+        if let Some(attachment) = &self.preview_flyout_attachment {
+            attachment.hide();
+        }
+        self.hide_connector(cx);
+    }
+
+    /// Shrink the expanded flyout back to the compact sheet docked at
+    /// `target` (the list already retargeted the compact panel content).
+    /// The window rect animates; the connector line follows its frames.
+    pub fn collapse_preview_flyout(
+        &mut self,
+        target: &PreviewFlyoutTarget,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(attachment) = self.preview_flyout_attachment.clone() else {
+            self.hide_preview_flyout(cx);
+            return;
+        };
+        let Some(docked) = attachment.docked_rect(
+            target.card_top,
+            f32::from(target.card.size.height),
+            f32::from(target.size.width),
+            f32::from(target.size.height),
+            target.prefer_right,
+        ) else {
+            self.hide_preview_flyout(cx);
+            return;
+        };
+        self.preview_flyout_expanded = false;
+        if let Some(view) = &self.preview_flyout_view {
+            view.update(cx, |view, cx| view.collapse(cx));
+        }
+        let card = screen_rect_of(&target.card);
+        self.update_connector(Some(card), docked, false, cx);
+        self.animate_flyout_to(docked, true, cx);
+    }
+
+    /// Build the full preview off-canvas during the hover dwell. The expensive
+    /// one-time parse and measure land while the pointer rests on the compact
+    /// sheet, so the later grow animation only reveals a laid-out document.
+    pub fn prewarm_preview_flyout(&mut self, item_id: i64, cx: &mut Context<Self>) {
+        if self.preview_flyout_expanded {
+            return;
+        }
+        let Some(view) = self.preview_flyout_view.clone() else {
+            return;
+        };
+        if view.read(cx).item_id(cx) == Some(item_id) {
+            return;
+        }
+        let Some(item) = self.state.read(cx).load_full_item(item_id) else {
+            return;
+        };
+        view.update(cx, |view, cx| view.prewarm(item, cx));
+    }
+
+    /// Expand the **same** non-activating flyout window into the full preview.
+    /// Explicit entries (toolbar/menu/Ctrl+P) still use `open_preview`.
+    pub fn expand_preview_flyout(&mut self, item_id: i64, cx: &mut Context<Self>) {
+        let Some(view) = self.preview_flyout_view.clone() else {
+            self.open_preview(item_id, cx);
+            return;
+        };
+        let Some(item) = self.state.read(cx).load_full_item(item_id) else {
+            return;
+        };
+        let Some(attachment) = self.preview_flyout_attachment.clone() else {
+            self.hide_preview_flyout(cx);
+            self.open_preview(item_id, cx);
+            return;
+        };
+        let Some(expanded) = attachment.expand_rect(760., 560.) else {
+            self.hide_preview_flyout(cx);
+            self.open_preview(item_id, cx);
+            return;
+        };
+        self.preview_flyout_expanded = true;
+        view.update(cx, |view, cx| view.expand(item, cx));
+        // Cover the connector overlay for the whole animated region, then let
+        // the animation feed the flyout rect frame by frame.
+        self.update_connector(None, expanded, false, cx);
+        self.animate_flyout_to(expanded, true, cx);
+    }
+
+    /// Move the flyout card to `to`, animating over the design
+    /// system's fast motion when `animate` is requested (and motion is not
+    /// reduced). The card advances once per rendered frame (see
+    /// [`flyout_anim_step`]) inside the fixed native canvas, so the grow/shrink
+    /// stays smooth and glued to the connector line.
+    fn animate_flyout_to(
+        &mut self,
+        to: crate::platform::preview_flyout::LogicalRect,
+        animate: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(attachment) = self.preview_flyout_attachment.clone() else {
+            return;
+        };
+        let from = attachment.current_rect().unwrap_or(to);
+        let Some(flyout_handle) = self.preview_flyout_window else {
+            return;
+        };
+        // Bumping the generation stops any in-flight animation; the new one
+        // starts from wherever the window currently is.
+        let generation = self.preview_flyout_anim_gen.clone();
+        let my_generation = generation.get().wrapping_add(1);
+        generation.set(my_generation);
+
+        if !animate || from == to || cx.reduce_motion() {
+            if attachment.place(to) {
+                let origin = attachment.canvas_origin().unwrap_or((to.0, to.1));
+                if let Some(view) = self.preview_flyout_view.clone() {
+                    view.update(cx, |view, cx| {
+                        view.set_card_screen_rect(origin, to, cx);
+                        view.set_anim_size(None, cx);
+                    });
+                }
+                // SetWindowPos ran inside the App borrow, so its re-entrant
+                // bounds callback was skipped; sync the viewport before the
+                // next draw paints the snapped canvas.
+                let _ = cx.update_window(flyout_handle, |_, window, cx| {
+                    window.bounds_changed(cx);
+                });
+            }
+            return;
+        }
+
+        let anim = FlyoutAnim {
+            attachment,
+            wm: cx.entity(),
+            from,
+            to,
+            start: Instant::now(),
+            duration: crate::ui::design::motion::fast(),
+            generation,
+            my_generation,
+        };
+        if let Some(view) = self.preview_flyout_view.clone() {
+            view.update(cx, |view, cx| view.set_anim_size(Some((to.2, to.3)), cx));
+        }
+        let _ = cx.update_window(flyout_handle, move |_, window, _| {
+            window.on_next_frame(move |window, cx| flyout_anim_step(window, cx, anim));
+        });
+    }
+
+    fn hide_connector(&mut self, cx: &mut Context<Self>) {
+        if let Some(view) = &self.preview_connector_view {
+            view.update(cx, |view, cx| view.hide(cx));
+        }
+        if let Some(overlay) = &self.preview_connector_overlay {
+            overlay.hide();
+        }
+    }
+
+    /// Reposition the connector overlay window over the union of the card,
+    /// the flyout's current rect and the target rect, then retarget the line.
+    fn update_connector(
+        &mut self,
+        card: Option<crate::ui::preview::connector::ScreenRect>,
+        target: crate::ui::preview::connector::ScreenRect,
+        animate: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.ensure_connector_window(cx) {
+            return;
+        }
+        let mut cover = Vec::new();
+        if let Some(attachment) = &self.preview_flyout_attachment {
+            if attachment.is_shown() {
+                cover.extend(attachment.current_rect());
+            }
+        }
+        if let Some(view) = &self.preview_connector_view {
+            cover.extend(view.read(cx).source_rect());
+        }
+        if let Some(card) = card {
+            cover.push(card);
+        }
+        cover.push(target);
+        let region = crate::ui::preview::connector::padded_union(
+            &cover,
+            crate::ui::preview::connector::OVERLAY_PAD,
+        );
+        let origin = (region.0, region.1);
+        if let Some(view) = &self.preview_connector_view {
+            view.update(cx, |view, cx| {
+                view.retarget(origin, card, target, animate, cx)
+            });
+        }
+        // Place the overlay window outside any App borrow (SetWindowPos
+        // re-enters GPUI's WndProc synchronously), then refresh so GPUI lays
+        // out the view at the new window size.
+        let overlay_handle = self.preview_connector_window;
+        if let Some(overlay) = self.preview_connector_overlay.clone() {
+            let task = cx.spawn(async move |_, cx| {
+                if overlay.place(region.0, region.1, region.2, region.3) {
+                    if let Some(handle) = overlay_handle {
+                        let _ = cx.update_window(handle, |_, window, _| window.refresh());
+                    }
+                }
+            });
+            self.preview_connector_place_task = Some(task);
+        }
+    }
+
+    fn ensure_connector_window(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.preview_connector_view.is_some() {
+            return true;
+        }
+        let Some(owner) = self.preview_flyout_native else {
+            return false;
+        };
+        self.create_connector_window(owner, cx)
+    }
+
+    fn create_connector_window(&mut self, owner: isize, cx: &mut Context<Self>) -> bool {
+        // `open_window` runs its content closure while this entity is already
+        // borrowed (same re-entrancy trap as the flyout itself): stash the
+        // native results and commit them after creation instead.
+        let handle_slot: Rc<Cell<Option<AnyWindowHandle>>> = Rc::new(Cell::new(None));
+        let overlay_slot: Rc<Cell<Option<Rc<crate::platform::preview_overlay::Overlay>>>> =
+            Rc::new(Cell::new(None));
+        let handle_slot_for_window = handle_slot.clone();
+        let overlay_slot_for_window = overlay_slot.clone();
+        let connector_view = cx.new(PreviewConnectorView::new);
+        let view_for_window = connector_view.clone();
+        self.preview_connector_view = Some(connector_view);
+        let options = WindowOptions {
+            kind: WindowKind::PopUp,
+            titlebar: None,
+            window_background: WindowBackgroundAppearance::Transparent,
+            window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                point(px(0.), px(0.)),
+                size(px(100.), px(100.)),
+            ))),
+            show: false,
+            focus: false,
+            is_movable: false,
+            is_resizable: false,
+            is_minimizable: false,
+            // Non-activating like the flyout: keep the connector line rendering
+            // at full rate so it stays glued to the panel edge while the flyout
+            // rect animates, instead of lagging at the inactive ~30fps limit.
+            inactive_frame_interval: None,
+            #[cfg(target_os = "windows")]
+            window_min_size: None,
+            #[cfg(not(target_os = "windows"))]
+            window_min_size: Some(gpui::size(px(1.), px(1.))),
+            ..Default::default()
+        };
+        let result = cx.open_window(options, move |window, _cx| {
+            let overlay_native = native_window_handle(window);
+            let overlay = overlay_native.and_then(|native| {
+                match crate::platform::preview_overlay::Overlay::install(owner, native) {
+                    Ok(overlay) => Some(overlay),
+                    Err(error) => {
+                        log::error!("connector overlay policy unavailable: {error}");
+                        None
+                    }
+                }
+            });
+            handle_slot_for_window.set(Some(gpui::Window::window_handle(window)));
+            overlay_slot_for_window.set(overlay);
+            // The overlay is a bare transparent canvas: wrapping it in the
+            // component Root would paint a client window border (stroke +
+            // rounded corners + shadow) around the whole card∪flyout region,
+            // showing up as a large transparent frame. Return the view directly.
+            view_for_window
+        });
+        match result {
+            Ok(_) => {
+                let Some(handle) = handle_slot.get() else {
+                    log::error!("connector overlay window has no handle");
+                    self.clear_preview_connector();
+                    return false;
+                };
+                self.preview_connector_window = Some(handle);
+                self.preview_connector_overlay = overlay_slot.take();
+                true
+            }
+            Err(error) => {
+                log::error!("failed to create connector overlay window: {error}");
+                self.clear_preview_connector();
+                false
+            }
+        }
+    }
+
+    fn create_preview_flyout(
+        &mut self,
+        panel: Entity<PreviewPanelView>,
+        size: Size<Pixels>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(main_native) = self.main_native_handle() else {
+            log::warn!("preview flyout: main window native handle unavailable");
+            return false;
+        };
+        // `open_window` runs its content closure while this entity is already
+        // borrowed; calling `wm.update` from inside it would panic with
+        // "cannot update WindowManager while it is already being updated".
+        // Stash the native results and commit them after creation instead.
+        let handle_slot: Rc<Cell<Option<AnyWindowHandle>>> = Rc::new(Cell::new(None));
+        let attachment_slot: Rc<Cell<Option<Rc<crate::platform::preview_flyout::Attachment>>>> =
+            Rc::new(Cell::new(None));
+        let native_slot: Rc<Cell<Option<isize>>> = Rc::new(Cell::new(None));
+        let handle_slot_for_window = handle_slot.clone();
+        let attachment_slot_for_window = attachment_slot.clone();
+        let native_slot_for_window = native_slot.clone();
+        // One wrapper per flyout window: it hosts the compact sheet and the
+        // full view, swapping content instead of opening another window.
+        let flyout_view = cx.new(|cx| PreviewFlyoutView::new(panel, self.state.clone(), cx));
+        let flyout_for_window = flyout_view.clone();
+        self.preview_flyout_view = Some(flyout_view);
+        self.preview_flyout_expanded = false;
+        let options = WindowOptions {
+            kind: WindowKind::PopUp,
+            titlebar: None,
+            window_background: WindowBackgroundAppearance::Transparent,
+            window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                point(px(0.), px(0.)),
+                size,
+            ))),
+            show: false,
+            focus: false,
+            is_movable: false,
+            is_resizable: false,
+            is_minimizable: false,
+            // This popup never activates, so GPUI would otherwise throttle its
+            // redraws to ~30fps while the card rect animates every frame. The
+            // skipped frames would read as stutter; render at full rate instead.
+            inactive_frame_interval: None,
+            // Windows: GPUI's cached non-client inset can clamp the exact
+            // client size when the flyout moves between DPI scales.
+            #[cfg(target_os = "windows")]
+            window_min_size: None,
+            #[cfg(not(target_os = "windows"))]
+            window_min_size: Some(gpui::size(px(1.), px(1.))),
+            ..Default::default()
+        };
+        let result = cx.open_window(options, move |window, cx| {
+            let flyout_native = native_window_handle(window);
+            native_slot_for_window.set(flyout_native);
+            let attachment = flyout_native.and_then(|flyout| {
+                match crate::platform::preview_flyout::Attachment::install(main_native, flyout) {
+                    Ok(attachment) => Some(attachment),
+                    Err(error) => {
+                        log::error!("preview flyout native policy unavailable: {error}");
+                        None
+                    }
+                }
+            });
+            handle_slot_for_window.set(Some(gpui::Window::window_handle(window)));
+            attachment_slot_for_window.set(attachment);
+            cx.new(|cx| {
+                let root = gpui_kit::component::Root::new(flyout_for_window, window, cx);
+                // The canvas spans the whole work area and stays invisible:
+                // the component root's opaque surface would otherwise paint a
+                // full-screen sheet (server decorations already give it square
+                // corners). Only the in-app card is meant to be seen.
+                root.bg(gpui::transparent_black())
+            })
+        });
+        match result {
+            Ok(_) => {
+                let Some(handle) = handle_slot.get() else {
+                    log::error!("preview flyout window has no handle");
+                    self.clear_preview_flyout();
+                    return false;
+                };
+                self.preview_flyout_native = native_slot.get();
+                self.set_preview_flyout(handle, attachment_slot.take(), cx);
+                true
+            }
+            Err(error) => {
+                log::error!("failed to create preview flyout window: {error}");
+                self.clear_preview_flyout();
+                false
+            }
+        }
+    }
+
+    fn set_preview_flyout(
+        &mut self,
+        handle: AnyWindowHandle,
+        attachment: Option<Rc<crate::platform::preview_flyout::Attachment>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.preview_flyout_window = Some(handle);
+        self.preview_flyout_attachment = attachment;
+        if self._preview_flyout_closed_subscription.is_none() {
+            let wm = cx.entity();
+            self._preview_flyout_closed_subscription =
+                Some(cx.on_window_closed(move |cx, window_id| {
+                    // May fire while the WindowManager is being updated (e.g.
+                    // owner destruction); defer back into it.
+                    let wm = wm.clone();
+                    cx.defer(move |cx| {
+                        wm.update(cx, |wm, cx| wm.on_preview_flyout_closed(window_id, cx));
+                    });
+                }));
+        }
+    }
+
+    fn on_preview_flyout_closed(&mut self, window_id: WindowId, _cx: &mut Context<Self>) {
+        if self
+            .preview_flyout_window
+            .is_some_and(|handle| handle.window_id() == window_id)
+        {
+            // The connector overlay is owned by (and destroyed with) the
+            // flyout window; clear everything together.
+            self.clear_preview_flyout();
+            return;
+        }
+        if self
+            .preview_connector_window
+            .is_some_and(|handle| handle.window_id() == window_id)
+        {
+            self.clear_preview_connector();
+        }
+    }
+
+    fn clear_preview_connector(&mut self) {
+        self.preview_connector_window = None;
+        self.preview_connector_view = None;
+        self.preview_connector_overlay = None;
+        self.preview_connector_place_task = None;
+    }
+
+    fn clear_preview_flyout(&mut self) {
+        self.preview_flyout_window = None;
+        self.preview_flyout_view = None;
+        self.preview_flyout_attachment = None;
+        self.preview_flyout_expanded = false;
+        self.preview_flyout_native = None;
+        self.cancel_flyout_anim();
+        self.clear_preview_connector();
+    }
+
+    /// Invalidate any in-flight flyout rect animation; its next frame callback
+    /// sees the bumped generation and stops without rescheduling.
+    fn cancel_flyout_anim(&mut self) {
+        let gen = self.preview_flyout_anim_gen.get().wrapping_add(1);
+        self.preview_flyout_anim_gen.set(gen);
+    }
+
+    fn main_native_handle(&self) -> Option<isize> {
+        #[cfg(target_os = "windows")]
+        {
+            (self.hwnd != 0).then_some(self.hwnd)
+        }
+        #[cfg(target_os = "macos")]
+        {
+            (self.ns_window != 0).then_some(self.ns_window)
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        {
+            None
+        }
+    }
+
+    // --- Standalone preview window ---
+
+    /// Open (or retarget) the preview window for `item_id`.
+    ///
+    /// The window is created on demand and destroyed on close. GPUI 0.2.2 has
+    /// no portable show/hide for an existing window (Windows `SW_HIDE` is not
+    /// reversible through `Window::activate_window`), so recreating is both
+    /// simpler and impossible to leave stale.
+    pub fn open_preview(&mut self, item_id: i64, cx: &mut Context<Self>) {
+        let Some(item) = self.state.read(cx).load_full_item(item_id) else {
+            log::warn!("open_preview({item_id}): item not found");
+            self.state.update(cx, |state, cx| {
+                state.show_warning_toast(I18nKey::PreviewOpenFailed.text());
+                cx.notify();
+            });
+            return;
+        };
+
+        if let (Some(handle), Some(view)) = (self.preview_window, self.preview_view.clone()) {
+            let activated = cx
+                .update_window(handle, |_, window, _cx| {
+                    window.activate_window();
+                    window.refresh();
+                })
+                .is_ok();
+            if activated {
+                view.update(cx, |view, cx| view.set_item(item, cx));
+                self.preview_close_focus_main = true;
+                self.state.update(cx, |state, _cx| {
+                    state.set_preview_window_open(true);
+                });
+                return;
+            }
+            // The window disappeared behind our back (e.g. the OS destroyed
+            // it); drop the stale handle and create a fresh one below.
+            self.clear_preview_handles();
+        }
+
+        let state = self.state.clone();
+        // `open_window` runs its content closure while this entity is already
+        // borrowed; `wm.update` inside it would panic. Stash the handle/view
+        // and commit them once the window has been created.
+        let handle_slot: Rc<Cell<Option<AnyWindowHandle>>> = Rc::new(Cell::new(None));
+        let view_slot: Rc<Cell<Option<Entity<PreviewWindowView>>>> = Rc::new(Cell::new(None));
+        let handle_slot_for_window = handle_slot.clone();
+        let view_slot_for_window = view_slot.clone();
+        let options = WindowOptions {
+            window_background: WindowBackgroundAppearance::Transparent,
+            // Frameless: the preview draws its own 48 px header (drag area +
+            // close/copy). `window_frame::install_for` keeps the DWM rounded
+            // frame and the native resize border.
+            titlebar: None,
+            window_bounds: Some(WindowBounds::Windowed(self.preview_bounds(760., 560.))),
+            window_min_size: Some(size(px(480.), px(360.))),
+            show: true,
+            focus: true,
+            is_resizable: true,
+            ..Default::default()
+        };
+
+        let result = cx.open_window(options, move |window, cx| {
+            crate::platform::window_frame::install_for(window);
+            let view = cx.new(|cx| PreviewWindowView::new(state.clone(), item, Some(window), cx));
+            handle_slot_for_window.set(Some(gpui::Window::window_handle(window)));
+            view_slot_for_window.set(Some(view.clone()));
+            cx.new(|cx| gpui_kit::component::Root::new(view, window, cx))
+        });
+
+        match result {
+            Ok(_) => {
+                if let (Some(handle), Some(view)) = (handle_slot.get(), view_slot.take()) {
+                    self.set_preview_window(handle, view, cx);
+                } else {
+                    log::error!("preview window created without a handle or view");
+                }
+            }
+            Err(error) => {
+                log::error!("failed to open preview window: {error}");
+                self.state.update(cx, |state, cx| {
+                    state.set_preview_window_open(false);
+                    state.show_warning_toast(I18nKey::PreviewOpenFailed.text());
+                    cx.notify();
+                });
+            }
+        }
+    }
+
+    /// Close the preview window. `focus_main` is true only for a close the
+    /// user performed *in* the preview; hiding the main panel passes false.
+    pub fn close_preview(&mut self, focus_main: bool, cx: &mut Context<Self>) {
+        self.preview_close_focus_main = focus_main;
+        let Some(handle) = self.preview_window else {
+            if self.state.read(cx).preview_window_open {
+                self.state.update(cx, |state, _cx| {
+                    state.set_preview_window_open(false);
+                });
+            }
+            return;
+        };
+        self.preview_window = None;
+        let window_id = self.preview_window_id;
+        let removed = cx
+            .update_window(handle, |_, window, _cx| window.remove_window())
+            .is_ok();
+        if !removed {
+            // `on_window_closed` will not fire for a window that is already
+            // gone; finish the cleanup here.
+            if let Some(window_id) = window_id {
+                self.on_preview_window_closed(window_id, cx);
+            }
+        }
+    }
+
+    /// Dock the preview next to the main window: right side first, flip to
+    /// the left when the right cannot hold it, top-aligned with the main
+    /// window. `saved_x/y` are physical pixels on Windows; `saved_w/h` are
+    /// already logical, so only the origin and the work area are scaled.
+    fn preview_bounds(&self, width: f32, height: f32) -> Bounds<Pixels> {
+        let scale = crate::platform::monitor::get_scale_factor(self.saved_x, self.saved_y).max(0.5);
+        let preferred = size(px(width), px(height));
+        let min = size(px(480.), px(360.));
+        let work = crate::platform::monitor::get_monitor_work_area(self.saved_x, self.saved_y)
+            .map(|work| {
+                Bounds::new(
+                    point(px(work.x as f32 / scale), px(work.y as f32 / scale)),
+                    size(
+                        px(work.width as f32 / scale),
+                        px(work.height as f32 / scale),
+                    ),
+                )
+            })
+            .unwrap_or_else(|| {
+                // No monitor lookup: give the dock enough room to the right.
+                Bounds::new(point(px(0.), px(0.)), size(px(3840.), px(2160.)))
+            });
+
+        if self.saved_w <= 0. || self.saved_h <= 0. {
+            // Before the first placement there is no main-window rect. Put the
+            // preview at the work area's left edge, still side-docked.
+            return dock_preview_bounds(
+                Bounds::new(work.origin, size(px(0.), px(0.))),
+                work,
+                preferred,
+                min,
+            );
+        }
+
+        let main = Bounds::new(
+            point(
+                px(self.saved_x as f32 / scale),
+                px(self.saved_y as f32 / scale),
+            ),
+            size(px(self.saved_w), px(self.saved_h)),
+        );
+        dock_preview_bounds(main, work, preferred, min)
+    }
+
+    fn set_preview_window(
+        &mut self,
+        handle: AnyWindowHandle,
+        view: Entity<PreviewWindowView>,
+        cx: &mut Context<Self>,
+    ) {
+        self.preview_window = Some(handle);
+        self.preview_window_id = Some(handle.window_id());
+        self.preview_view = Some(view.clone());
+        self.preview_close_focus_main = true;
+        self.state.update(cx, |state, cx| {
+            state.set_preview_window_open(true);
+            cx.notify();
+        });
+        self._preview_subscription = Some(cx.subscribe(
+            &view,
+            |this, _view, event: &PreviewWindowEvent, cx| match event {
+                // Emitted from inside the preview view's update; destroying
+                // its window here would re-enter that update. Capture the id
+                // so a retarget in the meantime is not closed by mistake.
+                PreviewWindowEvent::Close => {
+                    let expected = this.preview_window_id;
+                    let wm = cx.entity();
+                    cx.defer(move |cx| {
+                        wm.update(cx, |wm, cx| {
+                            if wm.preview_window_id == expected {
+                                wm.close_preview(true, cx);
+                            }
+                        });
+                    });
+                }
+            },
+        ));
+        if self._preview_closed_subscription.is_none() {
+            let wm = cx.entity();
+            self._preview_closed_subscription = Some(cx.on_window_closed(move |cx, window_id| {
+                // `remove_window` is often called inside a WindowManager update;
+                // updating the same entity here would re-enter it.
+                let wm = wm.clone();
+                cx.defer(move |cx| {
+                    wm.update(cx, |wm, cx| wm.on_preview_window_closed(window_id, cx));
+                });
+            }));
+        }
+        cx.notify();
+    }
+
+    fn on_preview_window_closed(&mut self, window_id: WindowId, cx: &mut Context<Self>) {
+        if self.preview_window_id != Some(window_id) {
+            return;
+        }
+        self.clear_preview_handles();
+        let focus_main = self.preview_close_focus_main;
+        self.preview_close_focus_main = false;
+        self.state.update(cx, |state, cx| {
+            state.set_preview_window_open(false);
+            cx.notify();
+        });
+        if focus_main {
+            self.focus_main_after_preview(cx);
+        }
+        cx.notify();
+    }
+
+    fn clear_preview_handles(&mut self) {
+        self.preview_window = None;
+        self.preview_window_id = None;
+        self.preview_view = None;
+        self._preview_subscription = None;
+    }
+
+    fn focus_main_after_preview(&mut self, cx: &mut Context<Self>) {
+        if !self.visible {
+            return;
+        }
+        #[cfg(target_os = "windows")]
+        {
+            use windows_sys::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
+            let hwnd = self.hwnd as *mut std::ffi::c_void;
+            if !hwnd.is_null() {
+                // SAFETY: our own top-level window; foreground activation only.
+                unsafe { SetForegroundWindow(hwnd) };
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            cx.activate(true);
+            self.activate_macos_window();
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        {
+            let _ = cx;
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let _ = cx;
+        }
     }
 
     #[cfg(target_os = "windows")]

@@ -149,6 +149,12 @@ pub struct AppSettings {
     pub copy_as_plain_text: bool, // copy as plain text: strip formatting tags when enabled
     #[serde(default)]
     pub show_original_on_hover: bool, // show original content on hover when a note is set
+    /// Hover preview flyout in the main clipboard list.
+    #[serde(default = "default_preview_hover_enabled")]
+    pub preview_hover_enabled: bool,
+    /// Hover delay before the flyout opens: 300 / 500 / 1000 ms.
+    #[serde(default = "default_preview_hover_delay_ms")]
+    pub preview_hover_delay_ms: u32,
     #[serde(default)]
     pub saved_window_width: f32, // user-adjusted window width (0=use default)
     #[serde(default)]
@@ -286,6 +292,14 @@ pub struct AppSettings {
     pub alt_shortcuts_enabled: bool,
 }
 
+fn default_preview_hover_enabled() -> bool {
+    true
+}
+
+fn default_preview_hover_delay_ms() -> u32 {
+    500
+}
+
 fn default_image_alt_mode() -> String {
     "bitmap".to_string()
 }
@@ -399,6 +413,8 @@ impl Default for AppSettings {
             auto_scroll_to_top: false,
             copy_as_plain_text: false,
             show_original_on_hover: false,
+            preview_hover_enabled: default_preview_hover_enabled(),
+            preview_hover_delay_ms: default_preview_hover_delay_ms(),
             saved_window_width: 0.0,
             saved_window_height: 0.0,
             window_geometry_version: 1,
@@ -698,6 +714,16 @@ impl AppSettings {
 
     pub fn resolve_db_path(&self) -> PathBuf {
         super::paths::resolve_db_path(&self.db_path)
+    }
+
+    /// Only the three shipped delays are valid; anything else (older configs,
+    /// hand-edited TOML) falls back to 500 ms instead of surprising the user
+    /// with a 0 ms or multi-second hover.
+    pub fn preview_hover_delay_normalized(&self) -> u32 {
+        match self.preview_hover_delay_ms {
+            300 | 500 | 1000 => self.preview_hover_delay_ms,
+            _ => default_preview_hover_delay_ms(),
+        }
     }
 
     /// Unknown persisted values fall back to the default gesture.
@@ -1704,6 +1730,37 @@ mod tests {
         let saved = toml::to_string(&changed).unwrap();
         let restored: AppSettings = toml::from_str(&saved).unwrap();
         assert!(!restored.alt_shortcuts_enabled);
+    }
+
+    #[test]
+    fn preview_hover_defaults_on_and_delay_normalizes() {
+        // Old configs (no keys) get the feature on at 500 ms.
+        let mut value = toml::Value::try_from(AppSettings::default()).unwrap();
+        let table = value.as_table_mut().unwrap();
+        table.remove("preview_hover_enabled");
+        table.remove("preview_hover_delay_ms");
+        let loaded: AppSettings = value.try_into().unwrap();
+        assert!(loaded.preview_hover_enabled);
+        assert_eq!(loaded.preview_hover_delay_ms, 500);
+        assert_eq!(loaded.preview_hover_delay_normalized(), 500);
+
+        let mut settings = AppSettings {
+            preview_hover_delay_ms: 300,
+            ..Default::default()
+        };
+        assert_eq!(settings.preview_hover_delay_normalized(), 300);
+        settings.preview_hover_delay_ms = 1000;
+        assert_eq!(settings.preview_hover_delay_normalized(), 1000);
+        settings.preview_hover_delay_ms = 1234;
+        assert_eq!(settings.preview_hover_delay_normalized(), 500);
+        settings.preview_hover_delay_ms = 0;
+        assert_eq!(settings.preview_hover_delay_normalized(), 500);
+
+        settings.preview_hover_enabled = false;
+        let saved = toml::to_string(&settings).unwrap();
+        let restored: AppSettings = toml::from_str(&saved).unwrap();
+        assert!(!restored.preview_hover_enabled);
+        assert_eq!(restored.preview_hover_delay_ms, 0);
     }
 
     #[test]

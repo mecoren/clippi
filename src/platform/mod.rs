@@ -15,6 +15,8 @@ pub mod keyboard_hook;
 pub mod monitor;
 pub mod motion;
 pub mod paste;
+pub mod preview_flyout;
+pub mod preview_overlay;
 #[cfg(target_os = "windows")]
 pub mod quick_window;
 pub mod remote_path;
