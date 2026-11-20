@@ -21,10 +21,11 @@ pub use implementation::LogicalRect;
 /// Gap between the main window and the flyout, in logical pixels.
 pub const FLYOUT_GAP: f32 = 12.;
 
-/// Raw top edge for a flyout centered on the hovered card's center line
-/// (EcoPaste `rawDynamicPanelRect`): both facing edge midpoints then share a
-/// height, so the connector reads as a straight line. Clamping to the work
-/// area happens in [`dock_flyout_bounds`].
+/// Raw top edge for a flyout centered on the source anchor's center line.
+/// Callers pass the 1px pointer anchor's top and height (see
+/// `ui::preview::connector::pointer_anchor_rect`), so the dock follows the
+/// pointer's Y within the hovered card. Clamping to the work area happens in
+/// [`dock_flyout_bounds`].
 pub fn centered_dock_top(card_top: f32, card_height: f32, panel_height: f32) -> f32 {
     card_top + card_height / 2. - panel_height / 2.
 }
@@ -33,7 +34,7 @@ pub fn centered_dock_top(card_top: f32, card_height: f32, panel_height: f32) -> 
 ///
 /// `main` and `work` are `(x, y, width, height)` in logical screen pixels;
 /// `anchor_y` is the flyout's desired raw top edge in the same coordinate
-/// space (callers center it on the hovered card via [`centered_dock_top`]).
+/// space (callers center it on the pointer anchor via [`centered_dock_top`]).
 /// The preferred side is used when both sides have room; otherwise the only
 /// fitting side is used. When neither side fits, the roomier side still wins
 /// and the flyout may overlap the main window — it must never be centered.
@@ -108,6 +109,10 @@ impl Attachment {
     }
 
     pub fn expand_rect(&self, _width: f32, _height: f32) -> Option<LogicalRect> {
+        None
+    }
+
+    pub fn work_area(&self) -> Option<LogicalRect> {
         None
     }
 

@@ -440,6 +440,10 @@ pub struct ClipboardListView {
     preview_panel: Entity<PreviewPanelView>,
     /// Index the pending hover timer belongs to; `None` means no timer.
     preview_hover_index: Option<usize>,
+    /// Latest pointer geometry awaiting the next follow tick; pointer motion
+    /// is coalesced to one retarget per frame instead of one per mouse event.
+    preview_follow_pending: Option<(Bounds<Pixels>, Point<Pixels>)>,
+    preview_follow_task: Option<Task<()>>,
     preview_hover_generation: u64,
     preview_hover_task: Option<Task<()>>,
     preview_hide_generation: u64,
@@ -542,6 +546,8 @@ impl ClipboardListView {
             last_hover_pos: None,
             preview_panel,
             preview_hover_index: None,
+            preview_follow_pending: None,
+            preview_follow_task: None,
             preview_hover_generation: 0,
             preview_hover_task: None,
             preview_hide_generation: 0,
@@ -1696,6 +1702,10 @@ impl ClipboardListView {
                 if let Some(card) = self.preview_card_bounds(index) {
                     self.open_preview_panel(item_id, card, pointer, cx);
                 }
+            } else if !self.preview_expanded {
+                if let Some(card) = self.preview_card_bounds(index) {
+                    self.retarget_preview_pointer(card, pointer, cx);
+                }
             }
             self.preview_hover_index = Some(index);
             return;
@@ -1775,10 +1785,62 @@ impl ClipboardListView {
             self.preview_panel
                 .update(cx, |panel, cx| panel.show_native(&item, &privacy, cx))
         };
-        // The connector overlay works in screen coordinates: translate the
-        // window-local card by the main window's origin.
+        let target = self.flyout_target(card, pointer, size);
+        if collapse {
+            cx.emit(ClipboardListEvent::PreviewFlyoutCollapse { retarget: target });
+        } else {
+            cx.emit(ClipboardListEvent::PreviewFlyoutShow(target));
+        }
+        self.start_preview_watch(cx);
+        cx.notify();
+    }
+
+    /// Pointer motion inside the card that already owns the flyout: only the
+    /// geometry is re-emitted so the spring retargets; the panel's content and
+    /// entrance fade are left alone. Events are coalesced to the latest
+    /// position once per frame — a fast drag otherwise fires a full retarget
+    /// (native geometry queries included) for every mouse message.
+    fn retarget_preview_pointer(
+        &mut self,
+        card: Bounds<Pixels>,
+        pointer: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        self.preview_follow_pending = Some((card, pointer));
+        if self.preview_follow_task.is_some() {
+            return;
+        }
+        self.preview_follow_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(16))
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.preview_follow_task = None;
+                let Some((card, pointer)) = this.preview_follow_pending.take() else {
+                    return;
+                };
+                if !this.preview_panel.read(cx).is_visible() || this.preview_expanded {
+                    return;
+                }
+                let Some(size) = this.preview_panel.read(cx).current_size() else {
+                    return;
+                };
+                let target = this.flyout_target(card, pointer, size);
+                cx.emit(ClipboardListEvent::PreviewFlyoutShow(target));
+            });
+        }));
+    }
+
+    /// The connector overlay works in screen coordinates: translate the
+    /// window-local card by the main window's origin.
+    fn flyout_target(
+        &self,
+        card: Bounds<Pixels>,
+        pointer: Point<Pixels>,
+        size: Size<Pixels>,
+    ) -> crate::ui::preview::PreviewFlyoutTarget {
         let origin = self.main_screen_bounds.origin;
-        let target = crate::ui::preview::PreviewFlyoutTarget {
+        crate::ui::preview::PreviewFlyoutTarget {
             panel: self.preview_panel.clone(),
             card_top: f32::from(card.top()),
             size,
@@ -1787,14 +1849,8 @@ impl ClipboardListView {
                 point(card.origin.x + origin.x, card.origin.y + origin.y),
                 card.size,
             ),
-        };
-        if collapse {
-            cx.emit(ClipboardListEvent::PreviewFlyoutCollapse { retarget: target });
-        } else {
-            cx.emit(ClipboardListEvent::PreviewFlyoutShow(target));
+            pointer_y: f32::from(pointer.y),
         }
-        self.start_preview_watch(cx);
-        cx.notify();
     }
 
     fn schedule_preview_hover(&mut self, index: usize, delay_ms: u32, cx: &mut Context<Self>) {
@@ -2018,6 +2074,8 @@ impl ClipboardListView {
         self.preview_hover_task = None;
         self.preview_hide_task = None;
         self.preview_hover_index = None;
+        self.preview_follow_pending = None;
+        self.preview_follow_task = None;
         self.preview_panel_hovered = false;
         self.preview_panel_hover_since = None;
         self.preview_expanded = false;

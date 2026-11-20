@@ -74,6 +74,33 @@ pub fn ease_out_damped(t: f32) -> f32 {
     1. - (1. - t).powi(5)
 }
 
+/// 弹簧刚度：预览浮窗与连接线锚点的跟随动画。
+pub const SPRING_STIFFNESS: f32 = 420.;
+/// 弹簧阻尼：与刚度、质量配合呈轻微欠阻尼，快速跟手且几乎无回弹。
+pub const SPRING_DAMPING: f32 = 34.;
+/// 弹簧质量。
+pub const SPRING_MASS: f32 = 0.9;
+
+/// 弹簧追踪一步：返回新的 `(位置, 速度)`。半隐式欧拉按 ≤1/120s 子步
+/// 积分，大帧间隔下不会发散；目标值可在任意时刻改写，动画不重启。
+pub fn spring_step(current: f32, velocity: f32, target: f32, dt: f32) -> (f32, f32) {
+    let mut remaining = dt.clamp(0., 0.1);
+    let (mut x, mut v) = (current, velocity);
+    while remaining > 0. {
+        let h = remaining.min(1. / 120.);
+        let accel = (SPRING_STIFFNESS * (target - x) - SPRING_DAMPING * v) / SPRING_MASS;
+        v += accel * h;
+        x += v * h;
+        remaining -= h;
+    }
+    (x, v)
+}
+
+/// 弹簧是否已静止：位置与速度都低于阈值后即可吸附到目标并停帧。
+pub fn spring_settled(current: f32, velocity: f32, target: f32) -> bool {
+    (target - current).abs() < 0.05 && velocity.abs() < 0.5
+}
+
 /// 线性 RGB 插值（含 alpha）；用于滚动渐隐这类纯色过渡。
 pub fn mix_rgba(from: Rgba, to: Rgba, t: f32) -> Rgba {
     let t = t.clamp(0., 1.);
@@ -136,6 +163,42 @@ mod tests {
             assert!((at1 - 1.).abs() < 1e-3, "end {at1}");
             assert!(bezier(curve.0, curve.1, curve.2, curve.3, 0.5).is_finite());
         }
+    }
+
+    #[test]
+    fn spring_converges_and_settles() {
+        let (mut x, mut v) = (0., 0.);
+        for _ in 0..240 {
+            (x, v) = spring_step(x, v, 100., 1. / 60.);
+        }
+        assert!((x - 100.).abs() < 0.05, "position {x}");
+        assert!(spring_settled(x, v, 100.), "velocity {v}");
+    }
+
+    #[test]
+    fn spring_retargets_without_restarting() {
+        let (mut x, mut v) = (0., 0.);
+        for _ in 0..10 {
+            (x, v) = spring_step(x, v, 100., 1. / 60.);
+        }
+        // Mid-flight retarget keeps the current position and velocity.
+        let mid = x;
+        (x, v) = spring_step(x, v, -50., 1. / 60.);
+        assert!((x - mid).abs() < 30., "no jump: {mid} -> {x}");
+        for _ in 0..240 {
+            (x, v) = spring_step(x, v, -50., 1. / 60.);
+        }
+        assert!(spring_settled(x, v, -50.), "settled at {x} with {v}");
+    }
+
+    #[test]
+    fn spring_survives_long_frames() {
+        let (mut x, mut v) = (0., 0.);
+        for _ in 0..20 {
+            (x, v) = spring_step(x, v, 100., 0.1);
+        }
+        assert!(x.is_finite() && v.is_finite());
+        assert!((x - 100.).abs() < 0.05, "position {x}");
     }
 
     #[test]

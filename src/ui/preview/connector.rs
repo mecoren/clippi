@@ -1,11 +1,12 @@
 //! Connector geometry between the hovered list card and the preview flyout.
 //!
-//! Cubic Bezier with edge-midpoint anchors, ported from EcoPaste
-//! `src/pages/Preview/geometry.ts` (`resolveConnector`): the two rects'
-//! facing edge midpoints become the anchor points, control points project
-//! along the edge normals at a distance clamped to 20–64 px. The flyout is
-//! docked centered on the card's center line (EcoPaste `rawDynamicPanelRect`),
-//! so both anchors share a height and the curve reads as a straight line.
+//! Cubic Bezier with edge-midpoint anchors: the two rects' facing edge
+//! midpoints become the anchor points, control points project along the edge
+//! normals at a distance clamped to 20–64 px (and never past the anchors'
+//! midpoint). The source rect is a 1px tall anchor clamped inside the card
+//! (see [`pointer_anchor_rect`]) riding the flyout's center line; the flyout
+//! in turn docks to the pointer, so the line tracks the pointer vertically
+//! and stays straight instead of jumping between card centers.
 //!
 //! All coordinates are logical screen pixels.
 
@@ -18,10 +19,6 @@ pub type ScreenPoint = (f32, f32);
 const CONTROL_RATIO: f32 = 0.22;
 const MIN_CONTROL_DISTANCE: f32 = 20.;
 const MAX_CONTROL_DISTANCE: f32 = 64.;
-
-/// Padding around the card/panel union when sizing the overlay window: the
-/// bezier's convex hull (control points) may bulge up to 64 px past an anchor.
-pub const OVERLAY_PAD: f32 = 72.;
 
 /// The four points defining the card → panel connector curve.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -46,6 +43,41 @@ struct Anchor {
     side: Side,
 }
 
+/// Horizontal padding around the connector's x-span when sizing the overlay
+/// window: the bezier's control points may bulge up to 64 px past an anchor.
+pub const OVERLAY_PAD: f32 = 72.;
+
+/// Height of the pointer-anchored source rect, in logical pixels.
+pub const POINTER_ANCHOR_SIZE: f32 = 1.;
+
+/// Source anchor aligned with the panel's current center line. Unlike the
+/// dock anchor this is deliberately NOT clamped into the card: both ends
+/// share the panel's height on every frame, so the line stays straight and
+/// the two ends arrive together while the panel springs. Clamping would pin
+/// the source to the next card's edge before the panel gets there.
+pub fn panel_aligned_source(card: ScreenRect, panel: ScreenRect) -> ScreenRect {
+    (
+        card.0,
+        panel.1 + panel.3 / 2. - POINTER_ANCHOR_SIZE / 2.,
+        card.2,
+        POINTER_ANCHOR_SIZE,
+    )
+}
+
+/// Collapse the hovered card into a 1px tall source rect centered on `anchor_y`
+/// (the pointer's Y, or the flyout's current center line), clamped to the
+/// card's vertical span. The horizontal extent stays the card's, so the
+/// connector still leaves from the card's side edge.
+pub fn pointer_anchor_rect(card: ScreenRect, pointer_y: f32) -> ScreenRect {
+    let center_y = pointer_y.clamp(card.1, card.1 + card.3);
+    (
+        card.0,
+        center_y - POINTER_ANCHOR_SIZE / 2.,
+        card.2,
+        POINTER_ANCHOR_SIZE,
+    )
+}
+
 /// Resolve the connector curve between `source_rect` and `target_rect`.
 pub fn resolve_connector(source_rect: ScreenRect, target_rect: ScreenRect) -> ConnectorGeometry {
     let mut best: Option<(f32, Anchor, Anchor)> = None;
@@ -61,61 +93,24 @@ pub fn resolve_connector(source_rect: ScreenRect, target_rect: ScreenRect) -> Co
     let source_direction = normal_for_side(source.side);
     let target_direction = normal_for_side(target.side);
     let distance = point_distance(source.point, target.point);
-    let control_distance =
-        (distance * CONTROL_RATIO).clamp(MIN_CONTROL_DISTANCE, MAX_CONTROL_DISTANCE);
+    // Never let the control points cross the midpoint between the anchors:
+    // the dock gap is narrower than MIN_CONTROL_DISTANCE, so an unclamped
+    // projection would loop the curve back on itself whenever the two ends
+    // sit at different heights.
+    let axis_gap = if source_direction.0 != 0. {
+        (target.point.0 - source.point.0).abs()
+    } else {
+        (target.point.1 - source.point.1).abs()
+    };
+    let control_distance = (distance * CONTROL_RATIO)
+        .clamp(MIN_CONTROL_DISTANCE, MAX_CONTROL_DISTANCE)
+        .min(axis_gap * 0.5);
     ConnectorGeometry {
         source: source.point,
         target: target.point,
         control1: project(source.point, source_direction, control_distance),
         control2: project(target.point, target_direction, control_distance),
     }
-}
-
-/// Linear interpolation between two connector geometries (retarget motion).
-/// The easing itself belongs to `design::motion`.
-pub fn mix_geometry(from: &ConnectorGeometry, to: &ConnectorGeometry, t: f32) -> ConnectorGeometry {
-    let t = t.clamp(0., 1.);
-    let mix_point = |a: ScreenPoint, b: ScreenPoint| (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t);
-    ConnectorGeometry {
-        source: mix_point(from.source, to.source),
-        target: mix_point(from.target, to.target),
-        control1: mix_point(from.control1, to.control1),
-        control2: mix_point(from.control2, to.control2),
-    }
-}
-
-/// Interpolate a screen rect (window-rect animation; easing from
-/// `design::motion`).
-pub fn lerp_rect(from: ScreenRect, to: ScreenRect, t: f32) -> ScreenRect {
-    let t = t.clamp(0., 1.);
-    let lerp = |a: f32, b: f32| a + (b - a) * t;
-    (
-        lerp(from.0, to.0),
-        lerp(from.1, to.1),
-        lerp(from.2, to.2),
-        lerp(from.3, to.3),
-    )
-}
-
-/// Bounding box of the given rects, inflated by `pad` on every side.
-pub fn padded_union(rects: &[ScreenRect], pad: f32) -> ScreenRect {
-    let Some(first) = rects.first() else {
-        return (0., 0., 0., 0.);
-    };
-    let (mut left, mut top, mut right, mut bottom) =
-        (first.0, first.1, first.0 + first.2, first.1 + first.3);
-    for rect in &rects[1..] {
-        left = left.min(rect.0);
-        top = top.min(rect.1);
-        right = right.max(rect.0 + rect.2);
-        bottom = bottom.max(rect.1 + rect.3);
-    }
-    (
-        left - pad,
-        top - pad,
-        (right + pad - (left - pad)).max(0.),
-        (bottom + pad - (top - pad)).max(0.),
-    )
 }
 
 fn anchor_candidates(rect: ScreenRect) -> [Anchor; 4] {
@@ -211,8 +206,8 @@ mod tests {
 
     #[test]
     fn control_distance_is_clamped_to_the_e2e_bounds() {
-        // Very close rects: distance * 0.22 < 20, so both controls sit at 20.
-        let geometry = resolve_connector(rect(0., 0., 40., 10.), rect(60., 0., 40., 10.));
+        // Wide gap, short distance: distance * 0.22 < 20, raised to 20.
+        let geometry = resolve_connector(rect(0., 0., 40., 10.), rect(100., 0., 40., 10.));
         let control_length = (geometry.control1.0 - geometry.source.0).abs();
         assert!(
             (control_length - 20.).abs() < 1e-3,
@@ -228,6 +223,17 @@ mod tests {
     }
 
     #[test]
+    fn control_points_never_cross_the_anchor_midpoint() {
+        // A 20px gap cannot host two 20px control projections: both controls
+        // stop at the midpoint instead of looping the curve back on itself.
+        let geometry = resolve_connector(rect(0., 0., 40., 10.), rect(60., 0., 40., 10.));
+        assert_eq!(geometry.source, (40., 5.));
+        assert_eq!(geometry.target, (60., 5.));
+        assert_eq!(geometry.control1.0, 50.);
+        assert_eq!(geometry.control2.0, 50.);
+    }
+
+    #[test]
     fn centered_dock_yields_a_straight_horizontal_line() {
         let card = rect(100., 200., 200., 40.);
         let top = crate::platform::preview_flyout::centered_dock_top(200., 40., 200.);
@@ -240,33 +246,34 @@ mod tests {
     }
 
     #[test]
-    fn mix_geometry_interpolates_between_two_connectors() {
-        let a = resolve_connector(rect(0., 0., 40., 10.), rect(100., 0., 40., 10.));
-        let b = resolve_connector(rect(0., 60., 40., 10.), rect(100., 60., 40., 10.));
-        // a: card at y=0 (edge mid y=5); b: card at y=60 (edge mid y=65).
-        assert!((mix_geometry(&a, &b, 0.5).source.1 - 35.).abs() < 1e-3);
-        assert!((mix_geometry(&a, &b, 0.5).target.1 - 35.).abs() < 1e-3);
-        assert_eq!(mix_geometry(&a, &b, 0.), a);
-        assert_eq!(mix_geometry(&a, &b, 1.), b);
+    fn pointer_anchor_follows_the_pointer_inside_the_card() {
+        let card = rect(100., 200., 200., 40.);
+        let anchor = pointer_anchor_rect(card, 220.);
+        assert_eq!(anchor, (100., 219.5, 200., 1.));
+        // Clamped to the card's top and bottom edges.
+        assert_eq!(pointer_anchor_rect(card, 0.).1, 199.5);
+        assert_eq!(pointer_anchor_rect(card, 1000.).1, 239.5);
+        // Horizontal extent is untouched.
+        assert_eq!(pointer_anchor_rect(card, 220.).0, 100.);
+        assert_eq!(pointer_anchor_rect(card, 220.).2, 200.);
     }
 
     #[test]
-    fn lerp_and_padded_union_cover_their_inputs() {
-        assert_eq!(
-            lerp_rect((0., 0., 10., 10.), (20., 40., 30., 50.), 0.5),
-            (10., 20., 20., 30.)
-        );
-        assert_eq!(
-            lerp_rect((0., 0., 10., 10.), (20., 40., 30., 50.), 1.),
-            (20., 40., 30., 50.)
-        );
-
-        let union = padded_union(&[(100., 100., 50., 40.), (0., 300., 10., 10.)], 8.);
-        assert_eq!(
-            union,
-            (-8., 92., 100. + 50. + 8. + 8., 300. + 10. + 8. - 92.)
-        );
-        assert_eq!(padded_union(&[], 8.), (0., 0., 0., 0.));
+    fn panel_aligned_source_keeps_both_ends_level() {
+        let card = rect(600., 200., 200., 40.);
+        let panel = rect(100., 120., 300., 200.);
+        let source = panel_aligned_source(card, panel);
+        let geometry = resolve_connector(source, panel);
+        // Both ends share the panel's center height: a straight line.
+        assert_eq!(geometry.source.1, geometry.target.1);
+        // Even when the panel's center leaves the card's span (work-area
+        // clamp, or mid-retarget over another card) the source rides along
+        // instead of snapping to the card's edge ahead of the panel.
+        let far_panel = rect(100., 900., 300., 200.);
+        let source = panel_aligned_source(card, far_panel);
+        assert_eq!(source.1, 999.5);
+        let geometry = resolve_connector(source, far_panel);
+        assert_eq!(geometry.source.1, geometry.target.1);
     }
 
     #[test]

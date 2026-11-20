@@ -173,6 +173,7 @@ impl Render for PreviewFlyoutView {
         let expanded = self.expanded.clone();
         let anim_size = self.anim_size;
         let p = Palette::current(cx);
+        let compact = self.compact.clone();
         let mut card = div()
             .absolute()
             .left(px(x))
@@ -197,7 +198,22 @@ impl Render for PreviewFlyoutView {
             // Under the transparent animated surface the compact excerpt
             // would show through the full document; it returns at rest.
             .when(expanded.is_none() || anim_size.is_none(), |card| {
-                card.child(self.compact.clone())
+                match anim_size {
+                    // Same clip-reveal contract as the expanded document: the
+                    // sheet is laid out once at its final size while the card
+                    // rect springs, so a height change between two items never
+                    // re-flows the text on every animation frame.
+                    Some((w, h)) => card.child(
+                        div()
+                            .absolute()
+                            .left(px(0.))
+                            .top(px(0.))
+                            .w(px(w))
+                            .h(px(h))
+                            .child(compact),
+                    ),
+                    None => card.child(compact),
+                }
             });
         if let Some(view) = expanded {
             let wrapper = div().absolute();

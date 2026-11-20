@@ -33,6 +33,10 @@ pub struct PreviewFlyoutTarget {
     pub prefer_right: bool,
     /// Hovered card rect in logical screen coordinates.
     pub card: Bounds<Pixels>,
+    /// Pointer Y in the main window's content space (the same space as
+    /// `card_top`). The flyout's vertical dock follows it, and the connector
+    /// source anchor rides the flyout's center line.
+    pub pointer_y: f32,
 }
 
 /// Gap between the main window and the docked standalone preview.

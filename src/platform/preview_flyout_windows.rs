@@ -120,8 +120,9 @@ impl Attachment {
         }))
     }
 
-    /// Docked compact rect for a card, in logical screen pixels. The caller
-    /// animates [`Attachment::place`] towards this target.
+    /// Docked compact rect for a source anchor, in logical screen pixels.
+    /// `card_top`/`card_height` describe the 1px pointer anchor; the caller
+    /// springs [`Attachment::place`] towards this target.
     pub fn docked_rect(
         &self,
         card_top: f32,
@@ -250,6 +251,18 @@ impl Attachment {
             hits.borrow_mut().insert(self.flyout, hit);
         });
         true
+    }
+
+    /// Work area of the main window's monitor in logical screen pixels. The
+    /// connector overlay covers it once instead of chasing every retarget.
+    pub fn work_area(&self) -> Option<LogicalRect> {
+        let (_, scale, work) = self.screen_context()?;
+        Some((
+            work.0 as f32 / scale,
+            work.1 as f32 / scale,
+            work.2 as f32 / scale,
+            work.3 as f32 / scale,
+        ))
     }
 
     /// Whether the flyout window is currently visible.

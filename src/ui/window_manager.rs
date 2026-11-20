@@ -78,16 +78,31 @@ fn screen_rect_of(bounds: &Bounds<Pixels>) -> crate::ui::preview::connector::Scr
     )
 }
 
+/// The target's 1px tall pointer anchor in logical screen pixels: the
+/// vertical center the flyout docks to. The connector derives its own source
+/// anchor from the flyout's animated rect, keeping both ends on one clock.
+fn flyout_anchor(
+    target: &PreviewFlyoutTarget,
+    card: crate::ui::preview::connector::ScreenRect,
+) -> crate::ui::preview::connector::ScreenRect {
+    let pointer_screen_y = card.1 + (target.pointer_y - target.card_top);
+    crate::ui::preview::connector::pointer_anchor_rect(card, pointer_screen_y)
+}
+
 /// One flyout rect animation, stepped once per rendered frame. Carried between
 /// `on_next_frame` callbacks; the generation token lets a retarget or hide stop
-/// the previous animation without a cancellable task handle.
+/// the previous animation without a cancellable task handle. The spring chases
+/// `target`, so a retarget only replaces the goal: position and velocity carry
+/// over and pointer motion never restarts the motion.
 struct FlyoutAnim {
     attachment: Rc<crate::platform::preview_flyout::Attachment>,
     wm: Entity<WindowManager>,
-    from: crate::platform::preview_flyout::LogicalRect,
-    to: crate::platform::preview_flyout::LogicalRect,
-    start: Instant,
-    duration: Duration,
+    target: crate::platform::preview_flyout::LogicalRect,
+    /// Shared with the WindowManager so a retarget inherits the velocity.
+    velocity: Rc<Cell<[f32; 4]>>,
+    last: Instant,
+    /// Native canvas origin seen so far; `None` until the first place.
+    canvas_origin: Option<(f32, f32)>,
     generation: Rc<Cell<u64>>,
     my_generation: u64,
 }
@@ -97,32 +112,53 @@ struct FlyoutAnim {
 /// composite land together instead of stretching a stale swapchain against a
 /// freshly resized native window (which read as jitter). The connector line is
 /// fed the same rect each step.
-fn flyout_anim_step(window: &mut Window, cx: &mut App, anim: FlyoutAnim) {
+fn flyout_anim_step(window: &mut Window, cx: &mut App, mut anim: FlyoutAnim) {
     if anim.generation.get() != anim.my_generation {
         return;
     }
-    let t =
-        (anim.start.elapsed().as_millis() as f32 / anim.duration.as_millis().max(1) as f32).min(1.);
-    let rect = crate::ui::preview::connector::lerp_rect(
-        anim.from,
-        anim.to,
-        crate::ui::design::motion::ease_move(t),
-    );
+    let Some(current) = anim.attachment.current_rect() else {
+        return;
+    };
+    let dt = anim.last.elapsed().as_secs_f32();
+    anim.last = Instant::now();
+    let target = [anim.target.0, anim.target.1, anim.target.2, anim.target.3];
+    let mut axes = [current.0, current.1, current.2, current.3];
+    let mut velocity = anim.velocity.get();
+    for (axis, value) in axes.iter_mut().enumerate() {
+        let (x, v) =
+            crate::ui::design::motion::spring_step(*value, velocity[axis], target[axis], dt);
+        *value = x;
+        velocity[axis] = v;
+    }
+    let settled = (0..4).all(|axis| {
+        crate::ui::design::motion::spring_settled(axes[axis], velocity[axis], target[axis])
+    });
+    let rect = if settled {
+        anim.velocity.set([0.; 4]);
+        anim.target
+    } else {
+        anim.velocity.set(velocity);
+        (axes[0], axes[1], axes[2], axes[3])
+    };
     if !anim.attachment.place(rect) {
         return;
     }
-    // The first place creates the work-area canvas; its re-entrant `WM_SIZE`
-    // bounds callback is skipped while the App is borrowed here, so sync the
-    // viewport explicitly before the draw that follows.
-    window.bounds_changed(cx);
     let origin = anim.attachment.canvas_origin().unwrap_or((rect.0, rect.1));
+    if anim.canvas_origin != Some(origin) {
+        anim.canvas_origin = Some(origin);
+        // The first place creates the work-area canvas; its re-entrant
+        // `WM_SIZE` bounds callback is skipped while the App is borrowed here,
+        // so sync the viewport explicitly before the draw that follows. Later
+        // frames keep the same canvas and skip the redundant relayout.
+        window.bounds_changed(cx);
+    }
     if let Some(view) = anim.wm.read(cx).preview_flyout_view.clone() {
         view.update(cx, |view, cx| view.set_card_screen_rect(origin, rect, cx));
     }
     if let Some(connector) = anim.wm.read(cx).preview_connector_view.clone() {
         connector.update(cx, |view, cx| view.set_target_rect(rect, cx));
     }
-    if t >= 1. {
+    if settled {
         // Hand the frame back to the settled card's content view.
         if let Some(view) = anim.wm.read(cx).preview_flyout_view.clone() {
             view.update(cx, |view, cx| view.set_anim_size(None, cx));
@@ -711,6 +747,9 @@ pub struct WindowManager {
     /// so the previous frame-stepped callback stops instead of fighting the new
     /// one. The animation runs on `on_next_frame`, not a free-running timer.
     preview_flyout_anim_gen: Rc<Cell<u64>>,
+    /// Flyout spring velocity, shared across retargets so the motion never
+    /// restarts while the pointer moves between (or within) cards.
+    preview_flyout_spring_velocity: Rc<Cell<[f32; 4]>>,
     _preview_flyout_closed_subscription: Option<Subscription>,
     // --- Card → flyout connector overlay (click-through) ---
     preview_connector_window: Option<AnyWindowHandle>,
@@ -718,6 +757,9 @@ pub struct WindowManager {
     preview_connector_overlay: Option<Rc<crate::platform::preview_overlay::Overlay>>,
     /// In-flight connector overlay placement (native window move).
     preview_connector_place_task: Option<Task<()>>,
+    /// Band the connector overlay currently covers; `None` while hidden.
+    /// Retargets skip the native move unless this changes.
+    preview_connector_region: Option<crate::ui::preview::connector::ScreenRect>,
     // --- Monitor topology cache (issue-75 P2, Windows only) ---
     /// Last seen monitor snapshot; compared every 200 ms poll to detect
     /// topology / work-area changes (04-spec C1). Seeded on the first poll
@@ -940,11 +982,13 @@ impl WindowManager {
             preview_flyout_expanded: false,
             preview_flyout_native: None,
             preview_flyout_anim_gen: Rc::new(Cell::new(0)),
+            preview_flyout_spring_velocity: Rc::new(Cell::new([0.; 4])),
             _preview_flyout_closed_subscription: None,
             preview_connector_window: None,
             preview_connector_view: None,
             preview_connector_overlay: None,
             preview_connector_place_task: None,
+            preview_connector_region: None,
             #[cfg(target_os = "windows")]
             last_monitor_snapshot: None,
             #[cfg(target_os = "windows")]
@@ -5034,8 +5078,9 @@ impl WindowManager {
     // --- Native hover preview flyout ---
 
     /// Show (or retarget) the hover flyout in its own non-activating window.
-    /// Retargeting while the flyout is visible animates the window rect from
-    /// its current position to the new card (EcoPaste-style panel motion).
+    /// Retargeting while the flyout is visible springs the window rect towards
+    /// the pointer-anchored dock, so the panel and the connector line glide
+    /// after the pointer instead of jumping between card centers.
     pub fn show_preview_flyout(&mut self, target: &PreviewFlyoutTarget, cx: &mut Context<Self>) {
         // The list defers this call out of render; the pointer may have left
         // and hidden the panel in the meantime.
@@ -5076,18 +5121,19 @@ impl WindowManager {
         let Some(attachment) = self.preview_flyout_attachment.clone() else {
             return;
         };
+        let card = screen_rect_of(&target.card);
+        let anchor = flyout_anchor(target, card);
         let Some(docked) = attachment.docked_rect(
-            target.card_top,
-            f32::from(target.card.size.height),
+            target.card_top + (anchor.1 - card.1),
+            anchor.3,
             f32::from(target.size.width),
             f32::from(target.size.height),
             target.prefer_right,
         ) else {
             return;
         };
-        // The first show jumps into place; every retarget slides.
+        // The first show jumps into place; every retarget springs.
         let animate = attachment.is_shown();
-        let card = screen_rect_of(&target.card);
         self.update_connector(Some(card), docked, animate, cx);
         self.animate_flyout_to(docked, animate, cx);
     }
@@ -5116,9 +5162,11 @@ impl WindowManager {
             self.hide_preview_flyout(cx);
             return;
         };
+        let card = screen_rect_of(&target.card);
+        let anchor = flyout_anchor(target, card);
         let Some(docked) = attachment.docked_rect(
-            target.card_top,
-            f32::from(target.card.size.height),
+            target.card_top + (anchor.1 - card.1),
+            anchor.3,
             f32::from(target.size.width),
             f32::from(target.size.height),
             target.prefer_right,
@@ -5130,8 +5178,7 @@ impl WindowManager {
         if let Some(view) = &self.preview_flyout_view {
             view.update(cx, |view, cx| view.collapse(cx));
         }
-        let card = screen_rect_of(&target.card);
-        self.update_connector(Some(card), docked, false, cx);
+        self.update_connector(Some(card), docked, true, cx);
         self.animate_flyout_to(docked, true, cx);
     }
 
@@ -5178,15 +5225,15 @@ impl WindowManager {
         view.update(cx, |view, cx| view.expand(item, cx));
         // Cover the connector overlay for the whole animated region, then let
         // the animation feed the flyout rect frame by frame.
-        self.update_connector(None, expanded, false, cx);
+        self.update_connector(None, expanded, true, cx);
         self.animate_flyout_to(expanded, true, cx);
     }
 
-    /// Move the flyout card to `to`, animating over the design
-    /// system's fast motion when `animate` is requested (and motion is not
-    /// reduced). The card advances once per rendered frame (see
-    /// [`flyout_anim_step`]) inside the fixed native canvas, so the grow/shrink
-    /// stays smooth and glued to the connector line.
+    /// Move the flyout card to `to`, springing towards it when `animate` is
+    /// requested (and motion is not reduced). The card advances once per
+    /// rendered frame (see [`flyout_anim_step`]) inside the fixed native
+    /// canvas, so the grow/shrink stays smooth and glued to the connector
+    /// line. A retarget while the spring is running only swaps the goal.
     fn animate_flyout_to(
         &mut self,
         to: crate::platform::preview_flyout::LogicalRect,
@@ -5206,7 +5253,9 @@ impl WindowManager {
         let my_generation = generation.get().wrapping_add(1);
         generation.set(my_generation);
 
-        if !animate || from == to || cx.reduce_motion() {
+        let resting = from == to && self.preview_flyout_spring_velocity.get() == [0.; 4];
+        if !animate || resting || cx.reduce_motion() {
+            self.preview_flyout_spring_velocity.set([0.; 4]);
             if attachment.place(to) {
                 let origin = attachment.canvas_origin().unwrap_or((to.0, to.1));
                 if let Some(view) = self.preview_flyout_view.clone() {
@@ -5222,16 +5271,19 @@ impl WindowManager {
                     window.bounds_changed(cx);
                 });
             }
+            if let Some(connector) = self.preview_connector_view.clone() {
+                connector.update(cx, |view, cx| view.set_target_rect(to, cx));
+            }
             return;
         }
 
         let anim = FlyoutAnim {
             attachment,
             wm: cx.entity(),
-            from,
-            to,
-            start: Instant::now(),
-            duration: crate::ui::design::motion::fast(),
+            target: to,
+            velocity: self.preview_flyout_spring_velocity.clone(),
+            last: Instant::now(),
+            canvas_origin: None,
             generation,
             my_generation,
         };
@@ -5250,10 +5302,15 @@ impl WindowManager {
         if let Some(overlay) = &self.preview_connector_overlay {
             overlay.hide();
         }
+        self.preview_connector_region = None;
     }
 
-    /// Reposition the connector overlay window over the union of the card,
-    /// the flyout's current rect and the target rect, then retarget the line.
+    /// Retarget the connector line. The overlay is a vertical band spanning
+    /// the card and the flyout (full work-area height, x padded for the
+    /// bezier's bulge). The band only ever grows, so pointer retargets merely
+    /// update view state: moving/resizing the transparent native window per
+    /// mouse move rebuilt its swapchain and read as stutter, while a full
+    /// work-area surface paid the composite cost on every frame.
     fn update_connector(
         &mut self,
         card: Option<crate::ui::preview::connector::ScreenRect>,
@@ -5264,29 +5321,42 @@ impl WindowManager {
         if !self.ensure_connector_window(cx) {
             return;
         }
-        let mut cover = Vec::new();
-        if let Some(attachment) = &self.preview_flyout_attachment {
-            if attachment.is_shown() {
-                cover.extend(attachment.current_rect());
-            }
-        }
-        if let Some(view) = &self.preview_connector_view {
-            cover.extend(view.read(cx).source_rect());
-        }
+        let Some(attachment) = self.preview_flyout_attachment.clone() else {
+            return;
+        };
+        let Some(work) = attachment.work_area() else {
+            return;
+        };
+        let pad = crate::ui::preview::connector::OVERLAY_PAD;
+        let (mut left, mut right) = (target.0, target.0 + target.2);
         if let Some(card) = card {
-            cover.push(card);
+            left = left.min(card.0);
+            right = right.max(card.0 + card.2);
         }
-        cover.push(target);
-        let region = crate::ui::preview::connector::padded_union(
-            &cover,
-            crate::ui::preview::connector::OVERLAY_PAD,
-        );
-        let origin = (region.0, region.1);
+        if let Some(current) = attachment.current_rect() {
+            left = left.min(current.0);
+            right = right.max(current.0 + current.2);
+        }
+        let need = (left - pad, work.1, right - left + 2. * pad, work.3);
+        let region = match self.preview_connector_region {
+            // Grow-only within the same work area; a monitor/DPI change
+            // rebuilds the band from the current need.
+            Some(old) if old.1 == work.1 && old.3 == work.3 => {
+                let left = old.0.min(need.0);
+                let right = (old.0 + old.2).max(need.0 + need.2);
+                (left, old.1, right - left, old.3)
+            }
+            _ => need,
+        };
         if let Some(view) = &self.preview_connector_view {
             view.update(cx, |view, cx| {
-                view.retarget(origin, card, target, animate, cx)
+                view.retarget((region.0, region.1), card, target, animate, cx)
             });
         }
+        if self.preview_connector_region == Some(region) {
+            return;
+        }
+        self.preview_connector_region = Some(region);
         // Place the overlay window outside any App borrow (SetWindowPos
         // re-enters GPUI's WndProc synchronously), then refresh so GPUI lays
         // out the view at the new window size.
@@ -5542,6 +5612,7 @@ impl WindowManager {
     fn cancel_flyout_anim(&mut self) {
         let gen = self.preview_flyout_anim_gen.get().wrapping_add(1);
         self.preview_flyout_anim_gen.set(gen);
+        self.preview_flyout_spring_velocity.set([0.; 4]);
     }
 
     fn main_native_handle(&self) -> Option<isize> {

@@ -68,10 +68,10 @@ impl Attachment {
         Ok(Rc::new(Self { main, flyout }))
     }
 
-    /// Docked compact rect for a card, in logical screen pixels (top-left
-    /// origin). The caller animates [`Attachment::place`] towards this
-    /// target. Returns `None` while the main window is hidden or
-    /// miniaturized.
+    /// Docked compact rect for a source anchor, in logical screen pixels
+    /// (top-left origin). `card_top`/`card_height` describe the 1px pointer
+    /// anchor; the caller springs [`Attachment::place`] towards this target.
+    /// Returns `None` while the main window is hidden or miniaturized.
     pub fn docked_rect(
         &self,
         card_top: f32,
@@ -158,6 +158,28 @@ impl Attachment {
             primary_height as f32 - (y + height as f64) as f32,
             width,
             height,
+        ))
+    }
+
+    /// Work area of the main window's screen in logical screen pixels
+    /// (top-left origin). The connector overlay covers it once instead of
+    /// chasing every retarget.
+    pub fn work_area(&self) -> Option<LogicalRect> {
+        let screen = self.main.screen()?;
+        let visible = screen.visibleFrame();
+        let primary_height = monitor::primary_screen_height()?;
+        let work = monitor::cocoa_rect_to_top_left(
+            primary_height,
+            visible.origin.x,
+            visible.origin.y,
+            visible.size.width,
+            visible.size.height,
+        );
+        Some((
+            work.x as f32,
+            work.y as f32,
+            work.width as f32,
+            work.height as f32,
         ))
     }
 

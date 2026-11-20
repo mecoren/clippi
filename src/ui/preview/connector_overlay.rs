@@ -7,20 +7,20 @@
 //!
 //! Coordinates: everything the view receives is logical **screen** pixels;
 //! `origin` (the overlay window's top-left) translates into window-local
-//! paint coordinates. Retargets animate over `design::motion`'s fast easing;
-//! the flyout-window rect animation feeds `set_target_rect` frame by frame.
-
-use std::time::{Duration, Instant};
+//! paint coordinates. The view owns no animation of its own: the flyout
+//! spring feeds the panel rect frame by frame, and the source anchor rides
+//! the panel's center line (unclamped, so it never snaps ahead to the next
+//! card). Both ends share one clock and one height, so the line stays a
+//! straight, steady segment that arrives at both ends together.
 
 use gpui::{
     canvas, div, point, px, Context, EventEmitter, IntoElement, ParentElement, PathBuilder, Pixels,
-    Render, Styled, Task, Window,
+    Render, Styled, Window,
 };
 
-use crate::ui::design::motion;
 use crate::ui::design::palette::Palette;
 use crate::ui::preview::connector::{
-    mix_geometry, resolve_connector, ConnectorGeometry, ScreenPoint, ScreenRect,
+    panel_aligned_source, resolve_connector, ConnectorGeometry, ScreenPoint, ScreenRect,
 };
 
 /// Line stroke width in logical pixels (EcoPaste `strokeWidth="2"`).
@@ -38,52 +38,42 @@ impl EventEmitter<PreviewConnectorEvent> for PreviewConnectorView {}
 pub struct PreviewConnectorView {
     /// Overlay window top-left in logical screen coordinates.
     origin: ScreenPoint,
-    /// Hovered card rect in logical screen coordinates.
-    source_rect: Option<ScreenRect>,
-    /// Current flyout rect in logical screen coordinates.
+    /// Hovered card rect; the source anchor slides along its side edge.
+    card: Option<ScreenRect>,
+    /// Current flyout rect in logical screen coordinates, fed frame by frame
+    /// by the flyout spring.
     target_rect: Option<ScreenRect>,
-    /// Geometry currently displayed (`None` while hidden).
-    displayed: Option<ConnectorGeometry>,
-    /// Retarget animation: geometry at start + start time. The target is
-    /// always re-derived from the current state, so mid-flight target updates
-    /// (the flyout window animating) are chased instead of restarting.
-    anim: Option<(ConnectorGeometry, Instant)>,
-    _anim_task: Option<Task<()>>,
 }
 
 impl PreviewConnectorView {
     pub fn new(_cx: &mut Context<Self>) -> Self {
         Self {
             origin: (0., 0.),
-            source_rect: None,
+            card: None,
             target_rect: None,
-            displayed: None,
-            anim: None,
-            _anim_task: None,
         }
     }
 
-    pub fn source_rect(&self) -> Option<ScreenRect> {
-        self.source_rect
-    }
-
-    /// Full retarget: the overlay window moved (`origin`) and/or the source
-    /// card / target panel changed. `animate` interpolates from the currently
-    /// displayed line; the first show snaps.
+    /// Full retarget: the overlay window moved (`origin`) and/or the hovered
+    /// card changed. While the flyout springs (`animate`), its frames feed the
+    /// target rect — snapping to the goal here would draw one frame at the
+    /// destination before the animation's first step arrives.
     pub fn retarget(
         &mut self,
         origin: ScreenPoint,
-        source_rect: Option<ScreenRect>,
+        card: Option<ScreenRect>,
         target_rect: ScreenRect,
         animate: bool,
         cx: &mut Context<Self>,
     ) {
         self.origin = origin;
-        if let Some(rect) = source_rect {
-            self.source_rect = Some(rect);
+        if let Some(card) = card {
+            self.card = Some(card);
         }
-        self.target_rect = Some(target_rect);
-        self.apply(animate, cx);
+        if !animate || self.target_rect.is_none() {
+            self.target_rect = Some(target_rect);
+        }
+        cx.notify();
     }
 
     /// The flyout window rect changed (animation step or programmatic move).
@@ -93,80 +83,28 @@ impl PreviewConnectorView {
             return;
         }
         self.target_rect = Some(target_rect);
-        self.apply(false, cx);
+        cx.notify();
     }
 
     pub fn hide(&mut self, cx: &mut Context<Self>) {
-        self.displayed = None;
-        self.anim = None;
-        self._anim_task = None;
-        self.source_rect = None;
+        self.card = None;
         self.target_rect = None;
         cx.notify();
     }
 
-    fn apply(&mut self, animate: bool, cx: &mut Context<Self>) {
-        let derived = self.derived_geometry();
-        let Some(derived) = derived else {
-            self.displayed = None;
-            self.anim = None;
-            self._anim_task = None;
-            cx.notify();
-            return;
-        };
-        let animate = animate && self.displayed.is_some() && !cx.reduce_motion();
-        if animate {
-            self.anim = Some((self.displayed.unwrap_or(derived), Instant::now()));
-            self.start_anim_task(cx);
-        } else {
-            self.anim = None;
-        }
-        self.displayed = Some(derived);
-        cx.notify();
-    }
-
-    fn start_anim_task(&mut self, cx: &mut Context<Self>) {
-        let task = cx.spawn(async move |this, cx| loop {
-            cx.background_executor()
-                .timer(Duration::from_millis(15))
-                .await;
-            let keep = this.update(cx, |view, cx| {
-                let Some((_, start)) = view.anim else {
-                    return false;
-                };
-                if start.elapsed() >= motion::fast() {
-                    view.anim = None;
-                }
-                cx.notify();
-                view.anim.is_some()
-            });
-            if !matches!(keep, Ok(true)) {
-                break;
-            }
-        });
-        self._anim_task = Some(task);
-    }
-
     fn derived_geometry(&self) -> Option<ConnectorGeometry> {
-        let source = self.source_rect?;
+        let card = self.card?;
         let target = self.target_rect?;
-        Some(resolve_connector(source, target))
-    }
-
-    /// Geometry for the current frame: the derived target mixed from the
-    /// animation's starting line while the retarget animation runs.
-    fn display_geometry(&self) -> Option<ConnectorGeometry> {
-        let derived = self.derived_geometry()?;
-        let (from, start) = self.anim?;
-        let total = motion::fast().as_millis().max(1) as f32;
-        let t = (start.elapsed().as_millis() as f32 / total).min(1.);
-        Some(mix_geometry(&from, &derived, motion::ease_move(t)))
+        Some(resolve_connector(
+            panel_aligned_source(card, target),
+            target,
+        ))
     }
 }
 
 impl Render for PreviewConnectorView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(geometry) = self.display_geometry().or(self.derived_geometry()) else {
+        let Some(geometry) = self.derived_geometry() else {
             return div();
         };
         let origin = self.origin;
