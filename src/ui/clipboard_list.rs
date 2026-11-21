@@ -4,8 +4,13 @@
 //! --- of clipboard items with dynamic card heights (68— 28px). ---
 
 use crate::ui::font::fs;
+use chrono::{DateTime, Utc};
 use std::time::Instant;
-use std::{cell::Cell, collections::HashSet, rc::Rc};
+use std::{
+    cell::Cell,
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
@@ -440,6 +445,20 @@ pub struct ClipboardListView {
     /// setting changes, this differs from the live `font::scale()` and the
     /// cached heights are recomputed on the next refresh.
     sizes_font_scale: f32,
+    /// Per-row heights keyed by item id, stamped with the `updated_at` they
+    /// were computed from.
+    ///
+    /// `estimate_card_height` parses each row's `rich_data` (and `file_data`
+    /// for file rows), so recomputing every row on each `set_items` made a
+    /// keyword keystroke parse the whole result page a second time right after
+    /// the database scan had already parsed it. A row's height only depends on
+    /// its content, the height mode and the font scale, and `updated_at` moves
+    /// whenever the content is rewritten.
+    height_cache: HashMap<i64, (DateTime<Utc>, f32)>,
+    /// Height mode `height_cache` was built for.
+    height_cache_mode: String,
+    /// Font scale `height_cache` was built for.
+    height_cache_scale: f32,
     scroll_handle: VirtualListScrollHandle,
     wheel_scroll: SmoothScroll,
     focus_handle: FocusHandle,
@@ -554,6 +573,9 @@ impl ClipboardListView {
             item_sizes,
             card_height_mode,
             sizes_font_scale: crate::ui::font::scale(),
+            height_cache: HashMap::new(),
+            height_cache_mode: String::new(),
+            height_cache_scale: 0.0,
             scroll_handle,
             wheel_scroll,
             focus_handle: cx.focus_handle(),
@@ -629,7 +651,10 @@ impl ClipboardListView {
         self.pending_images = self.state.read(cx).pending_images.clone();
         let combined = self.combined_with_pending(items);
         self.toolbar_bounds.set(None);
-        self.item_sizes = Rc::new(Self::compute_sizes(&combined, &self.card_height_mode));
+        self.prepare_height_cache();
+        let heights =
+            resolve_row_heights(&mut self.height_cache, &combined, &self.card_height_mode);
+        self.item_sizes = Rc::new(sizes_from_heights(&heights));
         self.sizes_font_scale = crate::ui::font::scale();
         // --- Persist current selection before swap (survives empty-item clears ---
         // --- during window hide, when hide() emits ClipboardChanged).         ---
@@ -773,7 +798,10 @@ impl ClipboardListView {
         self.pending_images = self.state.read(cx).pending_images.clone();
         let combined = self.combined_with_pending(app_items);
         self.toolbar_bounds.set(None);
-        self.item_sizes = Rc::new(Self::compute_sizes(&combined, &self.card_height_mode));
+        self.prepare_height_cache();
+        let heights =
+            resolve_row_heights(&mut self.height_cache, &combined, &self.card_height_mode);
+        self.item_sizes = Rc::new(sizes_from_heights(&heights));
         self.sizes_font_scale = crate::ui::font::scale();
 
         // Capture the previous interaction positions by stable item ID before
@@ -994,7 +1022,10 @@ impl ClipboardListView {
         if self.card_height_mode != card_height_mode || scale_changed {
             self.card_height_mode = card_height_mode;
             self.toolbar_bounds.set(None);
-            self.item_sizes = Rc::new(Self::compute_sizes(&self.items, &self.card_height_mode));
+            self.prepare_height_cache();
+            let heights =
+                resolve_row_heights(&mut self.height_cache, &self.items, &self.card_height_mode);
+            self.item_sizes = Rc::new(sizes_from_heights(&heights));
             self.sizes_font_scale = crate::ui::font::scale();
         }
         if scroll_to_top && !self.items.is_empty() {
@@ -3344,25 +3375,71 @@ impl ClipboardListView {
     }
 
     fn compute_sizes(items: &[ClipboardItem], mode: &str) -> Vec<Size<Pixels>> {
-        let mut sizes: Vec<_> = items
-            .iter()
-            .map(|item| {
-                // estimate_card_height is already scaled; scale the inter-row
-                // gap too so the whole list zooms proportionally.
-                let h = estimate_card_height(item, mode) + sx(CLIPBOARD_ROW_VERTICAL_SPACE);
-                size(px(308.), px(h))
-            })
-            .collect();
-        // Append a sentinel spacer so the last real item can scroll fully into view.
-        // The render callback's `filter_map` (via `this.items.get(i)`) returns None
-        // for this out-of-bounds index, so nothing visible is painted — just empty
-        // --- scrollable space. This avoids inflating the last card's visual height ---
-        // --- when there are only a few items in the list. ---
-        if !sizes.is_empty() {
-            sizes.push(size(px(308.), px(sx(CLIPBOARD_BOTTOM_SCROLL_INSET))));
-        }
-        sizes
+        let heights = resolve_row_heights(&mut HashMap::new(), items, mode);
+        sizes_from_heights(&heights)
     }
+
+    /// Drop cached heights that can no longer be valid: a change of height mode
+    /// or font scale invalidates all of them, and rows that left the view would
+    /// otherwise accumulate for as long as the session lasts.
+    fn prepare_height_cache(&mut self) {
+        let scale = crate::ui::font::scale();
+        if self.height_cache_mode != self.card_height_mode || self.height_cache_scale != scale {
+            self.height_cache.clear();
+            self.height_cache_mode.clone_from(&self.card_height_mode);
+            self.height_cache_scale = scale;
+        }
+        if self.height_cache.len() > self.items.len().saturating_mul(2).max(512) {
+            let live: HashSet<i64> = self.items.iter().map(|item| item.id).collect();
+            self.height_cache.retain(|id, _| live.contains(id));
+        }
+    }
+}
+
+/// One card height per item, reusing `cache` entries whose `updated_at` still
+/// matches the row.
+///
+/// Split out of the view so the reuse rule can be tested without a gpui
+/// context. `estimate_card_height` is the expensive part: it parses the row's
+/// `rich_data` (and `file_data`).
+fn resolve_row_heights(
+    cache: &mut HashMap<i64, (DateTime<Utc>, f32)>,
+    items: &[ClipboardItem],
+    mode: &str,
+) -> Vec<f32> {
+    let mut heights = Vec::with_capacity(items.len());
+    for item in items {
+        let height = match cache.get(&item.id) {
+            Some((stamp, height)) if *stamp == item.updated_at => *height,
+            _ => {
+                let height = estimate_card_height(item, mode);
+                cache.insert(item.id, (item.updated_at, height));
+                height
+            }
+        };
+        heights.push(height);
+    }
+    heights
+}
+
+fn sizes_from_heights(heights: &[f32]) -> Vec<Size<Pixels>> {
+    let mut sizes: Vec<_> = heights
+        .iter()
+        .map(|h| {
+            // estimate_card_height is already scaled; scale the inter-row gap
+            // too so the whole list zooms proportionally.
+            size(px(308.), px(h + sx(CLIPBOARD_ROW_VERTICAL_SPACE)))
+        })
+        .collect();
+    // Append a sentinel spacer so the last real item can scroll fully into view.
+    // The render callback's `filter_map` (via `this.items.get(i)`) returns None
+    // for this out-of-bounds index, so nothing visible is painted — just empty
+    // --- scrollable space. This avoids inflating the last card's visual height ---
+    // --- when there are only a few items in the list. ---
+    if !sizes.is_empty() {
+        sizes.push(size(px(308.), px(sx(CLIPBOARD_BOTTOM_SCROLL_INSET))));
+    }
+    sizes
 }
 
 /// Render the in-memory pending image placeholders using the same image card
@@ -3407,20 +3484,31 @@ fn pointer_hover_index(
         - px(CLIPBOARD_SCROLLBAR_WIDTH))
     .max(px(0.));
     for (index, size) in sizes.iter().take(item_count).enumerate() {
-        let card = Bounds::new(
-            point(card_left, top + px(4.)),
-            gpui::size(card_width, (size.height - px(8.)).max(px(0.))),
-        );
-        if previous == Some(index)
-            && card.bottom() > viewport.top()
-            && card.top() < viewport.bottom()
-        {
-            previous_card = Some(card);
-        }
-        if viewport.contains(&pointer) && card.contains(&pointer) {
-            pointed_row = Some(index);
+        let row_top = top + px(4.);
+        let row_height = (size.height - px(8.)).max(px(0.));
+        let row_bottom = row_top + row_height;
+        // Only rows that intersect the viewport can hold the pointer, so the
+        // per-row geometry is built for those alone. Everything else still
+        // advances `top`, which is what keeps the offsets of later rows right.
+        let row_in_view = row_bottom > viewport.top() && row_top < viewport.bottom();
+        if row_in_view || previous == Some(index) {
+            let card = Bounds::new(
+                point(card_left, row_top),
+                gpui::size(card_width, row_height),
+            );
+            if previous == Some(index) && row_in_view {
+                previous_card = Some(card);
+            }
+            if row_in_view && viewport.contains(&pointer) && card.contains(&pointer) {
+                pointed_row = Some(index);
+            }
         }
         top += size.height;
+        // Rows below the viewport are further down still: the pointer cannot be
+        // on them, so stop instead of walking the whole history on every move.
+        if row_top >= viewport.bottom() {
+            break;
+        }
     }
     // Keep a full-card-width corridor between the card and its tabs. A narrow
     // toolbar-only hit area drops hover when approaching the first tab diagonally.
@@ -3758,6 +3846,17 @@ impl Render for ClipboardListView {
                             move |this, range, window, cx| {
                                 this.refresh_pointer_hover(window, cx);
                                 let selected_count = this.selected_count;
+                                // One pass for the whole visible range. Both the
+                                // selected test and the badge order used to scan
+                                // `selected_ids` once per row, so a Ctrl+A with a
+                                // long history cost O(visible rows × selection)
+                                // on every frame.
+                                let selection_order_by_id: HashMap<i64, usize> = this
+                                    .selected_ids
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(order, id)| (*id, order + 1))
+                                    .collect();
                                 let can_merge_selection =
                                     this.state.read(cx).can_merge_selected_items();
                                 let hovered_index = this.hovered_index;
@@ -3798,8 +3897,8 @@ impl Render for ClipboardListView {
                                                 .as_ref()
                                                 .is_some_and(|menu_item| menu_item.id == item_id);
                                         let inline_locked = inline_locked_item_id == Some(item_id);
-                                        let selected =
-                                            inline_locked || this.selected_ids.contains(&item_id);
+                                        let selected = inline_locked
+                                            || selection_order_by_id.contains_key(&item_id);
                                         let is_hovered = inline_locked_item_id.is_none()
                                             && hovered_index == Some(i);
                                         let list_view = list_entity.clone();
@@ -3842,12 +3941,8 @@ impl Render for ClipboardListView {
                                         let list_for_note_commit = list_entity.clone();
 
                                         // Compute 1-based selection order for badge display
-                                        let selection_order = this
-                                            .selected_ids
-                                            .iter()
-                                            .position(|&id| id == item_id)
-                                            .map(|p| p + 1)
-                                            .unwrap_or(0);
+                                        let selection_order =
+                                            selection_order_by_id.get(&item_id).copied().unwrap_or(0);
 
                                         Some(
                                             div()
@@ -4163,10 +4258,50 @@ mod tests {
     use super::{
         can_incrementally_sync_usage, classify_card_modifier, collect_selectable_ids, item_id_at,
         item_index, item_is_pending, pointer_hover_index, reorder_usage_pairs,
-        resolve_card_click_action, CardClickAction, CardModifier, PasteClickMode,
+        resolve_card_click_action, resolve_row_heights, CardClickAction, CardModifier,
+        PasteClickMode,
     };
     use crate::core::types::{ClipboardItem, ContentType};
     use gpui::{point, px, size, Bounds, Modifiers, Pixels};
+
+    #[test]
+    fn cached_height_is_reused_while_the_row_is_unchanged() {
+        let item = ClipboardItem::new_text(
+            7,
+            "hello",
+            ContentType::PlainText,
+            Option::None,
+            Option::None,
+        );
+        let mut cache = std::collections::HashMap::new();
+        cache.insert(7, (item.updated_at, 4242.0));
+
+        let heights = resolve_row_heights(&mut cache, std::slice::from_ref(&item), "auto");
+
+        // The sentinel height only survives if the parse was skipped entirely.
+        assert_eq!(heights, vec![4242.0]);
+    }
+
+    #[test]
+    fn stale_height_entry_is_recomputed_after_the_row_changes() {
+        let mut item = ClipboardItem::new_text(
+            7,
+            "hello",
+            ContentType::PlainText,
+            Option::None,
+            Option::None,
+        );
+        let stale = item.updated_at - chrono::Duration::days(1);
+        item.updated_at += chrono::Duration::days(1);
+        let mut cache = std::collections::HashMap::new();
+        cache.insert(7, (stale, 4242.0));
+
+        let heights = resolve_row_heights(&mut cache, std::slice::from_ref(&item), "auto");
+
+        assert_ne!(heights[0], 4242.0);
+        assert_eq!(cache[&7].0, item.updated_at);
+        assert_eq!(cache[&7].1, heights[0]);
+    }
 
     #[test]
     fn pointer_hover_follows_stationary_mouse_after_scroll() {
