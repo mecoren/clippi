@@ -7622,14 +7622,18 @@ impl WindowManager {
 
         // 4. Periodic check: use the software update frequency and persist
         // attempt time, so offline restarts do not repeatedly surface errors.
-        let settings = self.state.read(cx).settings.clone();
-        if settings.auto_check_updates
-            && !self.update_check_running.load(Ordering::Acquire)
-            && update::scheduled_update_check_due(
-                &settings.update_last_check_at,
-                chrono::Utc::now(),
-            )
-        {
+        // The due check borrows the two fields it needs instead of cloning the
+        // whole settings snapshot on every 200 ms tick.
+        let update_due = {
+            let settings = &self.state.read(cx).settings;
+            settings.auto_check_updates
+                && !self.update_check_running.load(Ordering::Acquire)
+                && update::scheduled_update_check_due(
+                    &settings.update_last_check_at,
+                    chrono::Utc::now(),
+                )
+        };
+        if update_due {
             self.start_scheduled_update_check(cx);
         }
     }
@@ -7865,24 +7869,39 @@ impl WindowManager {
             self.maintenance_retry_after = None;
         }
 
-        let settings = self.state.read(cx).settings.clone();
-        let transfer_available = self.state.read(cx).transfer_available();
-        let interval = settings.cleanup_interval.as_str();
-        let retention_days = settings.retention_days;
+        // Due checks read a handful of fields; the full snapshot is only cloned
+        // once a job is actually going to run.
         let today = chrono::Local::now().date_naive();
-        let cache_needed = cache_cleanup_due(interval, &settings.cleanup_last_date, today);
-        let retention_needed =
-            retention_cleanup_due(retention_days, &settings.retention_cleanup_last_date, today);
-        let transfer_needed = transfer_cleanup_due(
-            transfer_available,
-            settings.transfer_retention_days,
-            &settings.transfer_cleanup_last_date,
-            today,
-        );
+        let (cache_needed, retention_needed, transfer_needed) = {
+            let state = self.state.read(cx);
+            let settings = &state.settings;
+            (
+                cache_cleanup_due(
+                    settings.cleanup_interval.as_str(),
+                    &settings.cleanup_last_date,
+                    today,
+                ),
+                retention_cleanup_due(
+                    settings.retention_days,
+                    &settings.retention_cleanup_last_date,
+                    today,
+                ),
+                transfer_cleanup_due(
+                    state.transfer_available(),
+                    settings.transfer_retention_days,
+                    &settings.transfer_cleanup_last_date,
+                    today,
+                ),
+            )
+        };
 
         if !cache_needed && !retention_needed && !transfer_needed {
             return;
         }
+
+        let settings = self.state.read(cx).settings.clone();
+        let interval = settings.cleanup_interval.as_str();
+        let retention_days = settings.retention_days;
 
         if transfer_needed {
             let daily_marker = today.format("%Y-%m-%d").to_string();
