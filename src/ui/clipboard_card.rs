@@ -47,10 +47,14 @@ use super::hover_toolbar::{
 use super::rich_preview::{self, StyledHtmlSpan};
 use super::search_highlight;
 
-type CardClickHandler = Rc<dyn Fn(usize, Modifiers, &mut Window, &mut App)>;
+type CardClickHandler = Rc<dyn Fn(usize, Modifiers, Point<Pixels>, &mut Window, &mut App)>;
+/// 按住左键移动：判断是否已成拖出（参数是卡片下标与当前指针位置）。
+type CardDragHandler = Rc<dyn Fn(usize, Point<Pixels>, &mut Window, &mut App)>;
 type CardDoubleClickHandler = Rc<dyn Fn(usize, Modifiers, &mut Window, &mut App)>;
 type CardActionHandler = Rc<dyn Fn(&str, &mut Window, &mut App)>;
-type CardMoreHandler = Rc<dyn Fn(Point<Pixels>, &mut Window, &mut App)>;
+type CardMoreHandler = Rc<dyn Fn(&'static str, Point<Pixels>, &mut Window, &mut App)>;
+/// 中键动作：参数是卡片在列表里的下标。
+type CardMiddleClickHandler = Rc<dyn Fn(usize, &mut Window, &mut App)>;
 type CardWindowHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 type CardFormatHandler = Rc<dyn Fn(HotkeyPasteFormat, &mut Window, &mut App)>;
 
@@ -1374,10 +1378,10 @@ impl ClipboardCard {
         self
     }
 
-    /// 三点按钮被点击：参数是点击位置（窗口坐标）。
+    /// 弹出菜单按钮被点击：参数是按钮名（`more` / `clean`）与点击位置。
     pub fn on_toolbar_more(
         mut self,
-        handler: impl Fn(Point<Pixels>, &mut Window, &mut App) + 'static,
+        handler: impl Fn(&'static str, Point<Pixels>, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_toolbar_more = Some(Rc::new(handler));
         self
@@ -1689,7 +1693,7 @@ impl RenderOnce for ClipboardCard {
                         }
                     } else {
                         // --- Single click → select ---
-                        handler(index, ev.modifiers, window, cx);
+                        handler(index, ev.modifiers, ev.position, window, cx);
                     }
                 },
             )
@@ -2971,6 +2975,7 @@ impl RenderOnce for ClipboardCard {
         if let Some((toolbar_props, buttons, exposed_width)) = toolbar {
             // 菜单锚定在「更多」按钮左下方：按钮这一帧的几何由工具条自己回报。
             let more_index = buttons.iter().position(|button| button.action() == "more");
+            let clean_index = buttons.iter().position(|button| button.action() == "clean");
             let anchor_tracker = toolbar_bounds.clone();
             header = header.child(
                 div()
@@ -2987,9 +2992,13 @@ impl RenderOnce for ClipboardCard {
                                 .when_some(toolbar_bounds, |toolbar, tracker| {
                                     toolbar.track_bounds(item.id, tracker)
                                 })
-                                .on_more(move |position, window, cx| {
+                                .on_more(move |kind, position, window, cx| {
+                                    let index = match kind {
+                                        "clean" => clean_index,
+                                        _ => more_index,
+                                    };
                                     let anchor = match (
-                                        more_index,
+                                        index,
                                         anchor_tracker.as_ref().and_then(|tracker| tracker.get()),
                                     ) {
                                         (Some(index), Some((_, bounds))) => {
@@ -2998,7 +3007,7 @@ impl RenderOnce for ClipboardCard {
                                         _ => position,
                                     };
                                     if let Some(ref handler) = on_toolbar_more {
-                                        handler(anchor, window, cx);
+                                        handler(kind, anchor, window, cx);
                                     }
                                 })
                                 .on_action(move |action, window, cx| {

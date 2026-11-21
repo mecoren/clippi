@@ -35,7 +35,7 @@ fn overlay_anim_duration() -> Duration {
 }
 
 use super::bottom_bar::BottomBar;
-use super::clipboard_list::{ClipboardListEvent, ClipboardListView, ConfirmDialogState};
+use super::clipboard_list::{CardMenu, ClipboardListEvent, ClipboardListView, ConfirmDialogState};
 use super::components::app_list_dialog::{
     render_app_list_dialog, AppListDialogEntry, AppListDialogParams,
 };
@@ -1995,8 +1995,8 @@ impl Render for RootView {
                     menu_y + Self::directional_overlay_offset(menu_y, win_h, context_menu_offset);
                 let is_batch = list.read(cx).context_menu_is_batch();
                 let is_transfer_batch = list.read(cx).context_menu_is_transfer_batch();
-                // 卡片三点按钮：菜单只含备注、标签，沿用同一套定位与收起逻辑。
-                let is_card_more = list.read(cx).context_menu_is_card_more();
+                // 卡片工具条按钮：菜单只含该按钮的动作，沿用同一套定位与收起逻辑。
+                let card_menu = list.read(cx).context_menu_card_menu();
                 let item = list.read(cx).context_menu_item().cloned();
 
                 // --- Backdrop — click / scroll to dismiss ---
@@ -2022,9 +2022,14 @@ impl Render for RootView {
                         .occlude()
                         .child({
                             let l = list_for_action.clone();
-                            if is_card_more {
-                                ContextMenu::for_card_more()
-                                    .with_position(menu_x, menu_y, win_w, win_h)
+                            if let Some(card_menu) = card_menu {
+                                let menu = match card_menu {
+                                    CardMenu::More { image_actions } => {
+                                        ContextMenu::for_card_more(image_actions)
+                                    }
+                                    CardMenu::Clean => ContextMenu::for_clean_paste(),
+                                };
+                                menu.with_position(menu_x, menu_y, win_w, win_h)
                                                                         .on_action({
                                         let l = l.clone();
                                         move |action, window, cx| {

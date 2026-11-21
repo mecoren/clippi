@@ -2894,6 +2894,74 @@ impl AppState {
         paste_after_delay(shortcuts);
     }
 
+    /// 把条目写进剪贴板，供「拖出到外部应用」使用。
+    ///
+    /// 写入走内部通道（不重新采集），成功返回 `true`；之后的 OLE 拖放由
+    /// `platform::drag_out` 完成。
+    pub fn write_item_for_drag_out(&mut self, id: i64) -> bool {
+        let item = match self.db.get_by_id(id) {
+            Ok(Some(item)) => item,
+            Ok(None) => {
+                log::warn!("write_item_for_drag_out: item {id} not found");
+                return false;
+            }
+            Err(e) => {
+                log::error!("write_item_for_drag_out: db error for {id}: {e}");
+                return false;
+            }
+        };
+        self.touch_item_usage(&item);
+        self.write_item_to_clipboard_internal(&item, false);
+        true
+    }
+
+    /// 清理后粘贴：对条目的纯文本表示做一次变换，写入剪贴板再模拟粘贴。
+    ///
+    /// 历史条目本身不被改写（见 `core::text_transform` 的模块说明）。选中的
+    /// 变换会被记住，Ctrl+Shift+Enter 下次直接复用它。
+    pub fn paste_item_transformed(
+        &mut self,
+        id: i64,
+        transform: crate::core::text_transform::TextTransform,
+    ) {
+        use crate::platform::paste::{paste_after_delay, restore_paste_target};
+
+        let item = match self.db.get_by_id(id) {
+            Ok(Some(item)) => item,
+            Ok(None) => {
+                log::warn!("paste_item_transformed: item {id} not found");
+                return;
+            }
+            Err(e) => {
+                log::error!("paste_item_transformed: db error for {id}: {e}");
+                return;
+            }
+        };
+
+        let source = crate::services::clipboard_ops::plain_text_for_item(&item);
+        let Some(text) = transform.apply(&source) else {
+            self.show_warning_toast(I18nKey::ToastCleanPasteEmpty.text());
+            return;
+        };
+
+        self.touch_item_usage(&item);
+        if !self.write_text_to_clipboard_internal(&text) {
+            log::warn!("paste_item_transformed: failed to write clipboard for item {id}");
+            return;
+        }
+        crate::services::clipboard_ops::verify_clipboard_content(&text, 200);
+
+        let transform_id = transform.id();
+        if self.settings.last_clean_paste != transform_id {
+            self.settings.last_clean_paste = transform_id.to_string();
+            self.settings.save();
+        }
+
+        restore_paste_target();
+        let shortcuts = std::sync::Arc::new(self.settings.paste_shortcuts.clone());
+        paste_after_delay(shortcuts);
+    }
+
     /// Convert a color item from HEX to RGB and paste.
     pub fn paste_as_rgb(&mut self, id: i64) {
         use crate::core::color::detect_color;

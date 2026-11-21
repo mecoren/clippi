@@ -409,6 +409,26 @@ fn resolve_card_click_action(
 
 impl EventEmitter<ClipboardListEvent> for ClipboardListView {}
 
+/// 按住左键移动多少像素后算「拖出」而不是「点击」。
+///
+/// 6 px 是常见的小抖动容忍值：小于它的位移仍然被当成点击，避免手抖把粘贴
+/// 变成拖出。
+const DRAG_OUT_THRESHOLD: f32 = 6.0;
+
+/// 卡片工具条上会弹出菜单的按钮。
+///
+/// 这些菜单只包含该按钮自己的动作，条目上下文仍取自 `context_menu_item`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CardMenu {
+    /// 三点按钮：备注、标签，图片条目另加「粘贴为位图」「查看图片」。
+    More {
+        /// 当前条目是图片：把这两条图片专属动作收进菜单，而不是摆在工具条上。
+        image_actions: bool,
+    },
+    /// 清理按钮：五种清理后粘贴。
+    Clean,
+}
+
 /// The clipboard list view entity.
 pub struct ClipboardListView {
     items: Vec<ClipboardItem>,
@@ -472,8 +492,11 @@ pub struct ClipboardListView {
     context_menu_y: f32,
     context_menu_item: Option<ClipboardItem>,
     context_menu_is_batch: bool,
-    /// 当前菜单由卡片三点按钮弹出（只含备注、标签），不是右键菜单。
-    context_menu_card_more: bool,
+    /// 当前菜单由卡片工具条上的某个按钮弹出（只含该按钮自己的动作），
+    /// 不是右键菜单。
+    context_menu_card_menu: Option<CardMenu>,
+    /// 左键按下的卡片与位置：按住移动超过阈值即开始拖出。
+    drag_origin: Option<(usize, Point<Pixels>)>,
     tag_picker_visible: bool,
     tag_picker_x: f32,
     tag_picker_y: f32,
@@ -567,7 +590,8 @@ impl ClipboardListView {
             context_menu_y: 0.0,
             context_menu_item: None,
             context_menu_is_batch: false,
-            context_menu_card_more: false,
+            context_menu_card_menu: None,
+            drag_origin: None,
             tag_picker_visible: false,
             tag_picker_x: 0.0,
             tag_picker_y: 0.0,
@@ -2314,14 +2338,15 @@ impl ClipboardListView {
         self.context_menu_is_batch
     }
 
-    /// 当前菜单是否由卡片三点按钮弹出（只含备注 / 标签）。
-    pub fn context_menu_is_card_more(&self) -> bool {
-        self.context_menu_card_more
+    /// 当前菜单是否由卡片工具条按钮弹出，以及是哪一张。
+    pub fn context_menu_card_menu(&self) -> Option<CardMenu> {
+        self.context_menu_card_menu
     }
 
-    /// 卡片三点按钮：在点击位置弹出备注 / 标签菜单。
-    pub fn open_card_more_menu(
+    /// 卡片工具条按钮：在点击位置弹出该按钮自己的小菜单。
+    pub fn open_card_menu(
         &mut self,
+        menu: CardMenu,
         item_id: i64,
         position: Point<Pixels>,
         _window: &mut Window,
@@ -2341,7 +2366,7 @@ impl ClipboardListView {
         };
         self.context_menu_visible = true;
         self.context_menu_is_batch = false;
-        self.context_menu_card_more = true;
+        self.context_menu_card_menu = Some(menu);
         self.context_menu_x = f32::from(position.x);
         self.context_menu_y = f32::from(position.y);
         self.context_menu_item = Some(item);
@@ -2370,7 +2395,7 @@ impl ClipboardListView {
         self.context_menu_visible = false;
         self.context_menu_item = None;
         self.context_menu_is_batch = false;
-        self.context_menu_card_more = false;
+        self.context_menu_card_menu = None;
         self.hovered_index = None;
         cx.notify();
     }
@@ -2381,7 +2406,7 @@ impl ClipboardListView {
         self.context_menu_visible = false;
         self.context_menu_item = None;
         self.context_menu_is_batch = false;
-        self.context_menu_card_more = false;
+        self.context_menu_card_menu = None;
         self.hovered_index = None;
         self.tag_picker_visible = false;
         self.tag_picker_item_id = -1;
@@ -2683,7 +2708,7 @@ impl ClipboardListView {
     pub(crate) fn hide_context_menu(&mut self, cx: &mut Context<Self>) {
         self.context_menu_visible = false;
         self.context_menu_item = None;
-        self.context_menu_card_more = false;
+        self.context_menu_card_menu = None;
         cx.notify();
     }
 
@@ -2698,6 +2723,37 @@ impl ClipboardListView {
         cx.notify();
     }
 
+    /// 「清理后粘贴」：把菜单项里的变换 id 交给状态层执行。
+    fn clean_paste(&mut self, item_id: i64, transform_id: &str, cx: &mut Context<Self>) {
+        let Some(transform) = crate::core::text_transform::TextTransform::from_id(transform_id)
+        else {
+            log::warn!("clean_paste: unknown transform {transform_id:?}");
+            return;
+        };
+        self.state
+            .update(cx, |s, _cx| s.paste_item_transformed(item_id, transform));
+        self.sync_items_from_state_for_usage(cx);
+    }
+
+    /// Ctrl/Cmd+Shift+Enter：复用上次的清理变换，直接粘贴选中的条目。
+    pub(crate) fn action_clean_paste_last(&mut self, cx: &mut Context<Self>) {
+        if self.guard_panels_before_paste(cx) {
+            return;
+        }
+        // 单选之外（多选、无选中）不响应：清理只针对一条文本。
+        let Some(item) = self
+            .single_selected_id()
+            .and_then(|id| self.items.iter().find(|item| item.id == id))
+        else {
+            return;
+        };
+        let item_id = item.id;
+        let transform = self.state.read(cx).settings.last_clean_paste_transform();
+        self.state
+            .update(cx, |s, _cx| s.paste_item_transformed(item_id, transform));
+        self.sync_items_from_state_for_usage(cx);
+    }
+
     pub(crate) fn handle_menu_action(
         &mut self,
         action: &str,
@@ -2706,6 +2762,14 @@ impl ClipboardListView {
     ) {
         self.hide_preview_panel(cx);
         let plain = self.state.read(cx).settings.copy_as_plain_text;
+        if let Some(transform_id) = action.strip_prefix("clean_paste:") {
+            if let Some(ref item) = self.context_menu_item {
+                let item_id = item.id;
+                self.clean_paste(item_id, transform_id, cx);
+            }
+            self.hide_context_menu(cx);
+            return;
+        }
         match action {
             "copy" => {
                 if let Some(ref item) = self.context_menu_item {
@@ -3411,9 +3475,13 @@ impl Render for ClipboardListView {
                             "enter" if !shift => {
                                 // Ctrl/Cmd+Enter — bitmap paste for a single selected
                                 // image, default paste otherwise. The floating-panel
-                                // guard lives inside the action method. Ctrl/Cmd+Shift+Enter
-                                // is intentionally unhandled.
+                                // guard lives inside the action method.
                                 this.action_paste_bitmap_or_default(cx);
+                                cx.stop_propagation();
+                            }
+                            "enter" if !this.has_any_panel_or_editing() => {
+                                // Ctrl/Cmd+Shift+Enter — 清理后粘贴，复用上次的变换。
+                                this.action_clean_paste_last(cx);
                                 cx.stop_propagation();
                             }
                             "d" if !this.has_any_panel_or_editing() => {
@@ -3613,10 +3681,10 @@ impl Render for ClipboardListView {
                                     .filter_map(|i| {
                                         let item = this.items.get(i)?;
                                         let item_id = item.id;
-                                        // 「更多」菜单开着时鼠标已不在卡片上，
+                                        // 工具条小菜单开着时鼠标已不在卡片上，
                                         // 但这一行的工具条要保持展开。
                                         let card_more_open = this.context_menu_visible
-                                            && this.context_menu_card_more
+                                            && this.context_menu_card_menu.is_some()
                                             && this
                                                 .context_menu_item
                                                 .as_ref()
@@ -3629,6 +3697,7 @@ impl Render for ClipboardListView {
                                         let list_view = list_entity.clone();
                                         let focus_handle = this.focus_handle.clone();
                                         let item_clone = item.clone();
+                                        let card_is_image = item_clone.content_type == ContentType::Image;
                                         let source_is_uploading = item_clone.content_type
                                             == ContentType::File
                                             && FileData::from_json(&item_clone.file_data)
@@ -3646,6 +3715,7 @@ impl Render for ClipboardListView {
                                         let click_handler = Rc::new(
                                             move |idx: usize,
                                                   modifiers: Modifiers,
+                                                  position: Point<Pixels>,
                                                   window: &mut Window,
                                                   cx: &mut App| {
                                                 focus_handle.focus(window, cx);
@@ -3796,8 +3866,7 @@ impl Render for ClipboardListView {
                                                                     Some(item.clone());
                                                                 this.context_menu_is_batch =
                                                                     is_batch;
-                                                                this.context_menu_card_more =
-                                                                    false;
+                                                                this.context_menu_card_menu = None;
                                                                 cx.notify();
                                                             }
                                                         });
@@ -3861,10 +3930,16 @@ impl Render for ClipboardListView {
                                                             );
                                                         });
                                                     })
-                                                    .on_toolbar_more(move |position, window, cx| {
+                                                    .on_toolbar_more(move |kind, position, window, cx| {
+                                                        let menu = match kind {
+                                                            "clean" => CardMenu::Clean,
+                                                            _ => CardMenu::More {
+                                                                image_actions: card_is_image,
+                                                            },
+                                                        };
                                                         list_for_more.update(cx, |this, cx| {
-                                                            this.open_card_more_menu(
-                                                                item_id, position, window, cx,
+                                                            this.open_card_menu(
+                                                                menu, item_id, position, window, cx,
                                                             );
                                                         });
                                                     })

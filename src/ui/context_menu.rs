@@ -601,26 +601,65 @@ impl ContextMenu {
 
     /// 「更多操作」菜单：卡片头部的三点按钮弹出，只放低频动作
     /// （备注、标签），常用动作仍留在悬浮工具条上。
-    pub fn for_card_more() -> Self {
-        // 只有两条短文案，按最窄一档显示，避免在卡片右侧留一大片空白。
-        Self::new().width(MENU_WIDTH_COMPACT).items(vec![
-            RawMenuItem {
-                label: I18nKey::EditNote.text().into(),
-                action: "edit_note".into(),
-                icon: "NoteIcon".into(),
+    pub fn for_card_more(image_actions: bool) -> Self {
+        // 只有几条短文案，按最窄一档显示，避免在卡片右侧留一大片空白。
+        let mut items = Vec::new();
+        if image_actions {
+            // 图片专属的低频动作：工具条上不再各占一个按钮。
+            items.push(RawMenuItem {
+                label: I18nKey::CtxPasteImageBitmap.text().into(),
+                action: "paste_image_bitmap".into(),
+                icon: "ImageIcon".into(),
                 danger: false,
                 fav: false,
-                shortcut: sc("F2"),
-            },
-            RawMenuItem {
-                label: I18nKey::CtxTag.text().into(),
-                action: "show_tag_picker".into(),
-                icon: "TagIcon".into(),
+                shortcut: None,
+            });
+            items.push(RawMenuItem {
+                label: I18nKey::CtxOpenImage.text().into(),
+                action: "open_image".into(),
+                icon: "OpenIcon".into(),
                 danger: false,
                 fav: false,
-                shortcut: ctrl_shortcut("T"),
-            },
-        ])
+                shortcut: None,
+            });
+        }
+        items.push(RawMenuItem {
+            label: I18nKey::EditNote.text().into(),
+            action: "edit_note".into(),
+            icon: "NoteIcon".into(),
+            danger: false,
+            fav: false,
+            shortcut: sc("F2"),
+        });
+        items.push(RawMenuItem {
+            label: I18nKey::CtxTag.text().into(),
+            action: "show_tag_picker".into(),
+            icon: "TagIcon".into(),
+            danger: false,
+            fav: false,
+            shortcut: ctrl_shortcut("T"),
+        });
+        Self::new().width(MENU_WIDTH_COMPACT).items(items)
+    }
+
+    /// 「清理后粘贴」菜单：卡片工具条的清理按钮弹出，一条一个变换。
+    ///
+    /// 动作名带 `clean_paste:` 前缀，分发处按前缀取变换 id，避免为五种
+    /// 变换各写一个 `match` 分支。
+    pub fn for_clean_paste() -> Self {
+        use crate::core::i18n_keys::text_transform_label;
+        let items = crate::core::text_transform::TextTransform::ALL
+            .into_iter()
+            .map(|transform| RawMenuItem {
+                label: text_transform_label(transform).into(),
+                action: format!("clean_paste:{}", transform.id()),
+                icon: "TextIcon".into(),
+                danger: false,
+                fav: false,
+                shortcut: None,
+            })
+            .collect();
+        Self::new().items(items)
     }
 
     fn items(mut self, items: Vec<RawMenuItem>) -> Self {

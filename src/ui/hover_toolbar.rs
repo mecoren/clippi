@@ -8,8 +8,10 @@ use crate::ui::font::sc;
 pub type ToolbarBounds = Rc<Cell<Option<(i64, Bounds<Pixels>)>>>;
 
 type ToolbarActionHandler = Rc<dyn Fn(&str, &mut gpui::Window, &mut gpui::App)>;
-/// 「更多」按钮：把点击位置交给调用方，由它弹出备注/标签菜单。
-pub type ToolbarMoreHandler = Rc<dyn Fn(Point<Pixels>, &mut gpui::Window, &mut gpui::App)>;
+/// 走弹出菜单的按钮（`more` = 备注/标签，`clean` = 清理后粘贴）：
+/// 把按钮名与点击位置交给调用方，由它决定弹哪张菜单。
+pub type ToolbarMoreHandler =
+    Rc<dyn Fn(&'static str, Point<Pixels>, &mut gpui::Window, &mut gpui::App)>;
 
 type ToolbarColorFn = Box<dyn Fn(bool) -> Rgba>;
 
@@ -151,7 +153,8 @@ fn single_open_action(props: &HoverToolbarProps) -> Option<&'static str> {
     }
     match props.content_type {
         ContentType::File => Some("open_location"),
-        ContentType::Image => Some("open_image"),
+        // 图片的「查看图片」在三点菜单里，工具条不再放一个只有图片才有的按钮。
+        ContentType::Image => None,
         ContentType::PlainText | ContentType::RichText => {
             // Secrets are masked in the UI on purpose — never spill one into a
             // plain-text file on disk.
@@ -196,10 +199,10 @@ impl HoverToolbar {
         self
     }
 
-    /// 「更多」按钮的点击回调，参数是点击位置（窗口坐标）。
+    /// 弹出菜单按钮（`more` / `clean`）的点击回调，参数是按钮名与点击位置。
     pub fn on_more(
         mut self,
-        handler: impl Fn(Point<Pixels>, &mut Window, &mut App) + 'static,
+        handler: impl Fn(&'static str, Point<Pixels>, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_more = Some(Rc::new(handler));
         self
@@ -293,6 +296,18 @@ pub fn buttons_for(props: &HoverToolbarProps, p: &Palette) -> Vec<ToolbarButton>
             Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
         );
 
+        // --- Clean paste: 5 text transforms in a small popup menu ---
+        if matches!(
+            props.content_type,
+            ContentType::PlainText | ContentType::RichText
+        ) {
+            push(
+                "TrimIcon",
+                "clean",
+                Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
+            );
+        }
+
         // --- Paste Plain Text (only when item has actual rich formatting) ---
         if props.has_rich_content {
             push(
@@ -302,14 +317,8 @@ pub fn buttons_for(props: &HoverToolbarProps, p: &Palette) -> Vec<ToolbarButton>
             );
         }
 
-        // --- Paste as bitmap (image only) ---
-        if props.content_type == ContentType::Image {
-            push(
-                "ImageIcon",
-                "paste_image_bitmap",
-                Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
-            );
-        }
+        // 「粘贴为位图」与「查看图片」是图片专属的低频动作，收进三点菜单，
+        // 见 `ContextMenu::for_card_more`；工具条只留每天都点的按钮。
 
         // --- QR code (image with QR code) ---
         if props.content_type == ContentType::Image && props.has_qr_code {
@@ -512,6 +521,7 @@ impl RenderOnce for HoverToolbar {
                 let on_more = on_more.clone();
                 let tooltip = match action {
                     "more" => I18nKey::CardMoreActions.text().to_string(),
+                    "clean" => I18nKey::CtxCleanPaste.text().to_string(),
                     "copy" => I18nKey::CtxCopy.text().to_string(),
                     "preview" => I18nKey::CtxPreview.text().to_string(),
                     "extract_links" => I18nKey::ExtractLinks.text().to_string(),
@@ -598,12 +608,16 @@ impl RenderOnce for HoverToolbar {
                     })
                     .on_mouse_down(MouseButton::Left, {
                         let action = action.clone();
-                        let is_more = action_id == "more";
+                        let menu_kind = match action_id {
+                            "more" => Some("more"),
+                            "clean" => Some("clean"),
+                            _ => None,
+                        };
                         move |ev, _window, cx| {
                             cx.stop_propagation();
-                            if is_more {
+                            if let Some(kind) = menu_kind {
                                 if let Some(ref handler) = on_more {
-                                    handler(ev.position, _window, cx);
+                                    handler(kind, ev.position, _window, cx);
                                 }
                                 return;
                             }
@@ -665,8 +679,9 @@ mod open_action_tests {
         file.content_type = ContentType::File;
         assert_eq!(single_open_action(&props_for(&file)), Some("open_location"));
 
+        // 图片的「查看图片」收在三点菜单里，工具条不再有专属的打开按钮。
         let image = ClipboardItem::new_image(3, "", 0, 4, 4, None);
-        assert_eq!(single_open_action(&props_for(&image)), Some("open_image"));
+        assert_eq!(single_open_action(&props_for(&image)), None);
 
         let plain = text_item(4, "");
         assert_eq!(single_open_action(&props_for(&plain)), Some("open_text"));
