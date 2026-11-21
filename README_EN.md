@@ -25,8 +25,8 @@
 
 ## Features
 
-- **Capture & organize**: save text, rich text, images, files, and more. Search, tag, favorite, annotate, and manage entries in batches.
-- **Quick paste**: summon Clippi with a global hotkey; the quick window preserves your typing focus. Hold Alt to see and use switching shortcuts.
+- **Capture & organize**: save text, rich text, images, files, and more. Search, tag, favorite, pin, annotate, and manage entries in batches. Pinned entries always lead the list and are never removed by automatic cleanup or "clear history".
+- **Quick paste**: summon Clippi with a global hotkey; the quick window preserves your typing focus. Hold Alt to see and use switching shortcuts. Includes paste-cleaned (strip line breaks, trim lines, trim, upper/lower case), a configurable separator for merging and batch pasting, and dragging entries out to other apps (Windows only for now).
 - **Content recognition**: extract text with image OCR and recognize QR codes.
 - **Cross-device sync**: sync text entries and tags through OneDrive, iCloud folders, or WebDAV, with multiple backends supported.
 - **Everyday tools**: an entry editor, emoji and symbol panel, and file transfer station.
