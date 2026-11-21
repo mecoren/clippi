@@ -122,6 +122,8 @@ pub struct AppState {
     pub db: Database,
     /// Clipboard items loaded from DB
     pub items: Vec<ClipboardItem>,
+    /// 库里的条目总数（不受筛选影响），标题栏显示用。每次重载列表时刷新。
+    pub total_item_count: u32,
     pub source_app_names: Vec<String>,
     pub source_app_icons: std::collections::HashMap<String, std::path::PathBuf>,
     /// In-memory image placeholders awaiting background persistence.
@@ -569,6 +571,11 @@ impl AppState {
             crate::core::db::TitlebarStats::default()
         });
 
+        // 标题栏的条目总数：先算好再进结构体，`db` 一旦 move 进去就不能再借用。
+        let total_item_count = db.count_clipboard_items().unwrap_or_else(|error| {
+            log::error!("Failed to count clipboard items: {error}");
+            items.len() as u32
+        });
         Self {
             source_app_icons: if settings.show_source_app_filter() {
                 db.source_app_icon_paths().unwrap_or_else(|error| {
@@ -589,6 +596,7 @@ impl AppState {
             settings,
             db,
             items,
+            total_item_count,
             pending_images: Vec::new(),
             tags,
             filters: ClipboardFilters::default(),
@@ -732,6 +740,11 @@ impl AppState {
                 self.items = items;
             }
             Err(e) => log::error!("Failed to reload items: {e}"),
+        }
+        // 标题栏的计数是「库里一共多少条」，与当前筛选和分页无关。
+        match self.db.count_clipboard_items() {
+            Ok(count) => self.total_item_count = count,
+            Err(e) => log::error!("Failed to count clipboard items: {e}"),
         }
         let titlebar_started = Instant::now();
         self.refresh_titlebar_filter_availability();
@@ -4391,6 +4404,7 @@ mod tests {
             source_app_names: Vec::new(),
             source_app_icons: Default::default(),
             items: Vec::new(),
+            total_item_count: 0,
             pending_images: Vec::new(),
             tags: Vec::new(),
             filters: ClipboardFilters::default(),

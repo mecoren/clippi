@@ -691,6 +691,7 @@ define_i18n! {
     TitlebarTooltipHotkeys:  ("快捷键项目", "Items with hotkeys"),
     TitlebarTooltipFavorites:("收藏项目", "Favorite items"),
     TitlebarTooltipPin:      ("固定窗口", "Pin window"),
+    TitlebarItemCount:       ("{0} 项", "{0} items"),
     TitlebarTooltipUnpin:    ("取消固定", "Unpin window"),
     FilterConfigTitle:      ("筛选类型", "Filter Types"),
     TagTooltipToggleMode:   ("切换筛选模式", "Toggle Filter Mode"),

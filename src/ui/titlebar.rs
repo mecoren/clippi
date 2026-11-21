@@ -148,6 +148,8 @@ impl Render for Titlebar {
         let state = self.state.read(cx);
         let alt_pressed = state.alt_pressed && state.settings.alt_shortcuts_enabled;
         let emoji_enabled = state.settings.emoji_panel_enabled;
+        // 计数在这里拷出来：后面要用 `cx` 做可变操作，不能再握着 state 的读锁。
+        let item_count = state.total_item_count.to_string();
         // Hiding the window leaves the fade transitions mid-flight (no final
         // frame is rendered), so key them by the hide generation: the next
         // show starts from settled instead of flashing a stale hint.
@@ -237,6 +239,13 @@ impl Render for Titlebar {
                             .font_weight(typography::LABEL_WEIGHT)
                             .text_color(text_2)
                             .child(titlebar_app_name()),
+                    )
+                    // --- 条目总数：库里一共多少条剪贴数据（与筛选、分页无关） ---
+                    .child(
+                        div()
+                            .text_size(typography::font(type_role::CAPTION))
+                            .text_color(p.ink_2)
+                            .child(I18nKey::TitlebarItemCount.fmt(&[&item_count])),
                     ),
             )
             // --- Spacer ---

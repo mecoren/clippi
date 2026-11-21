@@ -774,6 +774,18 @@ impl Database {
         Ok(stats)
     }
 
+    /// 库里的剪贴条目总数，不受任何筛选影响。标题栏用它显示「有多少条剪贴
+    /// 数据」，因此不能走列表分页的 `items.len()`（那一页永远只装得下
+    /// query_limit 条）。中转站条目是文件清单，不算剪贴数据，和
+    /// [`Self::count_clearable_history`] 一样排除。
+    pub fn count_clipboard_items(&self) -> SqlResult<u32> {
+        self.conn.query_row(
+            "SELECT COUNT(*) FROM clipboard_items WHERE meta_type != 'transfer'",
+            [],
+            |row| row.get::<_, i64>(0).map(|count| count as u32),
+        )
+    }
+
     /// Number of non-transfer rows `clear_clipboard_history` would delete for
     /// the given include flags.
     pub fn count_clearable_history(
@@ -2918,6 +2930,23 @@ mod tests {
             rusqlite::params![text, hash as i64, updated, updated],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn clipboard_item_count_ignores_transfer_rows() {
+        let db = Database::open(":memory:").unwrap();
+        insert_item(&db, 1, "first", "2026-01-01T00:00:00Z");
+        insert_item(&db, 2, "second", "2026-01-02T00:00:00Z");
+        assert_eq!(db.count_clipboard_items().unwrap(), 2);
+
+        // 中转站条目是文件清单，不算剪贴数据。
+        db.conn
+            .execute(
+                "UPDATE clipboard_items SET meta_type = 'transfer' WHERE content_hash = 2",
+                [],
+            )
+            .unwrap();
+        assert_eq!(db.count_clipboard_items().unwrap(), 1);
     }
 
     #[test]
