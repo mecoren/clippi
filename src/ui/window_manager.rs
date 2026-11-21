@@ -5049,6 +5049,8 @@ impl WindowManager {
             log::error!("Failed to initialize main window IME handling: {error}");
         }
         crate::platform::focus::set_clippi_hwnd(hwnd);
+        // 拖出需要一段不持有 GPUI 借用的窗口过程，见 `platform::drag_out`。
+        crate::platform::drag_out::install(hwnd);
     }
 
     pub fn set_quick_window(

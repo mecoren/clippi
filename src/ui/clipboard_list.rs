@@ -14,6 +14,7 @@ use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
 use gpui_kit::component::v_virtual_list;
 use gpui_kit::component::VirtualListScrollHandle;
 
+use crate::core::click_action::ClickAction;
 use crate::core::i18n_keys::I18nKey;
 use crate::core::types::{
     ClipboardItem, ContentType, FileData, HotkeyPasteFormat, PendingImageView,
@@ -1291,6 +1292,84 @@ impl ClipboardListView {
         }
     }
 
+    /// 按住左键移动：越过阈值就把这条拖出到外部应用。
+    ///
+    /// 只在「左键单击不粘贴」的配置下生效：否则按下时粘贴已经发生，再拖出
+    /// 等于同一手势做两件事。
+    fn handle_card_drag_move(
+        &mut self,
+        index: usize,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((origin_index, origin)) = self.drag_origin else {
+            return;
+        };
+        if origin_index != index {
+            return;
+        }
+        let dx = f32::from(position.x) - f32::from(origin.x);
+        let dy = f32::from(position.y) - f32::from(origin.y);
+        if (dx * dx + dy * dy).sqrt() < DRAG_OUT_THRESHOLD {
+            return;
+        }
+        // 一次手势只起一次拖放。
+        self.drag_origin = None;
+
+        if self.state.read(cx).settings.click_actions().single == ClickAction::Paste {
+            return;
+        }
+        let Some(item) = self.items.get(index) else {
+            return;
+        };
+        if item_is_pending(item) || !crate::platform::drag_out::item_can_drag_out(item) {
+            return;
+        }
+        let item_id = item.id;
+        let wrote = self
+            .state
+            .update(cx, |state, _cx| state.write_item_for_drag_out(item_id));
+        if !wrote {
+            return;
+        }
+        // 只投递请求：真正的 OLE 拖放由主窗口过程执行（见 `platform::drag_out`）。
+        // 在这里直接调 `DoDragDrop` 会在 GPUI 的可变借用里嵌套派发消息并崩溃。
+        if !crate::platform::drag_out::request_drag_out(window) {
+            log::debug!("drag_out: gesture could not start");
+        }
+    }
+
+    /// 中键动作：不改变选中，直接按配置复制或粘贴。
+    fn handle_middle_click(&mut self, index: usize, cx: &mut Context<Self>) {
+        let action = self.state.read(cx).settings.click_actions().middle;
+        if action == ClickAction::None {
+            return;
+        }
+        let Some(item) = self.items.get(index) else {
+            return;
+        };
+        if item_is_pending(item) {
+            return;
+        }
+        // 中转条目没有「复制到剪贴板」的对应物，交给左键/右键处理。
+        if item.id < 0 && item.meta_type == "transfer" {
+            return;
+        }
+        let item_id = item.id;
+        match action {
+            ClickAction::Copy => {
+                let plain = self.state.read(cx).settings.copy_as_plain_text;
+                self.state.update(cx, |s, _cx| s.copy_item(item_id, plain));
+            }
+            ClickAction::Paste => {
+                self.state.update(cx, |s, _cx| s.paste_item(item_id, false));
+            }
+            ClickAction::None => return,
+        }
+        self.sync_items_from_state_for_usage(cx);
+    }
+
     /// Single-click paste mode dispatch (04-spec §2.3). The decision reads the
     /// click-time selection state first (§2.4 short-judge), resolves a single
     /// action via the pure `resolve_card_click_action`, then executes exactly
@@ -1369,9 +1448,20 @@ impl ClipboardListView {
             return;
         }
         let item_id = item.id;
-        self.state.update(cx, |state, _cx| {
-            state.paste_item(item_id, false);
-        });
+        let action = self.state.read(cx).settings.click_actions().single;
+        match action {
+            ClickAction::Copy => {
+                let plain = self.state.read(cx).settings.copy_as_plain_text;
+                self.state
+                    .update(cx, |state, _cx| state.copy_item(item_id, plain));
+            }
+            ClickAction::Paste => {
+                self.state.update(cx, |state, _cx| {
+                    state.paste_item(item_id, false);
+                });
+            }
+            ClickAction::None => return,
+        }
         self.sync_items_from_state_for_usage(cx);
     }
 
@@ -1419,29 +1509,48 @@ impl ClipboardListView {
     /// pastes with full formatting, except a single transfer entry (unmodified)
     /// which opens/downloads instead of pasting (§2.4).
     fn double_click_paste_default(&mut self, index: usize, cx: &mut Context<Self>) {
-        if self.selected_ids.len() > 1 {
+        let action = self.state.read(cx).settings.click_actions().double;
+        if action == ClickAction::None {
+            return;
+        }
+        // Only Paste batches a multi-selection; Copy always targets the clicked
+        // card, because "copy 5 items" has no unambiguous meaning on the
+        // clipboard.
+        if action == ClickAction::Paste && self.selected_ids.len() > 1 {
             let ids = self.selected_ids.clone();
             self.state.update(cx, |s, _cx| s.batch_paste(&ids, false));
             self.sync_items_from_state_for_usage(cx);
-        } else if let Some(item) = self.items.get(index) {
-            if item.id < 0 && item.meta_type == "transfer" {
-                let file_data = crate::core::types::FileData::from_json(&item.file_data);
-                let hash = file_data.remote_hash;
-                let local_path = file_data.files.first().map(|file| file.path.clone());
-                self.state.update(cx, |state, _cx| {
-                    if let Some(path) = local_path.filter(|path| !path.is_empty()) {
-                        state.open_transfer_location(&path);
-                    } else {
-                        state.download_transfer_entry(&hash);
-                    }
-                });
-                self.sync_items_from_state(cx);
-                return;
-            }
-            let item_id = item.id;
-            self.state.update(cx, |s, _cx| s.paste_item(item_id, false));
-            self.sync_items_from_state_for_usage(cx);
+            return;
         }
+        let Some(item) = self.items.get(index) else {
+            return;
+        };
+        if item.id < 0 && item.meta_type == "transfer" {
+            let file_data = crate::core::types::FileData::from_json(&item.file_data);
+            let hash = file_data.remote_hash;
+            let local_path = file_data.files.first().map(|file| file.path.clone());
+            self.state.update(cx, |state, _cx| {
+                if let Some(path) = local_path.filter(|path| !path.is_empty()) {
+                    state.open_transfer_location(&path);
+                } else {
+                    state.download_transfer_entry(&hash);
+                }
+            });
+            self.sync_items_from_state(cx);
+            return;
+        }
+        let item_id = item.id;
+        match action {
+            ClickAction::Copy => {
+                let plain = self.state.read(cx).settings.copy_as_plain_text;
+                self.state.update(cx, |s, _cx| s.copy_item(item_id, plain));
+            }
+            ClickAction::Paste => {
+                self.state.update(cx, |s, _cx| s.paste_item(item_id, false));
+            }
+            ClickAction::None => unreachable!("guarded above"),
+        }
+        self.sync_items_from_state_for_usage(cx);
     }
 
     /// Double-click with modifiers: paste only when the first click left the
@@ -3720,6 +3829,8 @@ impl Render for ClipboardListView {
                                                   cx: &mut App| {
                                                 focus_handle.focus(window, cx);
                                                 list_view.update(cx, move |this, cx| {
+                                                    // 记下按下点，供「按住移动」判断是否已成拖出。
+                                                    this.drag_origin = Some((idx, position));
                                                     this.handle_card_click(idx, modifiers, window, cx);
                                                 });
                                             },
@@ -3948,6 +4059,24 @@ impl Render for ClipboardListView {
                                                         Rc::new(move |idx, modifiers, _window, cx| {
                                                             list_for_dbl.update(cx, |this, cx| {
                                                                 this.handle_double_click(idx, modifiers, cx);
+                                                            });
+                                                        })
+                                                    })
+                                                    .on_middle_click({
+                                                        let list_for_middle = list_entity.clone();
+                                                        Rc::new(move |idx, _window, cx| {
+                                                            list_for_middle.update(cx, |this, cx| {
+                                                                this.handle_middle_click(idx, cx);
+                                                            });
+                                                        })
+                                                    })
+                                                    .on_drag_out({
+                                                        let list_for_drag = list_entity.clone();
+                                                        Rc::new(move |idx, position, window, cx| {
+                                                            list_for_drag.update(cx, |this, cx| {
+                                                                this.handle_card_drag_move(
+                                                                    idx, position, window, cx,
+                                                                );
                                                             });
                                                         })
                                                     });

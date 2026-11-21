@@ -1267,6 +1267,10 @@ pub struct ClipboardCard {
     /// 三点按钮：交给列表在点击位置弹出备注/标签菜单。
     on_toolbar_more: Option<CardMoreHandler>,
     on_double_click: Option<CardDoubleClickHandler>,
+    /// 中键：交给列表执行配置的动作（无动作时不会挂这个回调）。
+    on_middle_click: Option<CardMiddleClickHandler>,
+    /// 按住左键移动：把指针位置交给列表判断是否开始拖出。
+    on_drag_out: Option<CardDragHandler>,
     /// Whether this card is in note-editing mode (shows inline editor).
     editing: bool,
     /// Shared InputState from ClipboardListView (only Some when editing is true).
@@ -1312,6 +1316,8 @@ impl ClipboardCard {
             on_toolbar_action: None,
             on_toolbar_more: None,
             on_double_click: None,
+            on_middle_click: None,
+            on_drag_out: None,
             editing: false,
             note_input: None,
             on_commit_note: None,
@@ -1384,6 +1390,18 @@ impl ClipboardCard {
         handler: impl Fn(&'static str, Point<Pixels>, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_toolbar_more = Some(Rc::new(handler));
+        self
+    }
+
+    /// 中键动作（复制或粘贴）。只在「中键」配置了动作时才由列表挂上。
+    pub fn on_middle_click(mut self, handler: CardMiddleClickHandler) -> Self {
+        self.on_middle_click = Some(handler);
+        self
+    }
+
+    /// 按住左键移动：由列表决定何时真正开始拖出。
+    pub fn on_drag_out(mut self, handler: CardDragHandler) -> Self {
+        self.on_drag_out = Some(handler);
         self
     }
 
@@ -1495,6 +1513,8 @@ impl RenderOnce for ClipboardCard {
             on_toolbar_action,
             on_toolbar_more,
             on_double_click,
+            on_middle_click,
+            on_drag_out,
             editing,
             note_input,
             on_commit_note,
@@ -1697,6 +1717,27 @@ impl RenderOnce for ClipboardCard {
                     }
                 },
             )
+        } else {
+            base
+        };
+
+        // --- 中键动作（不影响选中，也不参与左键手势判定） ---
+        let base = if let Some(middle_handler) = on_middle_click {
+            base.on_mouse_down(MouseButton::Middle, move |_ev, window, cx| {
+                cx.stop_propagation();
+                middle_handler(index, window, cx);
+            })
+        } else {
+            base
+        };
+
+        // --- 按住左键拖出：位置与判定都交给列表，卡片只负责转发 ---
+        let base = if let Some(drag_handler) = on_drag_out {
+            base.on_mouse_move(move |ev, window, cx| {
+                if ev.pressed_button == Some(MouseButton::Left) {
+                    drag_handler(index, ev.position, window, cx);
+                }
+            })
         } else {
             base
         };
