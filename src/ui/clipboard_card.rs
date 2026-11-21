@@ -1536,6 +1536,9 @@ impl RenderOnce for ClipboardCard {
         let highlight_text: Rgba = p.on_highlight().into();
         let time_str = format_card_time(&item.updated_at);
         let is_fav = item.is_favorite;
+        // 置顶是列表里最容易被忽略的状态：卡片上常驻「图钉 + 左侧色条」，
+        // 不能只靠悬停工具条里那颗会变色的按钮表达。
+        let item_pinned = item.pinned;
         let content_type = item.content_type;
         let note = item.note.clone();
         let full_text = &item.full_text; // borrowed — only cloned in the branches that own it
@@ -2947,11 +2950,23 @@ impl RenderOnce for ClipboardCard {
             .child(
                 div()
                     .flex_shrink_0()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(sc(4.))
                     // 时间让出滑出的操作条：位移与滑出进度同一个值。
                     .when(slide > 0.0, |el| el.mr(sc(slide)))
-                    .text_size(sc(10.))
-                    .text_color(time_pill_color)
-                    .child(time_str),
+                    // 置顶标记：常驻，不随悬停出现或消失；用主题色，避免再引入
+                    // 一个只在这处出现的紫色。
+                    .when(item_pinned, |el| {
+                        el.child(widgets::icon("PinIcon", sc(10.), Hsla::from(accent)))
+                    })
+                    .child(
+                        div()
+                            .text_size(sc(10.))
+                            .text_color(time_pill_color)
+                            .child(time_str),
+                    ),
             );
         if let Some((toolbar_props, buttons, exposed_width)) = toolbar {
             // 菜单锚定在「更多」按钮左下方：按钮这一帧的几何由工具条自己回报。
@@ -3005,30 +3020,26 @@ impl RenderOnce for ClipboardCard {
             card
         };
 
-        // --- Pinned indicator bar (left edge, blue, scales with card height) ---
-        // --- Fav indicator bar (left edge, 3px, fav-color, scales with card height) ---
-        let card = if is_pinned {
-            card.child(
-                div()
-                    .absolute()
-                    .left(sc(0.))
-                    .top(sc(4.))
-                    .bottom(sc(4.))
-                    .w(sc(3.))
-                    .rounded(Radius::Pill.scaled())
-                    .bg(p.pin),
-            )
+        // --- 左边缘状态条（3px，随卡片高度缩放） ---
+        // 置顶优先于收藏：两者同时存在时，左条只表达「在最前面」这个更强的事实。
+        // 剪贴板条目的置顶用主题色（与卡片选中、图钉按钮同一色）；中转站的
+        // 「永久保留」仍是它自己的紫色，属于另一套语义。
+        let edge_bar = |color: Rgba| {
+            div()
+                .absolute()
+                .left(sc(0.))
+                .top(sc(4.))
+                .bottom(sc(4.))
+                .w(sc(3.))
+                .rounded(Radius::Pill.scaled())
+                .bg(color)
+        };
+        let card = if item_pinned {
+            card.child(edge_bar(accent))
+        } else if is_pinned {
+            card.child(edge_bar(p.pin.into()))
         } else if is_fav {
-            card.child(
-                div()
-                    .absolute()
-                    .left(sc(0.))
-                    .top(sc(4.))
-                    .bottom(sc(4.))
-                    .w(sc(3.))
-                    .rounded(Radius::Pill.scaled())
-                    .bg(fav_color),
-            )
+            card.child(edge_bar(fav_color))
         } else {
             card
         };

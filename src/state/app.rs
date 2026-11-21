@@ -95,6 +95,7 @@ fn empty_editor_item() -> ClipboardItem {
         custom_hotkey: String::new(),
         custom_hotkey_format: String::new(),
         existence_observed_at: String::new(),
+        pinned: false,
     }
 }
 
@@ -1108,6 +1109,11 @@ impl AppState {
         }
 
         favorite_matches.extend(regular_matches);
+        // Favorites-first is the only list order decided outside SQL. Pinned
+        // rows must still lead (the database orders by `pinned DESC, …`), and a
+        // pinned non-favorite would otherwise sink below an unpinned favorite.
+        // `sort_by_key` is stable, so the time order inside each group holds.
+        favorite_matches.sort_by_key(|item| std::cmp::Reverse(item.pinned));
         favorite_matches.truncate(result_limit);
         Ok(favorite_matches)
     }
@@ -1622,6 +1628,7 @@ impl AppState {
             custom_hotkey: String::new(),
             custom_hotkey_format: String::new(),
             existence_observed_at: String::new(),
+            pinned: false,
         };
 
         // Upsert by content hash: re-creating existing content refreshes that
@@ -3112,6 +3119,7 @@ impl AppState {
             custom_hotkey: String::new(),
             custom_hotkey_format: String::new(),
             existence_observed_at: String::new(),
+            pinned: false,
         };
 
         // Write to DB.
@@ -3444,6 +3452,61 @@ impl AppState {
         }
 
         self.sync_dirty.store(true, Ordering::SeqCst);
+    }
+
+    /// Toggle pin for a single item.
+    ///
+    /// Pinning is a local view preference (`ClipboardItem::pinned`), so it does
+    /// not bump `updated_at`, write sync tombstones, or set the dirty flag. The
+    /// list reloads because the row changes position.
+    pub fn toggle_pinned(&mut self, id: i64) {
+        let item = match self.db.get_by_id(id) {
+            Ok(Some(item)) => item,
+            Ok(None) => {
+                log::warn!("toggle_pinned({id}): item not found");
+                return;
+            }
+            Err(e) => {
+                log::error!("toggle_pinned({id}): {e}");
+                return;
+            }
+        };
+        let next = !item.pinned;
+        if let Err(e) = self.db.set_pinned(id, next) {
+            log::error!("toggle_pinned({id}): {e}");
+            return;
+        }
+        if let Some(item) = self.items.iter_mut().find(|it| it.id == id) {
+            item.pinned = next;
+        }
+        self.reload_items();
+    }
+
+    /// Batch pin/unpin: pins every selected item unless all of them are already
+    /// pinned, in which case it unpins the selection.
+    pub fn batch_toggle_pinned(&mut self) {
+        let ids: Vec<i64> = self.selected_ids.clone();
+        if ids.is_empty() {
+            return;
+        }
+        let all_pinned = ids.iter().all(|id| {
+            self.items
+                .iter()
+                .find(|it| it.id == *id)
+                .is_some_and(|it| it.pinned)
+        });
+        let target = !all_pinned;
+
+        if let Err(e) = self.db.set_pinned_many(&ids, target) {
+            log::error!("batch set_pinned_many: {e}");
+            return;
+        }
+        for id in &ids {
+            if let Some(item) = self.items.iter_mut().find(|it| it.id == *id) {
+                item.pinned = target;
+            }
+        }
+        self.reload_items();
     }
 
     /// Batch delete all selected items.
@@ -3990,6 +4053,7 @@ impl AppState {
                         custom_hotkey: String::new(),
                         custom_hotkey_format: String::new(),
                         existence_observed_at: String::new(),
+                        pinned: false,
                     }
                 })
                 .collect()
@@ -4053,6 +4117,7 @@ mod tests {
             custom_hotkey: String::new(),
             custom_hotkey_format: String::new(),
             existence_observed_at: String::new(),
+            pinned: false,
         }
     }
 

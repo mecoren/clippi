@@ -68,6 +68,8 @@ pub struct HoverToolbarProps {
     pub has_qr_code: bool,
     pub has_links: bool,
     pub is_favorite: bool,
+    /// 置顶状态（本地偏好；中转站条目的置顶走 `transfer_pinned`）。
+    pub is_pinned: bool,
     pub selected_count: usize,
     pub is_selected: bool,
     pub can_merge_selection: bool,
@@ -119,6 +121,7 @@ impl HoverToolbarProps {
             },
             has_links: item_has_extractable_links(item),
             is_favorite: item.is_favorite,
+            is_pinned: item.pinned,
             selected_count,
             is_selected,
             can_merge_selection: false,
@@ -216,6 +219,7 @@ pub fn buttons_for(props: &HoverToolbarProps, p: &Palette) -> Vec<ToolbarButton>
     };
     let danger: Rgba = p.danger.into();
     let fav_color: Rgba = p.fav.into();
+    let pin_color: Rgba = p.pin.into();
 
     let is_single = props.selected_count <= 1;
     let is_batch = props.selected_count > 1 && props.is_selected;
@@ -244,7 +248,6 @@ pub fn buttons_for(props: &HoverToolbarProps, p: &Palette) -> Vec<ToolbarButton>
     }
     if is_single && props.is_transfer {
         let transfer_pinned = props.transfer_pinned;
-        let pin_color: Rgba = p.pin.into();
         if props.transfer_is_local {
             push(
                 "OpenIcon",
@@ -335,6 +338,21 @@ pub fn buttons_for(props: &HoverToolbarProps, p: &Palette) -> Vec<ToolbarButton>
             );
         }
 
+        // --- Pin (local view preference, sits next to favorite) ---
+        // 置顶状态用主题色：与卡片左条、头部图钉同色，不再是独立的紫色。
+        let is_pinned = props.is_pinned;
+        push(
+            "PinIcon",
+            "toggle_pin",
+            Box::new(move |hovered: bool| {
+                if hovered || is_pinned {
+                    accent
+                } else {
+                    icon_color
+                }
+            }),
+        );
+
         // --- Favorite (icon changes based on state) ---
         let fav_icon = if props.is_favorite {
             "StarIcon"
@@ -386,6 +404,20 @@ pub fn buttons_for(props: &HoverToolbarProps, p: &Palette) -> Vec<ToolbarButton>
             "TagIcon",
             "batch_tag",
             Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
+        );
+        // --- Batch pin ---
+        push(
+            "PinIcon",
+            "batch_pin",
+            Box::new(
+                move |hovered: bool| {
+                    if hovered {
+                        accent
+                    } else {
+                        icon_color
+                    }
+                },
+            ),
         );
         // --- Batch favorite ---
         push(

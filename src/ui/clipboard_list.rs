@@ -2801,10 +2801,21 @@ impl ClipboardListView {
                     return; // Don't call hide_context_menu again at end
                 }
             }
+            "toggle_pin" => {
+                if let Some(ref item) = self.context_menu_item {
+                    let id = item.id;
+                    self.state.update(cx, |s, _cx| s.toggle_pinned(id));
+                    self.sync_items_from_state(cx);
+                }
+            }
             "batch_favorite" => {
                 self.state.update(cx, |s, _cx| s.batch_toggle_favorite());
                 self.sync_items_from_state(cx);
                 self.select_and_scroll_to_top_if_favorites_first(cx);
+            }
+            "batch_pin" => {
+                self.state.update(cx, |s, _cx| s.batch_toggle_pinned());
+                self.sync_items_from_state(cx);
             }
             "batch_delete" => {
                 let count = self.selected_ids.len();
@@ -3084,10 +3095,23 @@ impl ClipboardListView {
                     }
                 }
             }
+            "toggle_pin" => {
+                if let Some(index) = self.hovered_index {
+                    if let Some(item) = self.items.get(index) {
+                        let id = item.id;
+                        self.state.update(cx, |s, _cx| s.toggle_pinned(id));
+                        self.sync_items_from_state(cx);
+                    }
+                }
+            }
             "batch_favorite" => {
                 self.state.update(cx, |s, _cx| s.batch_toggle_favorite());
                 self.sync_items_from_state(cx);
                 self.select_and_scroll_to_top_if_favorites_first(cx);
+            }
+            "batch_pin" => {
+                self.state.update(cx, |s, _cx| s.batch_toggle_pinned());
+                self.sync_items_from_state(cx);
             }
             "batch_delete" => {
                 let count = self.selected_ids.len();
@@ -4220,6 +4244,7 @@ mod tests {
             custom_hotkey: String::new(),
             custom_hotkey_format: String::new(),
             existence_observed_at: String::new(),
+            pinned: false,
         }
     }
 

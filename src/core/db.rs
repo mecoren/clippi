@@ -88,11 +88,12 @@ const STALE_OBSERVATION_COUNT_MAX: i64 = 1_000;
 
 /// Predicate matching the rows that automatic history maintenance may delete:
 /// the retention window, the item limit, and the stale-item cleanup all use
-/// it. Favorites, tagged items, noted items, and items with a custom hotkey
-/// are user-curated — they neither count toward `max_items` nor expire nor get
-/// reclaimed when their source disappears, so curating an item is what makes
-/// it permanent.
+/// it. Pinned items, favorites, tagged items, noted items, and items with a
+/// custom hotkey are user-curated — they neither count toward `max_items` nor
+/// expire nor get reclaimed when their source disappears, so curating an item
+/// is what makes it permanent.
 const MAINTENANCE_DELETABLE_PREDICATE: &str = "meta_type != 'transfer' \
+     AND pinned = 0 \
      AND is_favorite = 0 \
      AND custom_hotkey = '' \
      AND note = '' \
@@ -103,8 +104,11 @@ const MAINTENANCE_DELETABLE_PREDICATE: &str = "meta_type != 'transfer' \
 /// Predicate selecting the rows a "clear clipboard history" call deletes.
 /// Each `include_*` flag turns one protection off instead of deleting that
 /// category by default, so favorites, tagged items, and noted items survive
-/// unless the user opts in.
+/// unless the user opts in. Pinned items are protected unconditionally: the
+/// bulletproof intent of a pin is "keep this", so clearing is never allowed to
+/// discard one without an explicit unpin first.
 const CLEAR_HISTORY_SELECTION_PREDICATE: &str = "meta_type != 'transfer' \
+     AND pinned = 0 \
      AND (?1 OR is_favorite = 0) \
      AND (?2 OR NOT EXISTS ( \
          SELECT 1 FROM item_tags WHERE item_tags.item_id = clipboard_items.id \
@@ -158,7 +162,7 @@ fn file_icon_cache_key(file_path: &str, is_dir: bool) -> String {
 
 fn item_select_columns() -> String {
     format!(
-        "id, content_type, full_text, content_hash, created_at, updated_at, image_path, rich_data, file_data, is_favorite, note, source_app_name, CASE WHEN length(source_app_icon) <= {SOURCE_APP_ICON_INLINE_LIMIT} THEN source_app_icon ELSE '' END, image_width, image_height, size, meta_type, custom_hotkey, custom_hotkey_format, existence_observed_at"
+        "id, content_type, full_text, content_hash, created_at, updated_at, image_path, rich_data, file_data, is_favorite, note, source_app_name, CASE WHEN length(source_app_icon) <= {SOURCE_APP_ICON_INLINE_LIMIT} THEN source_app_icon ELSE '' END, image_width, image_height, size, meta_type, custom_hotkey, custom_hotkey_format, existence_observed_at, pinned"
     )
 }
 
@@ -198,7 +202,7 @@ fn list_item_select_columns() -> String {
                  'remote_host', NULLIF(substr(coalesce(json_extract(rich_data, '$.remote_host'), ''), 1, {LIST_RICH_AUX_LIMIT}), '')
              )
          END,
-         file_data, is_favorite, substr(note, 1, {LIST_NOTE_LIMIT}), source_app_name, CASE WHEN length(source_app_icon) <= {SOURCE_APP_ICON_INLINE_LIMIT} THEN source_app_icon ELSE '' END, image_width, image_height, size, meta_type, custom_hotkey, custom_hotkey_format, existence_observed_at"
+         file_data, is_favorite, substr(note, 1, {LIST_NOTE_LIMIT}), source_app_name, CASE WHEN length(source_app_icon) <= {SOURCE_APP_ICON_INLINE_LIMIT} THEN source_app_icon ELSE '' END, image_width, image_height, size, meta_type, custom_hotkey, custom_hotkey_format, existence_observed_at, pinned"
     )
 }
 
@@ -582,9 +586,12 @@ impl Database {
         let order_col = Self::validate_order_by(order_by);
         let (where_clause, mut filter_params) = filters.db_where();
         let limit_clause = if limit.is_some() { " LIMIT ?" } else { "" };
+        // Pinned rows always lead; the chosen sort column only orders the rest.
+        // The prefix has to stay inside SQL rather than a post-load Rust sort so
+        // that `limit`/`offset` paging and keyword scan pages agree on it.
         let query = format!(
             "SELECT {columns}
-             FROM clipboard_items {} ORDER BY {} DESC{}",
+             FROM clipboard_items {} ORDER BY pinned DESC, {} DESC{}",
             where_clause, order_col, limit_clause
         );
         if let Some(limit) = limit {
@@ -607,7 +614,7 @@ impl Database {
         let columns = item_select_columns();
         let query = format!(
             "SELECT {columns}
-             FROM clipboard_items {} ORDER BY {} DESC LIMIT ? OFFSET ?",
+             FROM clipboard_items {} ORDER BY pinned DESC, {} DESC LIMIT ? OFFSET ?",
             where_clause, order_col
         );
         filter_params.push((limit as i64).into());
@@ -660,6 +667,35 @@ impl Database {
             "UPDATE clipboard_items SET is_favorite = ?2 WHERE id = ?1",
             params![id, value as i32],
         )?;
+        Ok(())
+    }
+
+    /// Pin or unpin one item.
+    ///
+    /// `updated_at` is deliberately left alone: pinning must not make an old
+    /// entry look recently used, and the row keeps its place inside the pinned
+    /// group instead of jumping to the top.
+    pub fn set_pinned(&self, id: i64, value: bool) -> SqlResult<()> {
+        self.conn.execute(
+            "UPDATE clipboard_items SET pinned = ?2 WHERE id = ?1",
+            params![id, value as i32],
+        )?;
+        Ok(())
+    }
+
+    /// Pin or unpin a batch of items in one transaction.
+    pub fn set_pinned_many(&self, ids: &[i64], value: bool) -> SqlResult<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut stmt = tx.prepare("UPDATE clipboard_items SET pinned = ?2 WHERE id = ?1")?;
+            for id in ids {
+                stmt.execute(params![id, value as i32])?;
+            }
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -1672,7 +1708,7 @@ impl Database {
         // every eligible row and truncating in memory.
         let mut stmt = self.conn.prepare(&format!(
             "SELECT id FROM clipboard_items WHERE {MAINTENANCE_DELETABLE_PREDICATE} AND (?2 IS NULL OR id != ?2) \
-             ORDER BY created_at ASC LIMIT ?1"
+             ORDER BY created_at ASC, id ASC LIMIT ?1"
         ))?;
         let pruned_ids: Vec<i64> = stmt
             .query_map(params![excess as i64, preserve_id], |row| row.get(0))?
@@ -2798,6 +2834,7 @@ fn row_to_item(row: &rusqlite::Row<'_>) -> SqlResult<ClipboardItem> {
         custom_hotkey: row.get(17).unwrap_or_default(),
         custom_hotkey_format: row.get(18).unwrap_or_default(),
         existence_observed_at: row.get(19).unwrap_or_default(),
+        pinned: row.get::<_, i32>(20).unwrap_or(0) != 0,
     })
 }
 
@@ -3917,6 +3954,81 @@ mod tests {
         assert_eq!(result.deleted_items, 1);
         assert!(db.get_by_hash(202).unwrap().is_none());
         std::fs::remove_file(temporary_file).unwrap();
+    }
+
+    #[test]
+    fn pinned_items_lead_every_list_query_regardless_of_sort_column() {
+        let (_path, db) = temp_db("pinned-order");
+        insert_item(&db, 1, "oldest", "2026-01-01T00:00:00Z");
+        insert_item(&db, 2, "middle", "2026-02-01T00:00:00Z");
+        insert_item(&db, 3, "newest", "2026-03-01T00:00:00Z");
+        let oldest = db.get_by_hash(1).unwrap().unwrap();
+        assert!(!oldest.pinned);
+        db.set_pinned(oldest.id, true).unwrap();
+
+        for order_by in ["updated_at", "created_at"] {
+            let items = db
+                .load_filtered(&ClipboardFilters::default(), 10, order_by)
+                .unwrap();
+            assert_eq!(
+                items.iter().map(|i| i.content_hash).collect::<Vec<_>>(),
+                [1, 3, 2],
+                "pinned row must lead ORDER BY {order_by}"
+            );
+        }
+
+        // Paging keeps the same prefix, so page 2 starts after the pinned row.
+        let first_page = db
+            .load_filtered_page(&ClipboardFilters::default(), 2, 0, "updated_at")
+            .unwrap();
+        assert_eq!(
+            first_page
+                .iter()
+                .map(|i| i.content_hash)
+                .collect::<Vec<_>>(),
+            [1, 3]
+        );
+        let second_page = db
+            .load_filtered_page(&ClipboardFilters::default(), 2, 2, "updated_at")
+            .unwrap();
+        assert_eq!(second_page.len(), 1);
+        assert_eq!(second_page[0].content_hash, 2);
+
+        db.set_pinned_many(&[oldest.id], false).unwrap();
+        assert!(!db.get_by_hash(1).unwrap().unwrap().pinned);
+    }
+
+    #[test]
+    fn pinned_items_are_exempt_from_maintenance_and_clear_history() {
+        let (_path, db) = temp_db("pinned-protected");
+        insert_item(&db, 11, "pinned", "2026-01-01T00:00:00Z");
+        insert_item(&db, 12, "regular-old", "2026-01-02T00:00:00Z");
+        insert_item(&db, 13, "regular-new", "2026-01-03T00:00:00Z");
+        let pinned = db.get_by_hash(11).unwrap().unwrap();
+        db.set_pinned(pinned.id, true).unwrap();
+
+        // The item limit only counts deletable rows, so the pinned row survives
+        // and the oldest *unpinned* row is the one trimmed.
+        let removed = db.prune_items_over_limit(1).unwrap();
+        assert_eq!(removed.len(), 1);
+        assert!(db.get_by_hash(12).unwrap().is_none());
+        assert!(db.get_by_hash(11).unwrap().is_some());
+        assert!(db.get_by_hash(13).unwrap().is_some());
+
+        // Retention pruning skips it too.
+        let expired = db.prune_expired_items(1).unwrap();
+        assert_eq!(expired.len(), 1);
+        assert_eq!(expired[0].content_hash, 13);
+        assert!(db.get_by_hash(11).unwrap().is_some());
+
+        // Clearing history with every opt-in still keeps pinned rows.
+        insert_item(&db, 14, "regular-later", "2026-01-04T00:00:00Z");
+        let result = db
+            .clear_clipboard_history("test-device", true, true, true)
+            .unwrap();
+        assert_eq!(result.deleted_items, 1);
+        assert!(db.get_by_hash(14).unwrap().is_none());
+        assert!(db.get_by_hash(11).unwrap().is_some());
     }
 
     #[test]

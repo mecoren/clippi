@@ -493,6 +493,9 @@ define_i18n! {
     ToastOpenExternalFailed: ("无法打开外部编辑器", "Couldn't open the external editor"),
     CtxFav:             ("收藏", "Fav"),
     CtxUnfav:           ("取消收藏", "Unfav"),
+    CtxPin:             ("置顶", "Pin"),
+    CtxUnpin:           ("取消置顶", "Unpin"),
+    CtxBatchPin:        ("批量置顶", "Batch pin"),
     ToastPreparingBitmapImage: ("正在准备位图图片...", "Preparing bitmap image..."),
 
     // ─── Edit panel ───

@@ -33,6 +33,8 @@ pub struct MenuItemContext {
     /// true = current format is HEX → show "Paste as RGB"
     pub is_hex: bool,
     pub is_favorite: bool,
+    /// 置顶状态（剪贴板条目的本地视图偏好）。
+    pub is_pinned: bool,
     pub is_link: bool,
     pub is_path: bool,
     /// Text entry (plain or rich) that has no dedicated open action of its own —
@@ -67,6 +69,7 @@ impl MenuItemContext {
             is_rich_text,
             is_hex,
             is_favorite: item.is_favorite,
+            is_pinned: item.pinned,
             is_link: item.meta_type == "link",
             is_path: item.meta_type == "path"
                 && crate::core::types::path_is_native(&item.full_text)
@@ -407,6 +410,23 @@ impl ContextMenu {
             shortcut: None,
         });
 
+        // --- Pin (local view preference; transfer entries have their own menu) ---
+        if !ctx.is_transfer {
+            items.push(RawMenuItem {
+                label: if ctx.is_pinned {
+                    I18nKey::CtxUnpin.text()
+                } else {
+                    I18nKey::CtxPin.text()
+                }
+                .into(),
+                action: "toggle_pin".into(),
+                icon: "PinIcon".into(),
+                danger: false,
+                fav: false,
+                shortcut: None,
+            });
+        }
+
         // --- Favorite ---
         let (fav_label, fav_icon) = if ctx.is_favorite {
             (I18nKey::CtxUnfav.text(), "StarIcon")
@@ -478,6 +498,14 @@ impl ContextMenu {
                 label: SEPARATOR_LABEL.into(),
                 action: String::new(),
                 icon: String::new(),
+                danger: false,
+                fav: false,
+                shortcut: None,
+            },
+            RawMenuItem {
+                label: I18nKey::CtxBatchPin.text().into(),
+                action: "batch_pin".into(),
+                icon: "PinIcon".into(),
                 danger: false,
                 fav: false,
                 shortcut: None,

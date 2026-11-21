@@ -1302,6 +1302,7 @@ fn upsert_transfer_item(
         custom_hotkey: String::new(),
         custom_hotkey_format: String::new(),
         existence_observed_at: String::new(),
+        pinned: false,
     };
     db.upsert_transfer_backing(&item)
         .map_err(|error| format!("save transfer item: {error}"))
@@ -1397,6 +1398,7 @@ fn transfer_clipboard_item(entry: &ManifestEntry, local_path: &str) -> Clipboard
         custom_hotkey: String::new(),
         custom_hotkey_format: String::new(),
         existence_observed_at: String::new(),
+        pinned: false,
     }
 }
 
@@ -1909,6 +1911,7 @@ mod tests {
             custom_hotkey: String::new(),
             custom_hotkey_format: String::new(),
             existence_observed_at: String::new(),
+            pinned: false,
         })
         .unwrap();
 

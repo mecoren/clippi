@@ -106,6 +106,11 @@ const DB_MIGRATIONS: &[DbMigration] = &[
         description: "Add sync_pending flag for sync-owned images awaiting blob download",
         sql: "",
     },
+    DbMigration {
+        version: 10,
+        description: "Add local-only pinned flag with its list ordering index",
+        sql: "",
+    },
 ];
 
 /// Run all pending database migrations, updating `PRAGMA user_version`.
@@ -145,6 +150,9 @@ pub fn run_db_migrations(conn: &Connection) -> rusqlite::Result<()> {
             if migration.version == 9 {
                 migrate_sync_pending(conn)?;
             }
+            if migration.version == 10 {
+                migrate_pinned(conn)?;
+            }
             conn.pragma_update(None, "user_version", migration.version)?;
         }
     }
@@ -157,6 +165,7 @@ pub fn run_db_migrations(conn: &Connection) -> rusqlite::Result<()> {
 fn repair_db_schema(conn: &Connection) -> rusqlite::Result<()> {
     migrate_item_hotkey_columns(conn)?;
     migrate_existence_observed_at(conn)?;
+    migrate_pinned(conn)?;
     // Schema repair only guarantees the column exists. If it was missing
     // entirely (partial migration / corrupted schema), the rows predate the
     // column and need the same one-time conservative backfill as the v9
@@ -165,6 +174,24 @@ fn repair_db_schema(conn: &Connection) -> rusqlite::Result<()> {
     if ensure_sync_pending_column(conn)? {
         backfill_sync_pending(conn, &images_prefix())?;
     }
+    Ok(())
+}
+
+/// v10: local-only pin flag plus the index that serves the pinned-first list
+/// ordering. Existing rows start unpinned; nothing is backfilled because a pin
+/// is an explicit user action.
+fn migrate_pinned(conn: &Connection) -> rusqlite::Result<()> {
+    if !column_exists(conn, "clipboard_items", "pinned")? {
+        conn.execute(
+            "ALTER TABLE clipboard_items ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+    // `(pinned, <time>)` matches `ORDER BY pinned DESC, updated_at|created_at DESC`.
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_pinned_updated ON clipboard_items(pinned, updated_at DESC);
+         CREATE INDEX IF NOT EXISTS idx_pinned_created ON clipboard_items(pinned, created_at DESC);",
+    )?;
     Ok(())
 }
 
