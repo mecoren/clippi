@@ -78,7 +78,6 @@ impl Attachment {
         card_height: f32,
         width: f32,
         height: f32,
-        prefer_right: bool,
     ) -> Option<LogicalRect> {
         if !self.main.isVisible() || self.main.isMiniaturized() {
             return None;
@@ -118,7 +117,6 @@ impl Attachment {
                 work.height as f32,
             ),
             (width, height),
-            prefer_right,
         ))
     }
 

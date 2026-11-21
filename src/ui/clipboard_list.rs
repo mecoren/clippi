@@ -1971,7 +1971,6 @@ impl ClipboardListView {
             panel: self.preview_panel.clone(),
             card_top: f32::from(card.top()),
             size,
-            prefer_right: pointer.x >= card.center().x,
             card: Bounds::new(
                 point(card.origin.x + origin.x, card.origin.y + origin.y),
                 card.size,

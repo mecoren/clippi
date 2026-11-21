@@ -129,7 +129,6 @@ impl Attachment {
         card_height: f32,
         width: f32,
         height: f32,
-        prefer_right: bool,
     ) -> Option<LogicalRect> {
         let (main, scale, work) = self.screen_context()?;
         let mut client_origin = POINT { x: 0, y: 0 };
@@ -158,7 +157,6 @@ impl Attachment {
             anchor_y,
             work_logical,
             (width, height),
-            prefer_right,
         ))
     }
 

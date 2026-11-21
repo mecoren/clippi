@@ -5130,7 +5130,6 @@ impl WindowManager {
             anchor.3,
             f32::from(target.size.width),
             f32::from(target.size.height),
-            target.prefer_right,
         ) else {
             return;
         };
@@ -5171,7 +5170,6 @@ impl WindowManager {
             anchor.3,
             f32::from(target.size.width),
             f32::from(target.size.height),
-            target.prefer_right,
         ) else {
             self.hide_preview_flyout(cx);
             return;

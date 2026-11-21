@@ -35,15 +35,19 @@ pub fn centered_dock_top(card_top: f32, card_height: f32, panel_height: f32) -> 
 /// `main` and `work` are `(x, y, width, height)` in logical screen pixels;
 /// `anchor_y` is the flyout's desired raw top edge in the same coordinate
 /// space (callers center it on the pointer anchor via [`centered_dock_top`]).
-/// The preferred side is used when both sides have room; otherwise the only
-/// fitting side is used. When neither side fits, the roomier side still wins
-/// and the flyout may overlap the main window — it must never be centered.
+///
+/// The width is decided **only by the room around the main window**, never by
+/// the pointer: the flyout sits on the right whenever the right side can hold
+/// it, and only flips to the left when it cannot. Following the pointer would
+/// slide the sheet sideways as the cursor crosses the card, which reads as the
+/// preview wandering instead of docking. When neither side fits, the roomier
+/// side still wins and the flyout may overlap the main window — it must never
+/// be centered.
 pub fn dock_flyout_bounds(
     main: (f32, f32, f32, f32),
     anchor_y: f32,
     work: (f32, f32, f32, f32),
     size: (f32, f32),
-    prefer_right: bool,
 ) -> (f32, f32, f32, f32) {
     let (main_x, _, main_width, _) = main;
     let (work_x, work_y, work_width, work_height) = work;
@@ -59,16 +63,10 @@ pub fn dock_flyout_bounds(
     let fits_left = left_space >= width;
 
     let on_right = match (fits_right, fits_left) {
-        (true, false) => true,
+        (true, _) => true,
         (false, true) => false,
-        (true, true) => prefer_right,
-        (false, false) => {
-            if (right_space - left_space).abs() < f32::EPSILON {
-                prefer_right
-            } else {
-                right_space > left_space
-            }
-        }
+        // Neither side can hold the sheet: keep the roomier one.
+        (false, false) => right_space >= left_space,
     };
 
     let raw_x = if on_right {
@@ -103,7 +101,6 @@ impl Attachment {
         _card_height: f32,
         _width: f32,
         _height: f32,
-        _prefer_right: bool,
     ) -> Option<LogicalRect> {
         None
     }
@@ -151,22 +148,19 @@ mod tests {
     }
 
     #[test]
-    fn prefers_the_requested_side_when_both_fit() {
+    fn stays_on_the_right_when_both_sides_fit() {
+        // 两侧都有余量时固定贴右侧：位置不能随指针左右漂移。
         let main = (800., 100., 324., 600.);
-        let right = dock_flyout_bounds(main, 120., WORK, SIZE, true);
-        assert_eq!(right.0, 800. + 324. + FLYOUT_GAP);
-        assert_eq!(right.1, 120.);
-
-        let left = dock_flyout_bounds(main, 120., WORK, SIZE, false);
-        assert_eq!(left.0, 800. - FLYOUT_GAP - 340.);
-        assert_eq!(left.1, 120.);
+        let bounds = dock_flyout_bounds(main, 120., WORK, SIZE);
+        assert_eq!(bounds.0, 800. + 324. + FLYOUT_GAP);
+        assert_eq!(bounds.1, 120.);
     }
 
     #[test]
     fn flips_to_the_side_with_room() {
         // Right of the main window has only 84px left.
         let main = (1500., 100., 324., 600.);
-        let bounds = dock_flyout_bounds(main, 120., WORK, SIZE, true);
+        let bounds = dock_flyout_bounds(main, 120., WORK, SIZE);
         assert_eq!(bounds.0, 1500. - FLYOUT_GAP - 340.);
         assert_eq!(bounds.2, 340.);
     }
@@ -175,7 +169,7 @@ mod tests {
     fn never_centers_when_neither_side_fits() {
         // Maximized main window: no outside room on either side.
         let main = (0., 0., 1920., 1080.);
-        let bounds = dock_flyout_bounds(main, 400., WORK, SIZE, true);
+        let bounds = dock_flyout_bounds(main, 400., WORK, SIZE);
         assert_eq!(bounds.0, 1920. - 340.);
         assert_eq!(bounds.1, 400.);
     }
@@ -183,14 +177,14 @@ mod tests {
     #[test]
     fn clamps_the_bottom_edge() {
         let main = (100., 700., 324., 380.);
-        let bounds = dock_flyout_bounds(main, 1000., WORK, SIZE, true);
+        let bounds = dock_flyout_bounds(main, 1000., WORK, SIZE);
         assert_eq!(bounds.1, 1080. - 300.);
     }
 
     #[test]
     fn fits_a_small_work_area() {
         let work = (0., 0., 300., 200.);
-        let bounds = dock_flyout_bounds((0., 0., 300., 200.), 50., work, SIZE, true);
+        let bounds = dock_flyout_bounds((0., 0., 300., 200.), 50., work, SIZE);
         assert_eq!(bounds, (0., 0., 300., 200.));
     }
 }
