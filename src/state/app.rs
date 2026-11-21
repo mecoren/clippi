@@ -1082,6 +1082,8 @@ impl AppState {
                 offset += page_limit;
             }
 
+            // The scan reads text only; the cards still need the icon.
+            self.db.fill_source_app_icons(&mut matches)?;
             return Ok(matches);
         }
 
@@ -1128,6 +1130,7 @@ impl AppState {
         // `sort_by_key` is stable, so the time order inside each group holds.
         favorite_matches.sort_by_key(|item| std::cmp::Reverse(item.pinned));
         favorite_matches.truncate(result_limit);
+        self.db.fill_source_app_icons(&mut favorite_matches)?;
         Ok(favorite_matches)
     }
 
@@ -1149,9 +1152,12 @@ impl AppState {
         page_limit: usize,
         offset: usize,
     ) -> rusqlite::Result<KeywordPage> {
-        let mut page =
-            self.db
-                .load_filtered_page_with_tags(filters, page_limit, offset, self.order_by())?;
+        let mut page = self.db.load_filtered_scan_page_with_tags(
+            filters,
+            page_limit,
+            offset,
+            self.order_by(),
+        )?;
         let exhausted = page.is_empty();
         if self.settings.filter_foreign_paths {
             page.retain(|item| {
