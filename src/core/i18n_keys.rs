@@ -198,6 +198,8 @@ define_i18n! {
     GroupQuickWindow:   ("快速粘贴窗口", "Quick paste window"),
     GroupListDisplay:   ("列表与显示", "List & display"),
     GroupCardLayout:    ("卡片布局", "Card layout"),
+    GroupMergePaste:    ("合并与批量粘贴", "Merge & batch paste"),
+    GroupPointerActions: ("指针动作", "Pointer actions"),
     GroupPreview:       ("预览", "Preview"),
     SettingPreviewHover: ("悬停预览", "Hover preview"),
     DescPreviewHoverOn:  ("悬停卡片后显示内容预览", "Show a preview while hovering a card"),
@@ -255,6 +257,19 @@ define_i18n! {
     DescSearchFavoritesFirstOff:   ("搜索结果保持当前时间排序", "Keep the current time order for search results"),
     SettingCardHeight:      ("卡片高度", "Card height"),
     DescCardHeight:         ("调整卡片高度", "Adjust card height"),
+    SettingMergeSeparator:  ("分隔符", "Separator"),
+    DescMergeSeparator:     ("合并条目、批量粘贴时插在两条之间的字符", "Inserted between entries when merging or pasting in batches"),
+    MergeSepNewline:        ("换行", "Newline"),
+    MergeSepSpace:          ("空格", "Space"),
+    MergeSepComma:          ("逗号", "Comma"),
+    MergeSepNone:           ("无", "None"),
+    SettingLeftClickSingle: ("左键单击", "Single click"),
+    SettingLeftClickDouble: ("左键双击", "Double click"),
+    SettingMiddleClick:     ("中键", "Middle click"),
+    DescPointerActions:     ("每种手势对应的动作", "Action performed by each gesture"),
+    ClickActionNone:        ("无动作", "No action"),
+    ClickActionCopy:        ("仅复制", "Copy only"),
+    ClickActionPaste:       ("粘贴", "Paste"),
     CardHeightTall:         ("高", "Tall"),
     CardHeightMed:          ("中", "Med"),
     CardHeightShort:        ("低", "Short"),
@@ -469,6 +484,13 @@ define_i18n! {
     CtxPreview:         ("预览", "Preview"),
     CtxPaste:           ("粘贴", "Paste"),
     CtxPastePlain:      ("粘贴纯文本", "Paste Plain Text"),
+    CtxCleanPaste:      ("清理后粘贴", "Paste cleaned"),
+    CleanRemoveLineBreaks: ("去除换行", "Remove line breaks"),
+    CleanTrimLines:     ("每行去空白去空行", "Trim each line"),
+    CleanTrim:          ("去首尾空白", "Trim spaces"),
+    CleanUppercase:     ("转为大写", "Uppercase"),
+    CleanLowercase:     ("转为小写", "Lowercase"),
+    ToastCleanPasteEmpty: ("清理后没有可粘贴的内容", "Nothing left to paste after cleaning"),
     CtxEdit:            ("编辑", "Edit"),
     CtxDelete:          ("删除", "Delete"),
     CtxTag:             ("标签", "Tag"),
@@ -829,4 +851,26 @@ define_i18n! {
     ListNoItems:            ("暂无条目", "No items yet"),
     ListEmptyHint:          ("复制的内容将显示在这里", "Copied items will appear here"),
     ListNotePlaceholder:    ("添加备注...", "Add a note..."),
+}
+
+/// 指针动作在设置页里的文案。
+pub fn click_action_label(action: crate::core::click_action::ClickAction) -> &'static str {
+    use crate::core::click_action::ClickAction as A;
+    match action {
+        A::None => I18nKey::ClickActionNone.text(),
+        A::Copy => I18nKey::ClickActionCopy.text(),
+        A::Paste => I18nKey::ClickActionPaste.text(),
+    }
+}
+
+/// 文本清理变换在菜单/提示里的文案。
+pub fn text_transform_label(transform: crate::core::text_transform::TextTransform) -> &'static str {
+    use crate::core::text_transform::TextTransform as T;
+    match transform {
+        T::RemoveLineBreaks => I18nKey::CleanRemoveLineBreaks.text(),
+        T::TrimLines => I18nKey::CleanTrimLines.text(),
+        T::Trim => I18nKey::CleanTrim.text(),
+        T::Uppercase => I18nKey::CleanUppercase.text(),
+        T::Lowercase => I18nKey::CleanLowercase.text(),
+    }
 }

@@ -2962,10 +2962,15 @@ impl AppState {
         self.touch_items_usage(&items);
 
         let n = items.len();
+        // Same separator as the merged entry, so "merge" and "paste one by one"
+        // produce the same text on the target.
+        let separator = crate::core::merge_text::separator(self.settings.merge_separator_mode());
         for (i, item) in items.iter().enumerate() {
-            // --- Newline separator between items (not before first) ---
+            // --- Separator between items (not before first) ---
             if i > 0 {
-                crate::services::clipboard_ops::write_text_to_clipboard("\n");
+                if !separator.is_empty() {
+                    crate::services::clipboard_ops::write_text_to_clipboard(separator);
+                }
                 std::thread::sleep(std::time::Duration::from_millis(20));
                 restore_paste_target();
                 let shortcuts = std::sync::Arc::new(self.settings.paste_shortcuts.clone());
@@ -3046,6 +3051,7 @@ impl AppState {
         }
 
         let now = chrono::Utc::now();
+        let separator_mode = self.settings.merge_separator_mode();
 
         // ── Check whether all items are rich text with HTML ──
         let all_rich = items.iter().all(|item| {
@@ -3064,10 +3070,10 @@ impl AppState {
                     extract_html_body(html)
                 })
                 .collect();
-            let merged_body = bodies.concat();
+            let merged_body = bodies.join(crate::core::merge_text::html_separator(separator_mode));
             let merged_html =
                 format!("<!DOCTYPE html>\n<html>\n<head><meta charset=\"utf-8\"></head>\n<body>\n{merged_body}\n</body>\n</html>");
-            let merged_plain = item_texts_for_merge(&items);
+            let merged_plain = item_texts_for_merge(&items, separator_mode);
 
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             std::hash::Hash::hash(&"merge", &mut hasher);
@@ -3083,8 +3089,8 @@ impl AppState {
 
             (ContentType::RichText, merged_plain, rd.to_json(), hash)
         } else {
-            // ── Plain-text path: concatenate full_text ──
-            let merged = item_texts_for_merge(&items);
+            // ── Plain-text path: join full_text with the configured separator ──
+            let merged = item_texts_for_merge(&items, separator_mode);
 
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             std::hash::Hash::hash(&"merge", &mut hasher);
@@ -3769,9 +3775,9 @@ fn extract_html_body(html: &str) -> String {
     html.trim().to_string()
 }
 
-/// Concatenate the `full_text` of all items (no separator).
-fn item_texts_for_merge(items: &[&ClipboardItem]) -> String {
-    items.iter().map(|item| item.full_text.as_str()).collect()
+/// Join the `full_text` of all items with the configured merge separator.
+fn item_texts_for_merge(items: &[&ClipboardItem], mode: &str) -> String {
+    crate::core::merge_text::join_texts(items.iter().map(|item| item.full_text.as_str()), mode)
 }
 
 // --- ── Transfer station methods ── ---
@@ -7368,15 +7374,42 @@ mod tests {
 
         assert_ne!(merged_id, existing_id);
         let merged = state.db.get_by_id(merged_id).unwrap().unwrap();
-        assert_eq!(merged.full_text, "ab");
+        // Default separator is a newline (see `core::merge_text`).
+        assert_eq!(merged.full_text, "a\nb");
         assert_eq!(
             state
                 .items
                 .iter()
-                .filter(|item| item.full_text == "ab")
+                .filter(|item| item.full_text == "a\nb")
                 .count(),
-            2
+            1
         );
+    }
+
+    #[test]
+    fn merge_uses_the_configured_separator() {
+        let (mut state, _dirty) = test_state();
+        let first = make_item(1, ContentType::PlainText, false, "a");
+        let second = make_item(2, ContentType::PlainText, false, "b");
+        let first_hash = first.content_hash;
+        let second_hash = second.content_hash;
+        state.db.upsert(&first).unwrap();
+        state.db.upsert(&second).unwrap();
+        let first_id = state.db.get_by_hash(first_hash).unwrap().unwrap().id;
+        let second_id = state.db.get_by_hash(second_hash).unwrap().unwrap().id;
+        state.reload_items();
+        state.selected_ids = vec![first_id, second_id];
+
+        state.settings.merge_separator = "comma".to_string();
+        let merged_id = state.merge_selected_items().unwrap();
+        let merged = state.db.get_by_id(merged_id).unwrap().unwrap();
+        assert_eq!(merged.full_text, "a, b");
+
+        state.settings.merge_separator = "none".to_string();
+        state.selected_ids = vec![first_id, second_id];
+        let merged_id = state.merge_selected_items().unwrap();
+        let merged = state.db.get_by_id(merged_id).unwrap().unwrap();
+        assert_eq!(merged.full_text, "ab");
     }
 
     // ── update_note sync_dirty ─────────────────────────────────────

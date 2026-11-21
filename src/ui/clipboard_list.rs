@@ -223,14 +223,14 @@ pub(crate) enum PasteClickMode {
 }
 
 impl PasteClickMode {
-    /// Normalize the persisted `paste_click_mode` string to a mode. The settings
-    /// accessor `paste_click_mode_normalized` already falls back to the default
-    /// on unknown values, so this only distinguishes the two known modes.
-    fn from_settings(value: &str) -> Self {
-        if value == "single_click" {
-            PasteClickMode::SingleClick
-        } else {
+    /// 手势模式由「左键单击是否有动作」决定：单击有动作就是单击模式（每次
+    /// 点击最多触发一次动作，双击事件不再重复触发）；单击无动作则退回双击
+    /// 模式，由第二次点击决定。
+    fn from_actions(actions: &crate::core::click_action::ClickActions) -> Self {
+        if actions.single == crate::core::click_action::ClickAction::None {
             PasteClickMode::DoubleClick
+        } else {
+            PasteClickMode::SingleClick
         }
     }
 }
@@ -1260,9 +1260,7 @@ impl ClipboardListView {
             return;
         }
 
-        let mode = PasteClickMode::from_settings(
-            &self.state.read(cx).settings.paste_click_mode_normalized(),
-        );
+        let mode = PasteClickMode::from_actions(&self.state.read(cx).settings.click_actions());
         match mode {
             PasteClickMode::SingleClick => self.handle_card_click_single(index, modifiers, cx),
             PasteClickMode::DoubleClick => self.handle_card_click_double(index, modifiers, cx),
@@ -1289,9 +1287,7 @@ impl ClipboardListView {
         let clicked_is_selected = self.selected_ids.contains(&item_id);
         let selected_count = self.selected_ids.len();
         let is_image = item.content_type == ContentType::Image;
-        let mode = PasteClickMode::from_settings(
-            &self.state.read(cx).settings.paste_click_mode_normalized(),
-        );
+        let mode = PasteClickMode::from_actions(&self.state.read(cx).settings.click_actions());
         let action = resolve_card_click_action(
             mode,
             clicked_is_selected,
@@ -1432,9 +1428,7 @@ impl ClipboardListView {
     /// already performed the paste, so the second click of a fast double-click
     /// must not paste again (§2.4 single paste per gesture).
     fn handle_double_click(&mut self, index: usize, modifiers: Modifiers, cx: &mut Context<Self>) {
-        let mode = PasteClickMode::from_settings(
-            &self.state.read(cx).settings.paste_click_mode_normalized(),
-        );
+        let mode = PasteClickMode::from_actions(&self.state.read(cx).settings.click_actions());
         if mode == PasteClickMode::SingleClick {
             self.modified_double_click_candidate = None;
             return;

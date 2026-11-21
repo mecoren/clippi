@@ -214,6 +214,30 @@ pub struct PortableSettingsV1 {
         deserialize_with = "deserialize_present",
         skip_serializing_if = "Option::is_none"
     )]
+    pub merge_separator: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub left_click_single: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub left_click_double: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub middle_click: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub filter_foreign_paths: Option<bool>,
 
     // ── Clipboard Features ──
@@ -384,6 +408,10 @@ impl PortableSettingsV1 {
             type_filter_config: settings.type_filter_config.clone(),
             search_favorites_first: Some(settings.search_favorites_first),
             paste_click_mode: Some(settings.paste_click_mode.clone()),
+            merge_separator: Some(settings.merge_separator.clone()),
+            left_click_single: Some(settings.left_click_single.clone()),
+            left_click_double: Some(settings.left_click_double.clone()),
+            middle_click: Some(settings.middle_click.clone()),
             filter_foreign_paths: Some(settings.filter_foreign_paths),
 
             ocr_enabled: settings.ocr_enabled,
@@ -462,6 +490,18 @@ impl PortableSettingsV1 {
         if let Some(value) = &self.paste_click_mode {
             result.paste_click_mode = value.clone();
         }
+        if let Some(value) = &self.merge_separator {
+            result.merge_separator = value.clone();
+        }
+        if let Some(value) = &self.left_click_single {
+            result.left_click_single = value.clone();
+        }
+        if let Some(value) = &self.left_click_double {
+            result.left_click_double = value.clone();
+        }
+        if let Some(value) = &self.middle_click {
+            result.middle_click = value.clone();
+        }
         if let Some(value) = self.filter_foreign_paths {
             result.filter_foreign_paths = value;
         }
@@ -533,6 +573,29 @@ impl PortableSettingsV1 {
                 return Err(ConfigSyncError::InvalidFieldValue(format!(
                     "unknown paste_click_mode: {mode}"
                 )));
+            }
+        }
+        if let Some(mode) = &self.merge_separator {
+            if !crate::core::merge_text::MODES.contains(&mode.as_str()) {
+                return Err(ConfigSyncError::InvalidFieldValue(format!(
+                    "unknown merge_separator: {mode}"
+                )));
+            }
+        }
+        for (field, value) in [
+            ("left_click_single", &self.left_click_single),
+            ("left_click_double", &self.left_click_double),
+            ("middle_click", &self.middle_click),
+        ] {
+            if let Some(action) = value {
+                // 空串表示「未配置」，是合法值。
+                if !action.is_empty()
+                    && crate::core::click_action::ClickAction::from_id(action).is_none()
+                {
+                    return Err(ConfigSyncError::InvalidFieldValue(format!(
+                        "unknown {field}: {action}"
+                    )));
+                }
             }
         }
         // theme

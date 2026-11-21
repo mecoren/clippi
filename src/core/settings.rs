@@ -284,6 +284,26 @@ pub struct AppSettings {
     pub image_alt_mode: String, // advanced paste mode for images: "bitmap" | "path" | "ocr"
     #[serde(default = "default_paste_click_mode")]
     pub paste_click_mode: String, // main-window paste gesture: "double_click" | "single_click"
+    /// 指针动作：左键单击 / 左键双击 / 中键，取值 `none | copy | paste`。
+    ///
+    /// 空串 = 未配置。三项全空时从旧的 `paste_click_mode` 推导（见
+    /// `core::click_action::resolve`），所以升级后手势行为不变；只要配置过
+    /// 其中任意一项，就以新字段为准，不再回看旧字段。
+    #[serde(default)]
+    pub left_click_single: String,
+    #[serde(default)]
+    pub left_click_double: String,
+    #[serde(default)]
+    pub middle_click: String,
+    /// 合并条目 / 批量粘贴的分隔符：`newline | space | comma | none`。
+    /// 见 `core::merge_text`；未知值按默认（换行）处理。
+    #[serde(default = "default_merge_separator")]
+    pub merge_separator: String,
+    /// 「清理后粘贴」上次使用的变换 id（`core::text_transform::TextTransform`）。
+    /// Ctrl+Shift+Enter 复用这一个，菜单里选过哪种就记哪种。本地偏好，
+    /// 与 `recent_*` 一类一样不进配置同步。
+    #[serde(default = "default_last_clean_paste")]
+    pub last_clean_paste: String,
     #[serde(default)]
     pub edit_auto_save: bool,
     /// 「Alt 快捷切换」：按住 Alt 浮出快捷键提示（收藏按钮 D、类型标签 1~9），
@@ -306,6 +326,17 @@ fn default_image_alt_mode() -> String {
 
 fn default_paste_click_mode() -> String {
     "double_click".to_string()
+}
+
+fn default_merge_separator() -> String {
+    crate::core::merge_text::DEFAULT_MODE.to_string()
+}
+
+/// 默认复用「去首尾空白」：可逆、无副作用，也是最常用的一种清理。
+fn default_last_clean_paste() -> String {
+    crate::core::text_transform::TextTransform::Trim
+        .id()
+        .to_string()
 }
 
 fn default_qr_enabled() -> bool {
@@ -475,6 +506,11 @@ impl Default for AppSettings {
             always_reset_to_clipboard: false,
             image_alt_mode: default_image_alt_mode(),
             paste_click_mode: default_paste_click_mode(),
+            left_click_single: String::new(),
+            left_click_double: String::new(),
+            middle_click: String::new(),
+            merge_separator: default_merge_separator(),
+            last_clean_paste: default_last_clean_paste(),
             edit_auto_save: false,
             alt_shortcuts_enabled: true,
         }
@@ -726,13 +762,25 @@ impl AppSettings {
         }
     }
 
-    /// Unknown persisted values fall back to the default gesture.
-    pub fn paste_click_mode_normalized(&self) -> String {
-        if self.paste_click_mode == "single_click" {
-            "single_click".to_string()
-        } else {
-            default_paste_click_mode()
-        }
+    /// 「清理后粘贴」的复用目标；未知 id 退回默认变换。
+    pub fn last_clean_paste_transform(&self) -> crate::core::text_transform::TextTransform {
+        crate::core::text_transform::TextTransform::from_id(&self.last_clean_paste)
+            .unwrap_or(crate::core::text_transform::TextTransform::Trim)
+    }
+
+    /// 合并 / 批量粘贴使用的分隔符（已归一为已知模式）。
+    pub fn merge_separator_mode(&self) -> &'static str {
+        crate::core::merge_text::normalize_mode(&self.merge_separator)
+    }
+
+    /// 解析后的指针动作（新字段优先，缺失时按旧的 `paste_click_mode` 推导）。
+    pub fn click_actions(&self) -> crate::core::click_action::ClickActions {
+        crate::core::click_action::resolve(
+            &self.left_click_single,
+            &self.left_click_double,
+            &self.middle_click,
+            &self.paste_click_mode,
+        )
     }
 }
 
@@ -2219,7 +2267,10 @@ mod tests {
         let parsed: AppSettings = toml::from_str(&legacy_config).unwrap();
 
         assert_eq!(parsed.paste_click_mode, "double_click");
-        assert_eq!(parsed.paste_click_mode_normalized(), "double_click");
+        assert_eq!(
+            parsed.click_actions().double,
+            crate::core::click_action::ClickAction::Paste
+        );
     }
 
     #[test]
@@ -2289,7 +2340,10 @@ mod tests {
         let loaded: AppSettings = toml::from_str(&serialized).unwrap();
 
         assert_eq!(loaded.paste_click_mode, "single_click");
-        assert_eq!(loaded.paste_click_mode_normalized(), "single_click");
+        assert_eq!(
+            loaded.click_actions().single,
+            crate::core::click_action::ClickAction::Paste
+        );
     }
 
     #[test]
@@ -2306,9 +2360,13 @@ mod tests {
         };
 
         // Raw persisted value is preserved verbatim by serde (no enum validation);
-        // the normalized accessor is the single source of truth for consumers.
+        // `click_actions` is the single source of truth for consumers, and an
+        // unknown mode keeps the double-click behavior.
         assert_eq!(settings.paste_click_mode, "bogus");
-        assert_eq!(settings.paste_click_mode_normalized(), "double_click");
+        assert_eq!(
+            settings.click_actions().double,
+            crate::core::click_action::ClickAction::Paste
+        );
     }
 
     #[test]
