@@ -3827,27 +3827,25 @@ impl WindowManager {
                     let Some(this) = weak_self.upgrade() else {
                         return;
                     };
-                    let proceed = this
-                        .update(cx, |wm, _cx| {
-                            if ns_window == 0 {
-                                log::info!("wm show aborted reason=ns_window_zero");
-                                wm.main_show_pending = false;
-                                return false;
-                            }
-                            if !(wm.visible && wm.ns_window == ns_window) {
-                                log::info!(
-                                    "wm show aborted reason=state_changed visible={}",
-                                    wm.visible
-                                );
-                                wm.main_show_pending = false;
-                                // See the Windows branch: never keep a "visible"
-                                // state bit for a window that was not ordered front.
-                                wm.visible = false;
-                                return false;
-                            }
-                            true
-                        })
-                        .unwrap_or(false);
+                    let proceed = this.update(cx, |wm, _cx| {
+                        if ns_window == 0 {
+                            log::info!("wm show aborted reason=ns_window_zero");
+                            wm.main_show_pending = false;
+                            return false;
+                        }
+                        if !(wm.visible && wm.ns_window == ns_window) {
+                            log::info!(
+                                "wm show aborted reason=state_changed visible={}",
+                                wm.visible
+                            );
+                            wm.main_show_pending = false;
+                            // See the Windows branch: never keep a "visible"
+                            // state bit for a window that was not ordered front.
+                            wm.visible = false;
+                            return false;
+                        }
+                        true
+                    });
                     if !proceed {
                         return;
                     }
@@ -6264,19 +6262,17 @@ impl WindowManager {
                 let Some(this) = weak_self.upgrade() else {
                     return;
                 };
-                let (active, still_visible, reached) = this
-                    .update(cx, |wm, _cx| {
-                        (
-                            wm.surface_generation == restore_generation
-                                && wm
-                                    .main_compacted_state
-                                    .as_ref()
-                                    .is_some_and(|s| s.generation == restore_generation),
-                            wm.visible,
-                            wm.macos_window_content_size_is(ns_window, target_w, target_h),
-                        )
-                    })
-                    .unwrap_or((false, false, false));
+                let (active, still_visible, reached) = this.update(cx, |wm, _cx| {
+                    (
+                        wm.surface_generation == restore_generation
+                            && wm
+                                .main_compacted_state
+                                .as_ref()
+                                .is_some_and(|s| s.generation == restore_generation),
+                        wm.visible,
+                        wm.macos_window_content_size_is(ns_window, target_w, target_h),
+                    )
+                });
                 if !active || !still_visible {
                     return; // superseded or hidden again while restoring
                 }
@@ -6315,27 +6311,24 @@ impl WindowManager {
             let Some(this) = weak_self.upgrade() else {
                 return;
             };
-            let shown = this
-                .update(cx, |wm, _cx| {
-                    if !wm.visible
-                        || wm.surface_generation != restore_generation
-                        || wm
-                            .main_compacted_state
-                            .as_ref()
-                            .is_none_or(|s| s.generation != restore_generation)
-                    {
-                        return None;
-                    }
-                    // Clear the guard only in the same update that claims the
-                    // confirmed full-size window, before it is positioned and
-                    // ordered front. This prevents the 200 ms geometry poll from
-                    // ever observing an in-flight 1×1 restore as a normal
-                    // visible window.
-                    wm.main_compacted_state = None;
-                    Some((wm.calculate_position(), wm.ns_window))
-                })
-                .ok()
-                .flatten();
+            let shown = this.update(cx, |wm, _cx| {
+                if !wm.visible
+                    || wm.surface_generation != restore_generation
+                    || wm
+                        .main_compacted_state
+                        .as_ref()
+                        .is_none_or(|s| s.generation != restore_generation)
+                {
+                    return None;
+                }
+                // Clear the guard only in the same update that claims the
+                // confirmed full-size window, before it is positioned and
+                // ordered front. This prevents the 200 ms geometry poll from
+                // ever observing an in-flight 1×1 restore as a normal
+                // visible window.
+                wm.main_compacted_state = None;
+                Some((wm.calculate_position(), wm.ns_window))
+            });
             // Position and order front outside the app borrow: the move must not
             // be made while an update is on the stack (see `position_ns_window`).
             // Nothing is awaited in between, so the window still appears at the
@@ -6427,17 +6420,15 @@ impl WindowManager {
                 let Some(this) = weak_self.upgrade() else {
                     return;
                 };
-                let (alive, still_hidden, reached) = this
-                    .update(cx, |wm, _cx| {
-                        let alive = wm
-                            .quick_compacted_state
-                            .as_ref()
-                            .is_some_and(|s| s.generation == generation)
-                            && wm.surface_generation == generation;
-                        let reached = wm.macos_window_content_size_is(ns_window_ptr, 1.0, 1.0);
-                        (alive, !wm.quick_visible, reached)
-                    })
-                    .unwrap_or((false, false, false));
+                let (alive, still_hidden, reached) = this.update(cx, |wm, _cx| {
+                    let alive = wm
+                        .quick_compacted_state
+                        .as_ref()
+                        .is_some_and(|s| s.generation == generation)
+                        && wm.surface_generation == generation;
+                    let reached = wm.macos_window_content_size_is(ns_window_ptr, 1.0, 1.0);
+                    (alive, !wm.quick_visible, reached)
+                });
                 if !alive || !still_hidden {
                     return; // superseded or re-shown before the shrink landed
                 }
@@ -6535,11 +6526,9 @@ impl WindowManager {
             let Some(this) = weak_self.upgrade() else {
                 return;
             };
-            let should_apply = this
-                .update(cx, |wm, _cx| {
-                    wm.quick_visible && wm.surface_generation == generation
-                })
-                .unwrap_or(false);
+            let should_apply = this.update(cx, |wm, _cx| {
+                wm.quick_visible && wm.surface_generation == generation
+            });
             if !should_apply {
                 return; // superseded, or hidden before the frame landed
             }
@@ -6550,7 +6539,7 @@ impl WindowManager {
             // update released the app borrow and GPUI's `on_resize` can update
             // `viewport_size`. Calling AppKit's resize directly here would
             // re-enter the borrow we are currently inside.
-            let window_handle = this.update(cx, |wm, _cx| wm.quick_window).ok().flatten();
+            let window_handle = this.update(cx, |wm, _cx| wm.quick_window);
             if let Some(handle) = window_handle {
                 let _ = cx.update_window(handle, |_view, window, _cx| {
                     window.resize(size(px(QUICK_WINDOW_WIDTH), px(height)));
@@ -6573,25 +6562,23 @@ impl WindowManager {
                 let Some(this) = weak_self.upgrade() else {
                     return;
                 };
-                let decision = this
-                    .update(cx, |wm, _cx| {
-                        if !wm.quick_visible || wm.surface_generation != generation {
-                            return Some(false);
-                        }
-                        if wm.macos_window_content_size_is(ns_window, target_w, target_h) {
-                            Some(true)
-                        } else if Instant::now() >= deadline {
-                            wm.macos_compaction_disabled = true;
-                            log::warn!(
-                                "quick show: resize not confirmed within 100ms; \
+                let decision = this.update(cx, |wm, _cx| {
+                    if !wm.quick_visible || wm.surface_generation != generation {
+                        return Some(false);
+                    }
+                    if wm.macos_window_content_size_is(ns_window, target_w, target_h) {
+                        Some(true)
+                    } else if Instant::now() >= deadline {
+                        wm.macos_compaction_disabled = true;
+                        log::warn!(
+                            "quick show: resize not confirmed within 100ms; \
                                  compaction disabled (gen {generation})"
-                            );
-                            Some(true)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(Some(false));
+                        );
+                        Some(true)
+                    } else {
+                        None
+                    }
+                });
                 match decision {
                     Some(true) => {
                         this.update(cx, |wm, _cx| {
