@@ -4236,6 +4236,12 @@ impl Render for ClipboardListView {
                                                     .privacy_types(this.state.read(cx).settings.privacy_protection_types.clone())
                                                     .show_original_on_hover(show_original_on_hover)
                                                     .show_page_title(show_page_title)
+                                                    .plain_content_preview(
+                                                        this.state
+                                                            .read(cx)
+                                                            .settings
+                                                            .plain_content_preview,
+                                                    )
                                                     .source_is_uploading(source_is_uploading)
                                                     .image_cache(image_cache.clone())
                                                     .search_terms(search_terms.clone())

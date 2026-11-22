@@ -1136,6 +1136,89 @@ fn rtf_fallback_preview(rich: &RichData, item: &ClipboardItem) -> RichPreview {
     RichPreview::Plain(item.full_text.clone())
 }
 
+/// 纯文本内容预览使用的文本：关闭内容样式还原后卡片上显示的字符串。
+///
+/// HTML 取可见文本（原始标记对用户不可读）；链接与隐私类型沿用设置里的
+/// 遮罩规则，关掉样式不代表把敏感内容明文铺到卡片上；其余类型直接使用
+/// 条目原文。
+fn plain_preview_text(item: &ClipboardItem, privacy_types: &[String]) -> String {
+    match item.display_kind() {
+        DisplayKind::Html => {
+            let rich = RichData::from_json(&item.rich_data);
+            let raw_html = rich.html.unwrap_or_else(|| item.full_text.clone());
+            let normalized = rich_preview::normalize_clipboard_html_for_render(&raw_html);
+            let visible_text = html_text::visible_text(&normalized);
+            if visible_text.is_empty() {
+                item.full_text.clone()
+            } else {
+                visible_text
+            }
+        }
+        DisplayKind::Link => crate::core::secret::sensitive_preview_to_text_with_types(
+            &item.full_text,
+            "link",
+            privacy_types,
+        ),
+        DisplayKind::Email | DisplayKind::Phone | DisplayKind::Secret => {
+            crate::core::secret::sensitive_preview_to_text_with_types(
+                &item.full_text,
+                &item.meta_type,
+                privacy_types,
+            )
+        }
+        _ => item.full_text.clone(),
+    }
+}
+
+#[cfg(test)]
+mod plain_preview_tests {
+    use super::plain_preview_text;
+    use crate::core::settings::default_privacy_types;
+    use crate::core::types::{ClipboardItem, ContentType, RichData};
+
+    fn make_item(text: &str, content_type: ContentType, meta_type: &str) -> ClipboardItem {
+        let mut item = ClipboardItem::new_text(1, text, content_type, None, None);
+        item.meta_type = meta_type.to_string();
+        item
+    }
+
+    #[test]
+    fn html_items_show_visible_text_without_markup() {
+        let rich = RichData {
+            html: Some("<p>Hello <b>world</b></p>".to_string()),
+            ..RichData::default()
+        };
+        let item =
+            ClipboardItem::new_text(1, "Hello world", ContentType::RichText, None, Some(&rich));
+        let text = plain_preview_text(&item, &default_privacy_types());
+        assert!(text.contains("Hello world"), "{text}");
+        assert!(!text.contains('<'), "{text}");
+    }
+
+    #[test]
+    fn plain_text_items_keep_the_raw_text() {
+        let raw = "  line one\n\tline two  ";
+        let item = make_item(raw, ContentType::PlainText, "");
+        assert_eq!(plain_preview_text(&item, &default_privacy_types()), raw);
+    }
+
+    #[test]
+    fn markdown_items_keep_markup_verbatim() {
+        let raw = "# Title\n**bold** and [link](https://example.com)";
+        let item = make_item(raw, ContentType::PlainText, "markdown");
+        assert_eq!(plain_preview_text(&item, &default_privacy_types()), raw);
+    }
+
+    #[test]
+    fn sensitive_items_stay_masked() {
+        let raw = "password: super-secret-value";
+        let item = make_item(raw, ContentType::PlainText, "secret");
+        let text = plain_preview_text(&item, &default_privacy_types());
+        assert_ne!(text, raw);
+        assert!(!text.contains("super-secret-value"), "{text}");
+    }
+}
+
 fn card_content_matches_search(item: &ClipboardItem, terms: &[String]) -> bool {
     if terms.is_empty() {
         return false;
@@ -1294,6 +1377,9 @@ pub struct ClipboardCard {
     /// When true and a link item has a cached page title, show the title
     /// instead of the URL path in the card content area.
     show_page_title: bool,
+    /// 纯文本内容预览：内容区不做富文本 / 链接 / 颜色等样式还原，
+    /// 直接显示可读文本（图片、文件、颜色仍保留各自的类型预览）。
+    plain_content_preview: bool,
     /// Whether the source file is queued for or currently being uploaded.
     source_is_uploading: bool,
     image_cache: Option<Entity<RetainAllImageCache>>,
@@ -1331,6 +1417,7 @@ impl ClipboardCard {
             show_original_on_hover: false,
             privacy_types: crate::core::settings::default_privacy_types(),
             show_page_title: false,
+            plain_content_preview: false,
             source_is_uploading: false,
             image_cache: None,
             search_terms: Vec::new(),
@@ -1481,6 +1568,11 @@ impl ClipboardCard {
         self
     }
 
+    pub fn plain_content_preview(mut self, value: bool) -> Self {
+        self.plain_content_preview = value;
+        self
+    }
+
     pub fn source_is_uploading(mut self, value: bool) -> Self {
         self.source_is_uploading = value;
         self
@@ -1523,6 +1615,7 @@ impl RenderOnce for ClipboardCard {
             show_original_on_hover,
             privacy_types,
             show_page_title,
+            plain_content_preview,
             source_is_uploading,
             image_cache,
             search_terms,
@@ -1970,9 +2063,39 @@ impl RenderOnce for ClipboardCard {
             // In auto mode, cards with notes are clamped to 68px by
             // estimate_card_height. The base div clips oversized content.
             let content_kind = item.display_kind();
+            // 纯文本内容预览：内容区不做富文本 / 链接 / 颜色等样式还原，
+            // 只显示可读文本。图片、文件、颜色属于类型预览而非文本样式，
+            // 保持各自的原样渲染。
+            let plain_preview_active = plain_content_preview
+                && !matches!(
+                    content_kind,
+                    DisplayKind::Image | DisplayKind::File | DisplayKind::Color
+                );
             // Link and Path rendering (now sub-types of PlainText via meta_type)
             // must be checked before the catch-all PlainText arm below.
-            if let Some((name, path)) = remote_path_preview.clone() {
+            if plain_preview_active {
+                let text = plain_preview_text(&item, &privacy_types);
+                let content_box = div()
+                    .flex_1()
+                    .w_full()
+                    .text_size(sc(12.))
+                    .text_color(text_1)
+                    .line_height(sc(18.))
+                    .overflow_hidden();
+                if search_terms.is_empty() {
+                    content_box.child(text.chars().take(300).collect::<String>())
+                } else {
+                    content_box.child(search_highlight::render_highlighted_block(
+                        text,
+                        &search_terms,
+                        text_1,
+                        highlight_bg,
+                        highlight_text,
+                        12.0,
+                        18.0,
+                    ))
+                }
+            } else if let Some((name, path)) = remote_path_preview.clone() {
                 render_path_like_preview(
                     name,
                     path,

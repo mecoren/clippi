@@ -33,6 +33,7 @@ impl SettingsPanel {
         let record_files = app.settings.record_files;
         let search_favorites_first = app.settings.search_favorites_first;
         let card_height_mode = app.settings.card_height_mode.clone();
+        let plain_content_preview = app.settings.plain_content_preview;
         let merge_separator = app.settings.merge_separator_mode().to_string();
         let click_actions = app.settings.click_actions();
         let left_click_single = click_actions.single.id().to_string();
@@ -313,7 +314,7 @@ impl SettingsPanel {
             container.child(self.settings_group(I18nKey::GroupListDisplay.text(), list_rows));
 
         // --- Card layout ---
-        let card_rows: Vec<AnyElement> = vec![{
+        let mut card_rows: Vec<AnyElement> = vec![{
             let state = state.clone();
             let this = this.clone();
             self.setting_row_with_tabs(
@@ -345,6 +346,33 @@ impl SettingsPanel {
             )
         }
         .into_any_element()];
+        card_rows.push(
+            {
+                let this = this.clone();
+                self.render_toggle_row(
+                    I18nKey::SettingPlainContent,
+                    I18nKey::DescPlainContentOn,
+                    I18nKey::DescPlainContentOff,
+                    plain_content_preview,
+                    window,
+                    cx,
+                    move |state, _this, _window, cx| {
+                        state.update(cx, |s, _s_cx| {
+                            s.settings.plain_content_preview = !s.settings.plain_content_preview;
+                            s.settings.save();
+                        });
+                        this.update(cx, |_panel, cx| {
+                            cx.emit(super::SettingsEvent::ClipboardSettingsChanged {
+                                reload_items: false,
+                                scroll_to_top: false,
+                            });
+                            cx.notify();
+                        });
+                    },
+                )
+            }
+            .into_any_element(),
+        );
         container =
             container.child(self.settings_group(I18nKey::GroupCardLayout.text(), card_rows));
 

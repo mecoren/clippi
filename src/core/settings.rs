@@ -115,6 +115,10 @@ pub struct AppSettings {
     pub saved_window_x: i32,
     pub saved_window_y: i32,
     pub card_height_mode: String, // "low" | "medium" | "high" | "auto"
+    /// 纯文本内容预览：卡片内容区只显示原始文本，不做富文本 / 链接 / 颜色等
+    /// 样式还原（EcoPaste 式扁平预览）。默认关闭，保持既有的样式化预览。
+    #[serde(default)]
+    pub plain_content_preview: bool,
     /// Single font-size entry: one multiplier (see `ui::font`) applied to every
     /// text role so the title/body/meta hierarchy stays intact.
     /// Written as an exact multiplier by the font-size slider.
@@ -434,6 +438,7 @@ impl Default for AppSettings {
             saved_window_x: -1,
             saved_window_y: -1,
             card_height_mode: "auto".to_string(),
+            plain_content_preview: false,
             font_size_level: default_font_size_level(),
             font_size_scale: None,
             font_family: String::new(),
