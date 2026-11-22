@@ -124,6 +124,14 @@ impl Attachment {
         self.flyout.orderOut(None);
     }
 
+    /// Start/stop routing wheel input over the compact sheet to the list.
+    ///
+    /// Windows needs an explicit native forward because the wheel follows the
+    /// window under the pointer; Cocoa already delivers it to the scroll view
+    /// under the cursor and the list keeps scrolling on its own, so this is a
+    /// no-op here. 未在 macOS 实测（Windows 为主验证平台）。
+    pub fn set_wheel_to_main(&self, _forward: bool) {}
+
     /// Expanded rect for the full preview, grown from the current frame while
     /// preserving the side and staying centered on the card's center line
     /// (Cocoa coordinates internally).

@@ -5241,6 +5241,15 @@ impl WindowManager {
         let Some(attachment) = self.preview_flyout_attachment.clone() else {
             return;
         };
+        // The compact sheet shows a clipped excerpt and has no scroll target of
+        // its own, so a notch over it must keep scrolling the list; the expanded
+        // sheet owns the wheel (body scroll, image zoom). Read the content view
+        // rather than the flag: the view is what actually holds the wheel.
+        let expanded = self
+            .preview_flyout_view
+            .as_ref()
+            .is_some_and(|view| view.read(cx).is_expanded());
+        attachment.set_wheel_to_main(!expanded);
         let from = attachment.current_rect().unwrap_or(to);
         let Some(flyout_handle) = self.preview_flyout_window else {
             return;

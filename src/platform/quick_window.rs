@@ -18,12 +18,12 @@ use windows_sys::Win32::{
     },
     UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
     UI::WindowsAndMessaging::{
-        GetWindowLongW, SetWindowLongW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE, HTCLIENT,
-        HWND_TOPMOST, MA_NOACTIVATE, PA_NOACTIVATE, SWP_FRAMECHANGED, SWP_HIDEWINDOW,
-        SWP_NOACTIVATE, SWP_NOCOPYBITS, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER,
-        SWP_SHOWWINDOW, WM_DISPLAYCHANGE, WM_MOUSEACTIVATE, WM_NCCALCSIZE, WM_NCDESTROY,
-        WM_NCHITTEST, WM_POINTERACTIVATE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-        WS_THICKFRAME,
+        GetAncestor, GetWindowLongW, PostMessageW, SetWindowLongW, SetWindowPos, GA_ROOTOWNER,
+        GWL_EXSTYLE, GWL_STYLE, HTCLIENT, HWND_TOPMOST, MA_NOACTIVATE, PA_NOACTIVATE,
+        SWP_FRAMECHANGED, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOCOPYBITS, SWP_NOMOVE,
+        SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WM_DISPLAYCHANGE,
+        WM_MOUSEACTIVATE, WM_NCCALCSIZE, WM_NCDESTROY, WM_NCHITTEST, WM_POINTERACTIVATE,
+        WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_THICKFRAME,
     },
 };
 
@@ -162,6 +162,30 @@ pub fn hide(hwnd: isize) -> bool {
                 | SWP_NOSIZE
                 | SWP_NOZORDER,
         ) != 0
+    }
+}
+
+/// Re-post a wheel message to `hwnd`'s root owner, i.e. the main window.
+///
+/// Windows 10/11 deliver wheel input to the window **under the pointer**
+/// (`HKCU\Control Panel\Desktop\MouseWheelRouting` = 2 by default), not to the
+/// window that owns the focus. A non-activating popup therefore swallows the
+/// wheel whenever the cursor rests on it: the popup has nothing to scroll and
+/// the main list never hears about the notch, so scrolling looks dead until the
+/// popup hides. Forwarding keeps the list scrolling, and the list's own scroll
+/// handler then dismisses the popup.
+///
+/// Returns false when there is no owner to hand the message to; callers then
+/// pass the message on to GPUI as usual.
+pub fn forward_wheel_to_owner(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> bool {
+    // SAFETY: read-only ancestor query on our own window, then a queued post to
+    // the owner that same GPUI app created.
+    unsafe {
+        let owner = GetAncestor(hwnd, GA_ROOTOWNER);
+        if owner.is_null() || owner == hwnd {
+            return false;
+        }
+        PostMessageW(owner, message, wparam, lparam) != 0
     }
 }
 
