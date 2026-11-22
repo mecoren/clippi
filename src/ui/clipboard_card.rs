@@ -3153,6 +3153,10 @@ impl RenderOnce for ClipboardCard {
                         div().absolute().right(sc(0.)).top(sc(0.)).child(
                             HoverToolbar::new(toolbar_props)
                                 .buttons(buttons)
+                                // 本卡的弹出菜单开着时（`toolbar_pinned` 正是这个
+                                // 状态）不要再显示按钮 tooltip：它从按钮下方弹出，
+                                // 会正好压住菜单第一项。
+                                .suppress_tooltip(toolbar_pinned)
                                 .when_some(toolbar_bounds, |toolbar, tracker| {
                                     toolbar.track_bounds(item.id, tracker)
                                 })

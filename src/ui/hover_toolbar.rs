@@ -140,8 +140,9 @@ impl HoverToolbarProps {
 ///
 /// Links open in the browser, paths and files reveal in the file manager, and
 /// text (including markdown/HTML/color entries) opens in the system's default
-/// text editor.
-fn single_open_action(props: &HoverToolbarProps) -> Option<&'static str> {
+/// text editor. The card's three-dot menu renders the button
+/// (`ContextMenu::for_card_more`), so the rule lives next to the props it reads.
+pub(crate) fn single_open_action(props: &HoverToolbarProps) -> Option<&'static str> {
     if props.meta_type == "link" {
         return Some("open_location");
     }
@@ -171,6 +172,10 @@ pub struct HoverToolbar {
     on_action: Option<ToolbarActionHandler>,
     on_more: Option<ToolbarMoreHandler>,
     bounds_tracker: Option<(i64, ToolbarBounds)>,
+    /// 本卡片的弹出菜单正开着：菜单从按钮下方展开，而按钮此刻仍被悬停，
+    /// 不下掉 tooltip 就会压住菜单第一项（实测「更多操作」挡住了「预览」）。
+    /// 关掉 tooltip 后 gpui 会在下一帧撤掉已显示的那一个。
+    suppress_tooltip: bool,
 }
 
 impl HoverToolbar {
@@ -181,7 +186,14 @@ impl HoverToolbar {
             on_action: None,
             on_more: None,
             bounds_tracker: None,
+            suppress_tooltip: false,
         }
+    }
+
+    /// 菜单打开期间不再显示按钮 tooltip，避免它盖住菜单内容。
+    pub fn suppress_tooltip(mut self, value: bool) -> Self {
+        self.suppress_tooltip = value;
+        self
     }
 
     pub fn buttons(mut self, buttons: Vec<ToolbarButton>) -> Self {
@@ -289,12 +301,8 @@ pub fn buttons_for(props: &HoverToolbarProps, p: &Palette) -> Vec<ToolbarButton>
             Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
         );
 
-        // --- Preview (single item) ---
-        push(
-            "PreviewIcon",
-            "preview",
-            Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
-        );
+        // 「预览」与「打开」是低频动作，收进三点菜单，见
+        // `ContextMenu::for_card_more`；工具条只留每天都点的按钮。
 
         // --- Clean paste: 5 text transforms in a small popup menu ---
         if matches!(
@@ -338,14 +346,7 @@ pub fn buttons_for(props: &HoverToolbarProps, p: &Palette) -> Vec<ToolbarButton>
             );
         }
 
-        // --- Open (one button for the whole family) ---
-        if let Some(open_action) = single_open_action(props) {
-            push(
-                "OpenIcon",
-                open_action,
-                Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
-            );
-        }
+        // 「打开」（链接 / 路径 / 文本）同样收进三点菜单。
 
         // --- Pin (local view preference, sits next to favorite) ---
         // 置顶状态用主题色：与卡片左条、头部图钉同色，不再是独立的紫色。
@@ -453,6 +454,7 @@ impl RenderOnce for HoverToolbar {
             on_action,
             on_more,
             bounds_tracker,
+            suppress_tooltip,
         } = self;
 
         let p = Palette::current(cx);
@@ -466,7 +468,6 @@ impl RenderOnce for HoverToolbar {
 
         let is_favorite = props.is_favorite;
         let selected_count = props.selected_count;
-        let meta_type = props.meta_type.clone();
 
         // Include the gaps in one hit area: the row underneath should not
         // receive clicks meant for a tab.
@@ -523,26 +524,22 @@ impl RenderOnce for HoverToolbar {
                     "more" => I18nKey::CardMoreActions.text().to_string(),
                     "clean" => I18nKey::CtxCleanPaste.text().to_string(),
                     "copy" => I18nKey::CtxCopy.text().to_string(),
-                    "preview" => I18nKey::CtxPreview.text().to_string(),
                     "extract_links" => I18nKey::ExtractLinks.text().to_string(),
                     "paste_plain" => I18nKey::CtxPastePlain.text().to_string(),
                     "paste_image_bitmap" => I18nKey::CtxPasteImageBitmap.text().to_string(),
-                    "open_image" => I18nKey::CtxOpenImage.text().to_string(),
-                    "open_text" => I18nKey::CtxOpenText.text().to_string(),
                     "qr_action" => I18nKey::CtxDetectQr.text().to_string(),
-                    "open_location" if meta_type == "link" => {
-                        I18nKey::CtxOpenLink.text().to_string()
-                    }
-                    "open_location" => I18nKey::CtxOpenFolder.text().to_string(),
                     "edit" => I18nKey::CtxEdit.text().to_string(),
                     "edit_note" => I18nKey::EditNote.text().to_string(),
                     "show_tag_picker" => I18nKey::CtxTag.text().to_string(),
                     "toggle_favorite" if is_favorite => I18nKey::CtxUnfav.text().to_string(),
                     "toggle_favorite" => I18nKey::CtxFav.text().to_string(),
+                    "toggle_pin" if props.is_pinned => I18nKey::CtxUnpin.text().to_string(),
+                    "toggle_pin" => I18nKey::CtxPin.text().to_string(),
                     "delete" => I18nKey::CtxDelete.text().to_string(),
                     "batch_paste" => I18nKey::CtxBatchPasteN.fmt(&[&selected_count.to_string()]),
                     "merge_selected" => I18nKey::CtxMergeSelected.text().to_string(),
                     "batch_tag" => I18nKey::CtxBatchTag.text().to_string(),
+                    "batch_pin" => I18nKey::CtxBatchPin.text().to_string(),
                     "batch_favorite" => I18nKey::CtxBatchFav.text().to_string(),
                     "batch_delete" => I18nKey::CtxBatchDelete.text().to_string(),
                     "open_transfer_location" => I18nKey::CtxOpenFolder.text().to_string(),
@@ -594,7 +591,12 @@ impl RenderOnce for HoverToolbar {
                             cx.notify();
                         });
                     })
-                    .tooltip(move |window, cx| widgets::tooltip(tooltip.clone(), window, cx))
+                    .when(!suppress_tooltip, |button| {
+                        let tooltip = tooltip.clone();
+                        button.tooltip(move |window, cx| {
+                            widgets::tooltip(tooltip.clone(), window, cx)
+                        })
+                    })
                     .child({
                         let icon = icon.clone();
                         let color = if is_delete {

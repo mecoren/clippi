@@ -18,7 +18,10 @@ use gpui::*;
 
 use super::widgets;
 
+use super::hover_toolbar::{single_open_action, HoverToolbarProps};
+
 use crate::core::i18n_keys::I18nKey;
+use crate::core::types::{ClipboardItem, ContentType};
 
 type MenuActionHandler = Rc<dyn Fn(&str, &mut Window, &mut App)>;
 type MenuDismissHandler = Rc<dyn Fn(&mut Window, &mut App)>;
@@ -599,29 +602,62 @@ impl ContextMenu {
         Self::new().items(items)
     }
 
-    /// 「更多操作」菜单：卡片头部的三点按钮弹出，只放低频动作
-    /// （备注、标签），常用动作仍留在悬浮工具条上。
-    pub fn for_card_more(image_actions: bool) -> Self {
+    /// 「更多操作」菜单：卡片头部的三点按钮弹出，放低频动作
+    /// （预览、打开、备注、标签），常用动作仍留在悬浮工具条上。
+    ///
+    /// `item` 决定这一条能做什么：「打开」按条目类型互斥（链接进浏览器、
+    /// 路径与文件进文件管理器、文本进系统编辑器，规则见
+    /// `hover_toolbar::single_open_action`），图片则换成「粘贴为位图」
+    /// 与「查看图片」。
+    pub fn for_card_more(item: Option<&ClipboardItem>) -> Self {
         // 只有几条短文案，按最窄一档显示，避免在卡片右侧留一大片空白。
         let mut items = Vec::new();
-        if image_actions {
-            // 图片专属的低频动作：工具条上不再各占一个按钮。
+        if let Some(item) = item {
             items.push(RawMenuItem {
-                label: I18nKey::CtxPasteImageBitmap.text().into(),
-                action: "paste_image_bitmap".into(),
-                icon: "ImageIcon".into(),
+                label: I18nKey::CtxPreview.text().into(),
+                action: "preview".into(),
+                icon: "PreviewIcon".into(),
                 danger: false,
                 fav: false,
-                shortcut: None,
+                shortcut: ctrl_shortcut("P"),
             });
-            items.push(RawMenuItem {
-                label: I18nKey::CtxOpenImage.text().into(),
-                action: "open_image".into(),
-                icon: "OpenIcon".into(),
-                danger: false,
-                fav: false,
-                shortcut: None,
-            });
+            if let Some(action) = single_open_action(&HoverToolbarProps::from_item(item, 1, false))
+            {
+                let (label, icon) = match action {
+                    "open_location" if item.meta_type == "link" => {
+                        (I18nKey::CtxOpenLink, "LinkIcon")
+                    }
+                    "open_location" => (I18nKey::CtxOpenFolder, "OpenIcon"),
+                    _ => (I18nKey::CtxOpenText, "OpenIcon"),
+                };
+                items.push(RawMenuItem {
+                    label: label.text().into(),
+                    action: action.into(),
+                    icon: icon.into(),
+                    danger: false,
+                    fav: false,
+                    shortcut: None,
+                });
+            }
+            if item.content_type == ContentType::Image {
+                // 图片专属的低频动作：工具条上不再各占一个按钮。
+                items.push(RawMenuItem {
+                    label: I18nKey::CtxPasteImageBitmap.text().into(),
+                    action: "paste_image_bitmap".into(),
+                    icon: "ImageIcon".into(),
+                    danger: false,
+                    fav: false,
+                    shortcut: None,
+                });
+                items.push(RawMenuItem {
+                    label: I18nKey::CtxOpenImage.text().into(),
+                    action: "open_image".into(),
+                    icon: "OpenIcon".into(),
+                    danger: false,
+                    fav: false,
+                    shortcut: None,
+                });
+            }
         }
         items.push(RawMenuItem {
             label: I18nKey::EditNote.text().into(),

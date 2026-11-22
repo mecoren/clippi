@@ -429,11 +429,9 @@ const DRAG_OUT_THRESHOLD: f32 = 6.0;
 /// 这些菜单只包含该按钮自己的动作，条目上下文仍取自 `context_menu_item`。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CardMenu {
-    /// 三点按钮：备注、标签，图片条目另加「粘贴为位图」「查看图片」。
-    More {
-        /// 当前条目是图片：把这两条图片专属动作收进菜单，而不是摆在工具条上。
-        image_actions: bool,
-    },
+    /// 三点按钮：预览、打开、备注、标签；图片条目另加「粘贴为位图」
+    /// 「查看图片」。条目类型由 `context_menu_item` 现场推导，不用预先传入。
+    More,
     /// 清理按钮：五种清理后粘贴。
     Clean,
 }
@@ -4101,7 +4099,6 @@ impl Render for ClipboardListView {
                                         let list_view = list_entity.clone();
                                         let focus_handle = this.focus_handle.clone();
                                         let item_clone = item.clone();
-                                        let card_is_image = item_clone.content_type == ContentType::Image;
                                         let source_is_uploading = item_clone.content_type
                                             == ContentType::File
                                             && FileData::from_json(&item_clone.file_data)
@@ -4341,9 +4338,7 @@ impl Render for ClipboardListView {
                                                     .on_toolbar_more(move |kind, position, window, cx| {
                                                         let menu = match kind {
                                                             "clean" => CardMenu::Clean,
-                                                            _ => CardMenu::More {
-                                                                image_actions: card_is_image,
-                                                            },
+                                                            _ => CardMenu::More,
                                                         };
                                                         list_for_more.update(cx, |this, cx| {
                                                             this.open_card_menu(

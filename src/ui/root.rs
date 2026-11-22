@@ -2024,9 +2024,7 @@ impl Render for RootView {
                             let l = list_for_action.clone();
                             if let Some(card_menu) = card_menu {
                                 let menu = match card_menu {
-                                    CardMenu::More { image_actions } => {
-                                        ContextMenu::for_card_more(image_actions)
-                                    }
+                                    CardMenu::More => ContextMenu::for_card_more(item.as_ref()),
                                     CardMenu::Clean => ContextMenu::for_clean_paste(),
                                 };
                                 menu.with_position(menu_x, menu_y, win_w, win_h)
