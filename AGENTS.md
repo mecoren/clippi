@@ -203,8 +203,21 @@ GUI 无法自动测试，合并后必须人工过一遍，并在此清单上逐�
 ### 10.1 单一事实来源
 
 - **更新日志只有 `RELEASES.md` 一份**：`release.yml` 用 `scripts/extract_release_notes.sh` 取该版本段当 GitHub Release 正文，`src/core/changelog.rs` 用 `include_str!` 内嵌同一份给应用内「版本」页。只改这一处，不在 Rust、README 里另抄一份。
-- **版本号真值**在 `Cargo.toml` 的 `[package] version`；`[package.metadata.bundle] version` 必须同值（`release.yml` 的 audit job 会校验），`Cargo.lock` 的 `clippi` 条目由 `cargo check` 自动重写，不手改。应用内显示一律取 `env!("CARGO_PKG_VERSION")`，禁止硬编码。
-- **发布日期真值**在 `src/core/changelog.rs` 的 `RELEASE_DATES`（`RELEASES.md` 不写日期），发版时在表头插入 `("X.Y.Z", "YYYY-MM-DD")`；漏了应用内该版本就没有日期。
+- **版本号真值**在 `Cargo.toml` 的 `[package] version`。应用内显示一律取 `env!("CARGO_PKG_VERSION")`（`src/ui/settings/version.rs`、`src/platform/tray.rs`、`src/services/update.rs`、`src/services/url_title.rs`），**禁止新增版本字面量**；注释里的举例也写 `vX.Y.Z` 占位，不要写具体版本（已有的会随发版过期，不为它单独改）。
+- **版本号不是只有一处，是「一处真值 + 若干必须同步的副本」**，不要误以为只改 `Cargo.toml` 就够了：
+
+  | 位置 | 关系 | 漏改后果 |
+  |---|---|---|
+  | `Cargo.toml` `[package] version` | 真值 | — |
+  | `Cargo.toml` `[package.metadata.bundle] version` | 手工副本（`cargo-bundle` 格式要求，无法引用 crate 版本） | `release.yml` audit 失败 |
+  | `Cargo.lock` 的 `clippi` 条目 | 派生 | 不用手改，`cargo check` 自动重写 |
+  | `RELEASES.md` 的 `# Version X.Y.Z` | 手工副本 | audit 失败（`extract_release_notes.sh` 取不到段） |
+  | `src/core/changelog.rs` 的 `RELEASE_DATES` | 手工表 | **任何校验都不查**，漏了应用内只是没日期 |
+  | git tag `vX.Y.Z` | 手工 | audit 校验 tag 与 crate 版本相等，不等则构建前失败 |
+  | `installer.nsi` / DMG `Info.plist` | 参数注入（`-DVERSION` / `cargo metadata`） | 无副本，不用手改 |
+
+- **发布日期的真值**在 `src/core/changelog.rs` 的 `RELEASE_DATES`（`RELEASES.md` 不写日期），发版时在表头插入 `("X.Y.Z", "YYYY-MM-DD")`；漏了应用内该版本就没有日期。
+- **校验覆盖是有缺口的**：远端 audit 只保证 `Cargo.toml` 两处一致、tag 等于 crate 版本、`RELEASES.md` 有该版本段；`RELEASE_DATES` 的单测只校验日期格式、版本倒序与正文非空，**不会发现「最新版本没进表」**。所以第 10.2 节第 5 步的日期表插入必须人工确认，不能指望 CI 拦。
 
 ### 10.2 执行顺序
 
@@ -212,7 +225,7 @@ GUI 无法自动测试，合并后必须人工过一遍，并在此清单上逐�
 2. **收集提交**：`git log --oneline --no-merges <上一版本 tag>..HEAD`。纳入：`wait:` 本地功能与优化、同步上游带进来的用户可见功能与缺陷修复（按用户能感知的结果写，不看提交前缀）。排除：`docs:` / `chore:` / `ci:` / `style:` / `test:` 噪音、纯内部重构、版本号与 `RELEASES.md` 自身的发布提交、bot 贡献墙。**一个功能的多条提交合并成一条**，不罗列中间过程。
 3. **定版本号**：用户点名就用；没点名沿用 `Cargo.toml` 当前版本（该版本已有日志段就直接补齐，不新建重复段）。**已打过 tag 的版本段永不改写**；用户要求「按现在的代码重写某个已发布版本的日志」时先按第 9 节确认，且只动文案、不动版本号与 tag。
 4. **写日志**：在 `RELEASES.md` 最顶部插入 `# Version X.Y.Z`，按 `### 新增` / `### 优化` / `### 修复` 分类（没有内容的类整节省略），每条写成 `- **短标题** (#issue) — 用户能感知的变化与适用平台`，段末用 `---` 分隔。分类口径：新增＝新功能或新设置项；优化＝同一功能更快、更顺手、更清晰（含交互细化）；修复＝缺陷、崩溃、回归。术语、标点与相邻版本段保持一致，不写提交流水账，不写未实测的平台结论。
-5. **同步版本号**：改 `Cargo.toml` 两处版本，`RELEASE_DATES` 插表头，再跑 `cargo check` 重写 `Cargo.lock`。
+5. **同步版本号**：按 10.1 的清单逐个对齐——改 `Cargo.toml` 两处版本，`RELEASE_DATES` 插表头（这一步没有 CI 兜底），再跑 `cargo check` 重写 `Cargo.lock`。
 6. **校验**：第 8 节全套（`cargo fmt` / `cargo clippy --all-targets` / `cargo check` / `cargo test`）零失败；确认 `RELEASES.md` 有 `# Version X.Y.Z` 段，且能在 bash 环境跑 `scripts/extract_release_notes.sh X.Y.Z RELEASES.md` 输出非空（Windows 无 bash 时人工核对标题与段末分隔）。这与远端 audit 同口径，本地先过一遍，免得白等一次构建。`src/core/changelog.rs` 的单测会校验版本段按语义化版本倒序、日期形如 `YYYY-MM-DD` 且不倒序、每段正文非空——占位空段过不了 `cargo test`。
 7. **提交**：`wait: 发布 X.Y.Z`，一个提交只含版本号、`RELEASES.md`、日期表，不夹带功能改动。
 8. **打 tag**：`git tag -a vX.Y.Z -m "Clippi X.Y.Z"`（沿用既有 annotated tag 形态）。tag 名必须等于 `v` + `Cargo.toml` 版本，否则 audit 在构建前就失败。
