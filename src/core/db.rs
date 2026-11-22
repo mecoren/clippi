@@ -76,6 +76,14 @@ pub struct PrunedClipboardItem {
 }
 
 const SOURCE_APP_ICON_INLINE_LIMIT: usize = 256 * 1024;
+/// How many ids one tag query binds at a time.
+///
+/// SQLite's `MAX_VARIABLE_NUMBER` defaults to 32766 and rejects the whole
+/// statement above it, so a page-wide `IN (?,?…)` silently broke list loading
+/// once a page exceeded that many rows (32,767 items reproduced it). Batching
+/// keeps every statement far below the limit regardless of history size.
+const TAG_QUERY_BATCH: usize = 8_000;
+
 const LIST_FULL_TEXT_LIMIT: usize = 8192;
 const LIST_RICH_HTML_LIMIT: usize = 4096;
 const LIST_RICH_AUX_LIMIT: usize = 2048;
@@ -942,36 +950,49 @@ impl Database {
         &self,
         item_ids: &[i64],
     ) -> SqlResult<std::collections::HashMap<i64, Vec<TagInfo>>> {
+        self.get_tags_for_items_batched(item_ids, TAG_QUERY_BATCH)
+    }
+
+    /// [`Self::get_tags_for_items`] with an explicit batch width.
+    ///
+    /// The width is a parameter only so tests can exercise the multi-batch path
+    /// against a handful of rows.
+    fn get_tags_for_items_batched(
+        &self,
+        item_ids: &[i64],
+        batch: usize,
+    ) -> SqlResult<std::collections::HashMap<i64, Vec<TagInfo>>> {
         let mut map: std::collections::HashMap<i64, Vec<TagInfo>> =
             std::collections::HashMap::new();
-        if item_ids.is_empty() {
-            return Ok(map);
-        }
-        let placeholders: Vec<String> = item_ids.iter().map(|_| "?".to_string()).collect();
-        let query = format!(
-            "SELECT it.item_id, t.id, t.uid, t.name, t.color, t.updated_at FROM tags t \
-             INNER JOIN item_tags it ON t.id = it.tag_id \
-             WHERE it.item_id IN ({}) ORDER BY it.used_at DESC",
-            placeholders.join(",")
-        );
-        let mut stmt = self.conn.prepare(&query)?;
-        let params: Vec<rusqlite::types::Value> = item_ids.iter().map(|&id| (id).into()).collect();
-        let rows = stmt.query_map(rusqlite::params_from_iter(params), |row| {
-            let updated_str: String = row.get::<_, String>(5).unwrap_or_default();
-            Ok((
-                row.get::<_, i64>(0)?,
-                TagInfo {
-                    id: row.get(1)?,
-                    uid: row.get(2)?,
-                    name: row.get(3)?,
-                    color: row.get(4)?,
-                    updated_at: updated_str,
-                },
-            ))
-        })?;
-        for row in rows {
-            let (item_id, tag) = row?;
-            map.entry(item_id).or_default().push(tag);
+        let batch = batch.max(1);
+        for ids in item_ids.chunks(batch) {
+            let query = format!(
+                "SELECT it.item_id, t.id, t.uid, t.name, t.color, t.updated_at FROM tags t \
+                 INNER JOIN item_tags it ON t.id = it.tag_id \
+                 WHERE it.item_id IN ({}) ORDER BY it.used_at DESC",
+                vec!["?"; ids.len()].join(",")
+            );
+            // `prepare_cached` keeps one compiled statement per batch width, so
+            // a full page pays the compile cost once instead of once per batch.
+            let mut stmt = self.conn.prepare_cached(&query)?;
+            let params: Vec<rusqlite::types::Value> = ids.iter().map(|&id| (id).into()).collect();
+            let rows = stmt.query_map(rusqlite::params_from_iter(params), |row| {
+                let updated_str: String = row.get::<_, String>(5).unwrap_or_default();
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    TagInfo {
+                        id: row.get(1)?,
+                        uid: row.get(2)?,
+                        name: row.get(3)?,
+                        color: row.get(4)?,
+                        updated_at: updated_str,
+                    },
+                ))
+            })?;
+            for row in rows {
+                let (item_id, tag) = row?;
+                map.entry(item_id).or_default().push(tag);
+            }
         }
         Ok(map)
     }
@@ -3013,6 +3034,30 @@ mod tests {
             rusqlite::params![text, hash as i64, updated, updated],
         )
         .unwrap();
+    }
+
+    /// 一页 id 全绑进一条 `IN (?,…)` 会超过 SQLite 的变量上限（32766）；
+    /// 标签查询必须分批，且分批之后一行标签都不能漏。
+    #[test]
+    fn tags_for_a_large_page_are_fetched_in_batches() {
+        let db = Database::open(":memory:").unwrap();
+        let tag_id = db.create_tag("work", "#FF0000").unwrap();
+        let mut ids = Vec::new();
+        for hash in 1..=5u64 {
+            insert_item(&db, hash, "text", "2026-01-01T00:00:00Z");
+            let id = db.get_by_hash(hash).unwrap().unwrap().id;
+            db.add_item_tag(id, tag_id).unwrap();
+            ids.push(id);
+        }
+        // batch=2 强制拆成三次查询，等价于真实页面的分批路径。
+        let map = db.get_tags_for_items_batched(&ids, 2).unwrap();
+        assert_eq!(map.len(), ids.len());
+        for id in &ids {
+            let tags = &map[id];
+            assert_eq!(tags.len(), 1);
+            assert_eq!(tags[0].name, "work");
+        }
+        assert!(db.get_tags_for_items(&[]).unwrap().is_empty());
     }
 
     #[test]

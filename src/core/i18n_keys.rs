@@ -851,6 +851,8 @@ define_i18n! {
     // ─── Clipboard list ───
     ListNoItems:            ("暂无条目", "No items yet"),
     ListEmptyHint:          ("复制的内容将显示在这里", "Copied items will appear here"),
+    ListLoadFailed:         ("历史加载失败", "Failed to load history"),
+    ListLoadFailedRetry:    ("重试", "Retry"),
     ListNotePlaceholder:    ("添加备注...", "Add a note..."),
 }
 

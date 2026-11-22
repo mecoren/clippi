@@ -1775,6 +1775,36 @@ impl ClipboardListView {
         }
     }
 
+    /// Grow the loaded page when scrolling nears the end of it.
+    ///
+    /// The list starts with a single page (see `AppState`'s incremental
+    /// pagination). The virtual list renders the visible slice only, so the
+    /// rest of the history is fetched lazily: once fewer than a few viewport
+    /// heights of content remain below the fold, double the page width and
+    /// re-sync. Deferred so this never mutates entities from a render pass —
+    /// `refresh_pointer_hover` also runs at the top of `render`.
+    fn request_next_page_if_near_end(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let Some(&content_height) = self.row_offsets.last() else {
+            return;
+        };
+        let viewport_height = f32::from(self.hover_viewport.size.height);
+        if viewport_height <= 0. {
+            return;
+        }
+        // 内容坐标系里视口底边之上的剩余内容：滚得越深，`hover_scroll_y`
+        // 越负，剩余越少。
+        let below_fold = content_height + f32::from(self.hover_scroll_y) - viewport_height;
+        if below_fold > viewport_height * 3. {
+            return;
+        }
+        cx.defer_in(window, |this, _window, cx| {
+            if this.state.update(cx, |state, _| state.grow_loaded_page()) {
+                this.sync_items_from_state(cx);
+                cx.notify();
+            }
+        });
+    }
+
     /// Hover is geometric, independent of keyboard selection and item ordering.
     /// Run on pointer movement and after layout so wheel/scrollbar/programmatic
     /// scrolling works even when the pointer is stationary.
@@ -1786,6 +1816,7 @@ impl ClipboardListView {
             self.toolbar_bounds.set(None);
             self.hover_scroll_y = scroll_y;
             self.hide_preview_panel(cx);
+            self.request_next_page_if_near_end(window, cx);
         }
         let pointer = window.mouse_position();
         let bounds = self.scroll_handle.bounds();
@@ -3617,10 +3648,74 @@ impl Render for ClipboardListView {
         let text_3 = p.ink_3;
 
         let empty_state = items_count == 0;
+        let load_error = self.state.read(cx).load_error.clone();
 
         // --- Empty state — render a lightweight static placeholder, completely ---
         // --- avoiding the virtual list subtree so GPUI releases its element cache. ---
         if empty_state {
+            // An empty list has two very different causes: nothing has been
+            // copied yet, or the query failed. Both used to render as "no items
+            // yet", so a load failure looked like an empty history. The error
+            // case now says so and offers a retry.
+            let body = match load_error {
+                Some(error) => div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(4.))
+                    .child(
+                        div()
+                            .text_size(fs(13.))
+                            .text_color(p.warn)
+                            .child(I18nKey::ListLoadFailed.text()),
+                    )
+                    .child(
+                        div()
+                            .max_w(px(280.))
+                            .text_size(fs(12.))
+                            .text_color(text_3)
+                            .child(error),
+                    )
+                    .child(
+                        div()
+                            .id("clippi-list-load-retry")
+                            .mt(px(4.))
+                            .px(px(10.))
+                            .py(px(4.))
+                            .rounded(px(6.))
+                            .text_size(fs(12.))
+                            .text_color(p.accent)
+                            .cursor_pointer()
+                            .hover(|style| style.bg(p.hover))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _, cx| {
+                                    this.state.update(cx, |state, _| state.reload_items());
+                                    this.sync_items_from_state(cx);
+                                    cx.notify();
+                                }),
+                            )
+                            .child(I18nKey::ListLoadFailedRetry.text()),
+                    )
+                    .into_any_element(),
+                None => div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .child(
+                        div()
+                            .text_size(fs(13.))
+                            .text_color(text_2)
+                            .child(I18nKey::ListNoItems.text()),
+                    )
+                    .child(
+                        div()
+                            .text_size(fs(12.))
+                            .text_color(text_3)
+                            .child(I18nKey::ListEmptyHint.text()),
+                    )
+                    .into_any_element(),
+            };
             return div()
                 // Keep the focused list in the dispatch tree so root-level
                 // shortcuts and modifier releases still work with no results.
@@ -3641,18 +3736,7 @@ impl Render for ClipboardListView {
                 .pb(px(8.))
                 .rounded_b(px(12.))
                 .bg(bg)
-                .child(
-                    div()
-                        .text_size(fs(13.))
-                        .text_color(text_2)
-                        .child(I18nKey::ListNoItems.text()),
-                )
-                .child(
-                    div()
-                        .text_size(fs(12.))
-                        .text_color(text_3)
-                        .child(I18nKey::ListEmptyHint.text()),
-                )
+                .child(body)
                 .into_any_element();
         }
 

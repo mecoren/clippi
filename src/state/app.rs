@@ -35,6 +35,13 @@ const KEYWORD_SEARCH_SCAN_MULTIPLIER: usize = 8;
 /// future "the window froze while searching" report can be checked against the
 /// log instead of reproduced.
 const KEYWORD_SEARCH_SLOW_LOG: std::time::Duration = std::time::Duration::from_millis(100);
+/// 主列表首批（以及每次扩容后的目标增量）加载多少行。
+///
+/// 全量预载让启动随历史长度线性变慢（100 万条实测 5.4 s，其中标签分批
+/// 查询修复前还会整体失败）。虚拟列表只渲染可见行，所以主列表改为增量
+/// 分页：首屏只取这么多，滚动接近已加载页末尾时由列表视图调
+/// [`AppState::grow_loaded_page`] 翻倍页宽，上限仍是 `query_limit()`。
+const LIST_PAGE_STEP: usize = 500;
 const LIST_FULL_TEXT_LIMIT: usize = 8192;
 const LIST_RICH_HTML_LIMIT: usize = 4096;
 const LIST_RICH_AUX_LIMIT: usize = 2048;
@@ -124,6 +131,20 @@ pub struct AppState {
     pub items: Vec<ClipboardItem>,
     /// 库里的条目总数（不受筛选影响），标题栏显示用。每次重载列表时刷新。
     pub total_item_count: u32,
+    /// 最近一次列表加载的问题描述，`None` 表示正常。
+    ///
+    /// 列表为空有两种原因：真的没有数据，或者查询失败。以前两者都渲染成
+    /// 「暂无条目」，用户看到的是空历史而不是错误。列表页把这个字段当空态
+    /// 里的错误提示 + 重试入口用。
+    pub load_error: Option<String>,
+    /// 主列表当前最多允许加载多少行（增量分页的页宽）。
+    ///
+    /// 起始为 [`LIST_PAGE_STEP`]，滚动接近页尾时翻倍，上限 `query_limit()`。
+    /// `reload_items` 始终按这个宽度读取，所以「已加载的列表」永远是结果集
+    /// 的一个前缀——追加不会移动既有行，选择、拖拽、悬停都仍然安全。
+    loaded_limit: usize,
+    /// 结果集（按当前筛选）在库里已经没有更多行可加载。
+    list_exhausted: bool,
     pub source_app_names: Vec<String>,
     pub source_app_icons: std::collections::HashMap<String, std::path::PathBuf>,
     /// In-memory image placeholders awaiting background persistence.
@@ -510,6 +531,29 @@ fn reorder_by_usage(items: &mut [ClipboardItem], sort_by_created: bool, favorite
     }
 }
 
+/// Read one page of the list, degrading to "no tags" when only the tag lookup
+/// fails.
+///
+/// Tags are decoration: letting a tag-query failure empty the whole page turns a
+/// recoverable error into "my history is gone" — which is exactly what happened
+/// when a page exceeded SQLite's bind-variable limit. `Err` therefore means the
+/// items themselves could not be read, and the caller must surface it.
+fn load_page_or_degrade_tags(
+    db: &Database,
+    filters: &ClipboardFilters,
+    limit: usize,
+    order_by: &str,
+) -> Result<Vec<ClipboardItem>, String> {
+    match db.load_filtered_list_with_tags(filters, limit, order_by) {
+        Ok(items) => Ok(items),
+        Err(tags_error) => {
+            log::warn!("Tags unavailable, listing the page without them: {tags_error}");
+            db.load_filtered_list(filters, limit, order_by)
+                .map_err(|error| error.to_string())
+        }
+    }
+}
+
 /// Deduplicate ids preserving first-occurrence order.
 fn dedupe_ids(ids: &[i64]) -> Vec<i64> {
     let mut seen = std::collections::HashSet::new();
@@ -545,6 +589,8 @@ impl AppState {
         } else {
             (settings.max_items as usize).saturating_mul(2).max(200)
         };
+        // 增量分页：首屏只取一页，其余行在滚动接近页尾时按需扩容。
+        let loaded_limit = LIST_PAGE_STEP.min(query_limit);
         let db = Database::open(&db_path.to_string_lossy())
             .unwrap_or_else(|e| panic!("Failed to open database at {db_path:?}: {e}"));
         // Startup cleanup is deferred to the first WindowManager poll tick
@@ -552,12 +598,19 @@ impl AppState {
         // schedules the work on a background thread.
         let initial_cleanup_dirty = false;
 
-        let items = db
-            .load_filtered_list_with_tags(&ClipboardFilters::default(), query_limit, order_by)
-            .unwrap_or_else(|e| {
-                log::error!("Failed to load initial items: {e}");
-                Vec::new()
-            });
+        let (items, load_error) = match load_page_or_degrade_tags(
+            &db,
+            &ClipboardFilters::default(),
+            loaded_limit,
+            order_by,
+        ) {
+            Ok(items) => (items, None),
+            Err(error) => {
+                log::error!("Failed to load initial items: {error}");
+                (Vec::new(), Some(error))
+            }
+        };
+        let list_exhausted = items.len() < loaded_limit;
 
         let mut tags = db.get_all_tags().unwrap_or_else(|e| {
             log::error!("Failed to load tags: {e}");
@@ -597,6 +650,9 @@ impl AppState {
             db,
             items,
             total_item_count,
+            load_error,
+            loaded_limit,
+            list_exhausted,
             pending_images: Vec::new(),
             tags,
             filters: ClipboardFilters::default(),
@@ -712,11 +768,14 @@ impl AppState {
         let source_started = Instant::now();
         self.refresh_source_apps();
         let source_apps = source_started.elapsed();
+        // 增量分页的页宽。`query_limit()` 仍是硬顶：用户把「最大保存条数」
+        // 调小后，已加载的页宽不允许超过新的顶。
+        let limit_used = self.loaded_limit.min(self.query_limit());
         let result = if self.filters.has_keyword() {
             self.load_keyword_filtered_items(&self.filters)
+                .map_err(|error| error.to_string())
         } else {
-            self.db
-                .load_filtered_list_with_tags(&self.filters, self.query_limit(), self.order_by())
+            load_page_or_degrade_tags(&self.db, &self.filters, limit_used, self.order_by())
         };
 
         let keyword_filtered = self.filters.has_keyword();
@@ -738,8 +797,20 @@ impl AppState {
                     });
                 }
                 self.items = items;
+                self.load_error = None;
+                if !keyword_filtered {
+                    // 少于页宽说明结果集已经见底；关键字搜索走自己的扫描
+                    // 上限，不参与这个判定。
+                    self.list_exhausted = self.items.len() < limit_used;
+                }
             }
-            Err(e) => log::error!("Failed to reload items: {e}"),
+            Err(e) => {
+                // Keep whatever is already on screen: a failed reload must not
+                // blank a list the user is reading. The banner only shows when
+                // the list is empty, so this message stays the honest record.
+                log::error!("Failed to reload items: {e}");
+                self.load_error = Some(e);
+            }
         }
         // 标题栏的计数是「库里一共多少条」，与当前筛选和分页无关。
         match self.db.count_clipboard_items() {
@@ -780,6 +851,25 @@ impl AppState {
                 quick_page_skipped
             );
         }
+    }
+
+    /// 把主列表的已加载页宽翻倍并立即重读。
+    ///
+    /// 返回 `false` 表示没有扩容，调用方无需刷新：库里已经见底、已到
+    /// `query_limit()` 上限，或当前在关键字搜索/中转站视图下（两者各有
+    /// 自己的结果集，不参与主列表分页）。
+    pub fn grow_loaded_page(&mut self) -> bool {
+        let cap = self.query_limit();
+        if self.list_exhausted
+            || self.loaded_limit >= cap
+            || self.filters.has_keyword()
+            || self.transfer_filter_active
+        {
+            return false;
+        }
+        self.loaded_limit = (self.loaded_limit * 2).min(cap);
+        self.reload_items();
+        true
     }
 
     /// Whether the quick popup keeps its own filter state.
@@ -1183,6 +1273,10 @@ impl AppState {
         self.quick_items.clear();
         self.quick_items.shrink_to_fit();
         self.selected_ids.clear();
+        // 隐藏期间把页宽重置回首屏大小：重新显示时从一页起步，而不是
+        // 带着隐藏前滚到很深时的页宽立即重读那么多次行。
+        self.loaded_limit = LIST_PAGE_STEP.min(self.query_limit());
+        self.list_exhausted = false;
     }
 
     /// Record whether the quick popup is on screen.
@@ -4411,6 +4505,9 @@ mod tests {
             source_app_icons: Default::default(),
             items: Vec::new(),
             total_item_count: 0,
+            load_error: None,
+            loaded_limit: LIST_PAGE_STEP,
+            list_exhausted: false,
             pending_images: Vec::new(),
             tags: Vec::new(),
             filters: ClipboardFilters::default(),
@@ -6490,6 +6587,49 @@ mod tests {
         assert!(state.filters.is_favorites_active(), "主窗口同步变化");
         assert!(state.quick_filters().is_favorites_active());
         assert!(state.quick_items().is_empty());
+    }
+
+    /// 增量分页：首屏只取一页，翻页直到结果集见底；见底后不再扩容。
+    #[test]
+    fn loaded_page_grows_until_the_result_set_is_exhausted() {
+        let (mut state, _dirty) = test_state();
+        // 上限 2×max_items，足够容纳下面 1200 条。
+        state.settings.max_items = 10_000;
+        for index in 0..1200i64 {
+            insert_item_at_age(&mut state, index, false, "page", index);
+        }
+        state.reload_items();
+        assert_eq!(state.items.len(), LIST_PAGE_STEP, "first page only");
+        assert!(!state.list_exhausted);
+
+        assert!(state.grow_loaded_page());
+        assert_eq!(state.items.len(), LIST_PAGE_STEP * 2);
+
+        assert!(state.grow_loaded_page());
+        assert_eq!(state.items.len(), 1200, "the rest of the rows");
+        assert!(state.list_exhausted);
+
+        assert!(!state.grow_loaded_page(), "nothing left to grow into");
+        assert_eq!(state.items.len(), 1200);
+    }
+
+    /// 隐藏窗口释放内存时把页宽重置回首屏大小。
+    #[test]
+    fn clear_items_resets_the_loaded_page_width() {
+        let (mut state, _dirty) = test_state();
+        state.settings.max_items = 10_000;
+        for index in 0..700i64 {
+            insert_item_at_age(&mut state, index, false, "page", index);
+        }
+        state.reload_items();
+        assert!(state.grow_loaded_page());
+        assert_eq!(state.items.len(), 700);
+
+        state.clear_items();
+        assert!(state.items.is_empty());
+        state.reload_items();
+        assert_eq!(state.items.len(), 500, "back to the first page");
+        assert!(!state.list_exhausted);
     }
 
     /// 关闭同步后两者独立：主窗口切换标签不影响快速窗口，反之亦然。
