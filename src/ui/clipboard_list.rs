@@ -440,6 +440,11 @@ pub struct ClipboardListView {
     items: Vec<ClipboardItem>,
     pending_images: Vec<PendingImageView>,
     item_sizes: Rc<Vec<Size<Pixels>>>,
+    /// Cumulative row tops matching [`Self::item_sizes`] (see [`row_offsets`]).
+    ///
+    /// Rebuilt together with `item_sizes` so pointer hit tests can binary
+    /// search instead of walking from row 0 on every mouse move.
+    row_offsets: Rc<Vec<f32>>,
     card_height_mode: String,
     /// Scale the current `item_sizes` were computed at. When the font size
     /// setting changes, this differs from the live `font::scale()` and the
@@ -563,7 +568,9 @@ impl ClipboardListView {
         window_manager: Entity<crate::ui::window_manager::WindowManager>,
     ) -> Self {
         let card_height_mode = state.read(cx).settings.card_height_mode.clone();
-        let item_sizes = Rc::new(Self::compute_sizes(&items, &card_height_mode));
+        let item_sizes = Self::compute_sizes(&items, &card_height_mode);
+        let row_offsets = Rc::new(row_offsets(&item_sizes));
+        let item_sizes = Rc::new(item_sizes);
         let preview_panel = cx.new(|cx| PreviewPanelView::new(cx));
         let scroll_handle = VirtualListScrollHandle::new();
         let wheel_scroll = SmoothScroll::new(scroll_handle.base_handle());
@@ -571,6 +578,7 @@ impl ClipboardListView {
             items,
             pending_images: Vec::new(),
             item_sizes,
+            row_offsets,
             card_height_mode,
             sizes_font_scale: crate::ui::font::scale(),
             height_cache: HashMap::new(),
@@ -641,6 +649,16 @@ impl ClipboardListView {
         }
     }
 
+    /// Replace the virtual-list geometry in one go.
+    ///
+    /// `item_sizes` and `row_offsets` must always describe the same rows, so
+    /// every caller funnels through here instead of assigning `item_sizes`
+    /// directly.
+    fn set_item_sizes(&mut self, sizes: Vec<Size<Pixels>>) {
+        self.row_offsets = Rc::new(row_offsets(&sizes));
+        self.item_sizes = Rc::new(sizes);
+    }
+
     pub fn set_items(&mut self, items: Vec<ClipboardItem>, cx: &mut Context<Self>) {
         // A passive refresh (thumbnail ready, usage count) must not yank the
         // flyout away while the pointer is still on the same card. Only drop
@@ -654,7 +672,7 @@ impl ClipboardListView {
         self.prepare_height_cache();
         let heights =
             resolve_row_heights(&mut self.height_cache, &combined, &self.card_height_mode);
-        self.item_sizes = Rc::new(sizes_from_heights(&heights));
+        self.set_item_sizes(sizes_from_heights(&heights));
         self.sizes_font_scale = crate::ui::font::scale();
         // --- Persist current selection before swap (survives empty-item clears ---
         // --- during window hide, when hide() emits ClipboardChanged).         ---
@@ -765,7 +783,7 @@ impl ClipboardListView {
         self.items.clear();
         self.items.shrink_to_fit();
         self.toolbar_bounds.set(None);
-        self.item_sizes = Rc::new(Vec::new());
+        self.set_item_sizes(Vec::new());
         self.selected_ids.clear();
         self.selected_ids.shrink_to_fit();
         self.selected_index = None;
@@ -801,7 +819,7 @@ impl ClipboardListView {
         self.prepare_height_cache();
         let heights =
             resolve_row_heights(&mut self.height_cache, &combined, &self.card_height_mode);
-        self.item_sizes = Rc::new(sizes_from_heights(&heights));
+        self.set_item_sizes(sizes_from_heights(&heights));
         self.sizes_font_scale = crate::ui::font::scale();
 
         // Capture the previous interaction positions by stable item ID before
@@ -981,7 +999,7 @@ impl ClipboardListView {
             }
             self.items = new_items;
             self.toolbar_bounds.set(None);
-            self.item_sizes = Rc::new(new_sizes);
+            self.set_item_sizes(new_sizes);
             self.selected_index = item_index(&self.items, selected_id);
             self.anchor_index = item_index(&self.items, anchor_id);
             self.toolbar_bounds.set(None);
@@ -1025,7 +1043,7 @@ impl ClipboardListView {
             self.prepare_height_cache();
             let heights =
                 resolve_row_heights(&mut self.height_cache, &self.items, &self.card_height_mode);
-            self.item_sizes = Rc::new(sizes_from_heights(&heights));
+            self.set_item_sizes(sizes_from_heights(&heights));
             self.sizes_font_scale = crate::ui::font::scale();
         }
         if scroll_to_top && !self.items.is_empty() {
@@ -1740,12 +1758,8 @@ impl ClipboardListView {
             return None;
         }
 
-        let row_top = self
-            .item_sizes
-            .iter()
-            .take(selected_index)
-            .map(|size| f32::from(size.height))
-            .sum::<f32>();
+        // Prefix sums replace the O(selected_index) height walk.
+        let row_top = self.row_offsets[selected_index.min(self.row_offsets.len() - 1)];
         let scroll_y = f32::from(self.scroll_handle.offset().y);
         let y = f32::from(list_bounds.top()) + row_top + scroll_y + TAG_PICKER_CARD_ANCHOR_Y;
 
@@ -1800,8 +1814,11 @@ impl ClipboardListView {
                     pointer,
                     bounds,
                     scroll_y,
-                    &self.item_sizes,
-                    self.items.len(),
+                    RowGeometry {
+                        sizes: &self.item_sizes,
+                        offsets: &self.row_offsets,
+                        item_count: self.items.len(),
+                    },
                     self.hovered_index,
                     toolbar.map(|(_, bounds)| bounds),
                 )
@@ -1879,22 +1896,21 @@ impl ClipboardListView {
         if self.hover_viewport.size.width <= px(0.) || index >= self.items.len() {
             return None;
         }
-        let mut top = self.hover_viewport.top() + self.scroll_handle.offset().y;
-        for (current, card_size) in self.item_sizes.iter().take(self.items.len()).enumerate() {
-            if current == index {
-                let card_left = self.hover_viewport.left() + px(CLIPBOARD_ROW_HORIZONTAL_PADDING);
-                let card_width = (self.hover_viewport.size.width
-                    - px(CLIPBOARD_ROW_HORIZONTAL_PADDING * 2.)
-                    - px(CLIPBOARD_SCROLLBAR_WIDTH))
-                .max(px(0.));
-                return Some(Bounds::new(
-                    point(card_left, top + px(4.)),
-                    gpui::size(card_width, (card_size.height - px(8.)).max(px(0.))),
-                ));
-            }
-            top += card_size.height;
-        }
-        None
+        // The prefix sums carry the row top directly; no walk from row 0.
+        let top = self.row_offsets.get(index)?;
+        let card_size = self.item_sizes.get(index)?;
+        let card_left = self.hover_viewport.left() + px(CLIPBOARD_ROW_HORIZONTAL_PADDING);
+        let card_width = (self.hover_viewport.size.width
+            - px(CLIPBOARD_ROW_HORIZONTAL_PADDING * 2.)
+            - px(CLIPBOARD_SCROLLBAR_WIDTH))
+        .max(px(0.));
+        Some(Bounds::new(
+            point(
+                card_left,
+                self.hover_viewport.top() + self.scroll_handle.offset().y + px(*top) + px(4.),
+            ),
+            gpui::size(card_width, (card_size.height - px(8.)).max(px(0.))),
+        ))
     }
 
     fn open_preview_panel(
@@ -2181,8 +2197,11 @@ impl ClipboardListView {
             pointer,
             viewport,
             scroll_y,
-            &self.item_sizes,
-            self.items.len(),
+            RowGeometry {
+                sizes: &self.item_sizes,
+                offsets: &self.row_offsets,
+                item_count: self.items.len(),
+            },
             self.hovered_index,
             None,
         )
@@ -3462,19 +3481,57 @@ fn synthesize_pending_item(p: &PendingImageView, index: usize) -> ClipboardItem 
     item
 }
 
+/// Cumulative tops of the virtual-list rows, plus the content height.
+///
+/// `offsets[i]` is the distance from the first row's top to row `i`'s top in
+/// content coordinates; the final entry is the bottom of the last row. Rebuilt
+/// together with `item_sizes` (see `ClipboardListView::set_item_sizes`), the
+/// two must always describe the same rows.
+fn row_offsets(sizes: &[Size<Pixels>]) -> Vec<f32> {
+    let mut offsets = Vec::with_capacity(sizes.len() + 1);
+    let mut top = 0f32;
+    for size in sizes {
+        offsets.push(top);
+        top += f32::from(size.height);
+    }
+    offsets.push(top);
+    offsets
+}
+
+/// Virtual-list row geometry for hit tests: the per-row sizes, their prefix
+/// sums and how many of them are real rows (the trailing size is the scroll
+/// spacer, never hit-testable).
+struct RowGeometry<'a> {
+    sizes: &'a [Size<Pixels>],
+    offsets: &'a [f32],
+    item_count: usize,
+}
+
 fn pointer_hover_index(
     pointer: Point<Pixels>,
     viewport: Bounds<Pixels>,
     scroll_y: Pixels,
-    sizes: &[Size<Pixels>],
-    item_count: usize,
+    rows: RowGeometry<'_>,
     previous: Option<usize>,
     toolbar: Option<Bounds<Pixels>>,
 ) -> Option<usize> {
     if viewport.size.width <= px(0.) || viewport.size.height <= px(0.) {
         return None;
     }
-    let mut top = viewport.top() + scroll_y;
+    // Binary-search the prefix sums for the first row reaching into the
+    // viewport. Walking from row 0 made every pointer event O(scroll depth),
+    // which on a deep list turned each mouse move into a scan of everything
+    // above the fold.
+    let content_top = -f32::from(scroll_y);
+    let mut start = rows
+        .offsets
+        .partition_point(|&offset| offset <= content_top)
+        .saturating_sub(1);
+    // The previously hovered row can sit above that first visible row (its
+    // toolbar must stay anchored while scrolling), so never skip past it.
+    if let Some(previous) = previous {
+        start = start.min(previous);
+    }
     let mut pointed_row = None;
     let mut previous_card = None;
     // 滚动区铺满面板，卡片左右各让出一段行内边距，右侧再让出滚动条槽位。
@@ -3483,13 +3540,20 @@ fn pointer_hover_index(
         - px(CLIPBOARD_ROW_HORIZONTAL_PADDING * 2.)
         - px(CLIPBOARD_SCROLLBAR_WIDTH))
     .max(px(0.));
-    for (index, size) in sizes.iter().take(item_count).enumerate() {
-        let row_top = top + px(4.);
+    for (index, (size, &offset)) in rows
+        .sizes
+        .iter()
+        .zip(rows.offsets)
+        .enumerate()
+        .take(rows.item_count)
+        .skip(start)
+    {
+        let row_top = viewport.top() + scroll_y + px(offset) + px(4.);
         let row_height = (size.height - px(8.)).max(px(0.));
         let row_bottom = row_top + row_height;
-        // Only rows that intersect the viewport can hold the pointer, so the
-        // per-row geometry is built for those alone. Everything else still
-        // advances `top`, which is what keeps the offsets of later rows right.
+        // Only rows that intersect the viewport can hold the pointer; rows
+        // before `start` are provably above it and rows past the viewport
+        // bottom end the scan instead of walking the whole history.
         let row_in_view = row_bottom > viewport.top() && row_top < viewport.bottom();
         if row_in_view || previous == Some(index) {
             let card = Bounds::new(
@@ -3503,9 +3567,6 @@ fn pointer_hover_index(
                 pointed_row = Some(index);
             }
         }
-        top += size.height;
-        // Rows below the viewport are further down still: the pointer cannot be
-        // on them, so stop instead of walking the whole history on every move.
         if row_top >= viewport.bottom() {
             break;
         }
@@ -4257,12 +4318,87 @@ impl Render for ClipboardListView {
 mod tests {
     use super::{
         can_incrementally_sync_usage, classify_card_modifier, collect_selectable_ids, item_id_at,
-        item_index, item_is_pending, pointer_hover_index, reorder_usage_pairs,
-        resolve_card_click_action, resolve_row_heights, CardClickAction, CardModifier,
-        PasteClickMode,
+        item_index, item_is_pending, reorder_usage_pairs, resolve_card_click_action,
+        resolve_row_heights, row_offsets, CardClickAction, CardModifier, PasteClickMode,
+        RowGeometry,
     };
     use crate::core::types::{ClipboardItem, ContentType};
     use gpui::{point, px, size, Bounds, Modifiers, Pixels};
+
+    /// `super::pointer_hover_index` with the prefix sums derived from the rows.
+    ///
+    /// Production keeps the offsets cached alongside the sizes; the tests pass
+    /// only the rows, so this wrapper rebuilds them for every call.
+    fn pointer_hover_index(
+        pointer: gpui::Point<Pixels>,
+        viewport: Bounds<Pixels>,
+        scroll_y: Pixels,
+        rows: &[gpui::Size<Pixels>],
+        item_count: usize,
+        previous: Option<usize>,
+        toolbar: Option<Bounds<Pixels>>,
+    ) -> Option<usize> {
+        let offsets = row_offsets(rows);
+        super::pointer_hover_index(
+            pointer,
+            viewport,
+            scroll_y,
+            RowGeometry {
+                sizes: rows,
+                offsets: &offsets,
+                item_count,
+            },
+            previous,
+            toolbar,
+        )
+    }
+
+    /// The binary search must land on the first row intersecting the viewport,
+    /// not on row 0 — a deep scroll pays O(log n), not O(depth).
+    #[test]
+    fn pointer_hover_skips_rows_above_the_viewport_via_binary_search() {
+        let viewport = Bounds::new(point(px(10.), px(100.)), size(px(300.), px(160.)));
+        let rows: Vec<_> = (0..5000usize)
+            .map(|i| size(px(300.), px(if i.is_multiple_of(7) { 120. } else { 80. })))
+            .collect();
+        let offsets = row_offsets(&rows);
+        // Scrolled 40 000px down: rows 0..~499 are above the fold.
+        let scroll_y = px(-40_000.);
+        // Pointer inside the viewport hits whatever row lands there.
+        let pointer = point(px(100.), px(180.));
+        let index = super::pointer_hover_index(
+            pointer,
+            viewport,
+            scroll_y,
+            RowGeometry {
+                sizes: &rows,
+                offsets: &offsets,
+                item_count: rows.len(),
+            },
+            Option::None,
+            Option::None,
+        )
+        .expect("a row is under the pointer");
+        // The hit must sit geometrically under the pointer: the prefix sums put
+        // the card exactly where the old top-accumulating walk would have.
+        let card_top = 100. + (-40_000.) + offsets[index] + 4.;
+        let card_height = f32::from(rows[index].height) - 8.;
+        assert!(
+            card_top <= 180. && 180. < card_top + card_height,
+            "card [{card_top}, {}] must contain pointer y=180",
+            card_top + card_height
+        );
+        // …and the hit must be deep in the list, not row 0: the binary search
+        // skipped the ~470 rows above the fold instead of walking them.
+        assert!(index > 100, "the hit must be deep in the list, got {index}");
+    }
+
+    #[test]
+    fn row_offsets_accumulate_every_height_and_end_with_the_total() {
+        let rows = vec![size(px(300.), px(80.)), size(px(300.), px(120.))];
+        assert_eq!(row_offsets(&rows), vec![0., 80., 200.]);
+        assert!(row_offsets(&[]).len() == 1);
+    }
 
     #[test]
     fn cached_height_is_reused_while_the_row_is_unchanged() {
