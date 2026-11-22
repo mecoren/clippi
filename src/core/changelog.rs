@@ -24,6 +24,7 @@ const VERSION_HEADING: &str = "# Version ";
 /// missing from this table simply show no date — adding a row is all a new
 /// release needs to appear with one in the list.
 const RELEASE_DATES: &[(&str, &str)] = &[
+    ("0.5.7", "2026-11-22"),
     ("0.5.6", "2026-11-09"),
     ("0.5.5", "2026-11-02"),
     ("0.5.4", "2026-10-27"),
