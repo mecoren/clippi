@@ -130,6 +130,27 @@ impl ClipboardFilters {
         self.keyword.is_some()
     }
 
+    /// Fingerprint of the whole filter combination.
+    ///
+    /// The list uses it to tell "the same result set refreshed" (a new clipboard
+    /// entry arrived, a thumbnail finished) from "a different result set" (the
+    /// user typed a keyword, toggled a tag / type / source / favorites filter).
+    /// Only the latter should snap the viewport back to the newest entry —
+    /// otherwise `auto_scroll_to_top` yanks the list away from wherever the user
+    /// is reading.
+    pub fn signature(&self) -> String {
+        format!(
+            "type={:?}|source={:?}|kw={:?}|fav={}|hot={}|tags={:?}|all={}",
+            self.type_filters,
+            self.source_app,
+            self.keyword,
+            self.favorites_only,
+            self.hotkeys_only,
+            self.tag_ids,
+            self.tag_match_all
+        )
+    }
+
     /// Toggle a tag filter on/off
     pub fn toggle_tag(&mut self, tag_id: i64) {
         if let Some(pos) = self.tag_ids.iter().position(|&t| t == tag_id) {
@@ -273,6 +294,43 @@ mod tests {
 
         assert!(!filters.has_keyword());
         assert!(filters.keyword_terms().is_empty());
+    }
+
+    /// 指纹要能分辨每一个筛选维度：只要有一个维度变了，列表就该认为换了
+    /// 结果集；反过来，同一组筛选重复求值必须稳定，否则每次刷新都会被当成
+    /// 「筛选变了」而把视口拽回顶部。
+    #[test]
+    fn filter_signature_changes_with_every_dimension() {
+        let base = ClipboardFilters::default();
+        let baseline = base.signature();
+        assert_eq!(baseline, ClipboardFilters::default().signature());
+
+        let mut type_filter = base.clone();
+        type_filter.toggle_type("image");
+        let mut keyword = base.clone();
+        keyword.set_keyword("railway");
+        let mut source = base.clone();
+        source.set_source_app(Some("Browser"));
+        let mut favorites = base.clone();
+        favorites.toggle_favorites_only();
+        let mut hotkeys = base.clone();
+        hotkeys.toggle_hotkeys_only();
+        let mut tags = base.clone();
+        tags.toggle_tag(7);
+        let mut tag_mode = base.clone();
+        tag_mode.toggle_tag_mode();
+
+        for (name, filters) in [
+            ("type", type_filter),
+            ("keyword", keyword),
+            ("source", source),
+            ("favorites", favorites),
+            ("hotkeys", hotkeys),
+            ("tags", tags),
+            ("tag mode", tag_mode),
+        ] {
+            assert_ne!(filters.signature(), baseline, "{name} 未进入指纹");
+        }
     }
 
     #[test]

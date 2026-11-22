@@ -38,6 +38,9 @@ use super::tag_picker::TagState;
 
 const CLIPBOARD_ROW_VERTICAL_SPACE: f32 = 12.0;
 const CLIPBOARD_BOTTOM_SCROLL_INSET: f32 = 36.0;
+/// `auto_scroll_to_top` 的生效半径：视口距列表顶部不超过这么多像素时，才算
+/// 「用户还在看最新」，否则视为在翻历史，不做程序化归位。
+const AUTO_SCROLL_TOP_SLACK: f32 = 120.0;
 const CLIPBOARD_SCROLLBAR_WIDTH: f32 = 16.0;
 /// 卡片与窗口左右边缘的间距。滚动区本身铺满面板宽度，间距由行内边距提供，
 /// 这样滚动条能贴在面板最右侧（与设置页一致）。
@@ -466,6 +469,14 @@ pub struct ClipboardListView {
     height_cache_scale: f32,
     scroll_handle: VirtualListScrollHandle,
     wheel_scroll: SmoothScroll,
+    /// Fingerprint of the filter set the last auto-scroll decision saw, so a
+    /// refresh of the same result set can be told apart from a new one (see
+    /// `should_auto_scroll_to_latest`).
+    filter_signature: String,
+    /// The list was emptied (window hidden) and is about to be refilled: the
+    /// next fill still honours `auto_scroll_to_top`, because summoning the
+    /// window should show the newest entry no matter where the user left off.
+    restore_scroll_to_latest: bool,
     focus_handle: FocusHandle,
     selected_ids: Vec<i64>,
     selected_index: Option<usize>,
@@ -586,6 +597,8 @@ impl ClipboardListView {
             height_cache_scale: 0.0,
             scroll_handle,
             wheel_scroll,
+            filter_signature: String::new(),
+            restore_scroll_to_latest: true,
             focus_handle: cx.focus_handle(),
             selected_ids: Vec::new(),
             selected_index: None,
@@ -659,6 +672,40 @@ impl ClipboardListView {
         self.item_sizes = Rc::new(sizes);
     }
 
+    /// Programmatic scroll to a row.
+    ///
+    /// Every "reveal this row" path funnels through here so a wheel glide that
+    /// is still animating cannot keep writing the old offset after the list was
+    /// moved deliberately — the jump would be undone by momentum the user no
+    /// longer owns, which reads as "the wheel stopped working".
+    fn scroll_to_row(&mut self, index: usize, strategy: ScrollStrategy) {
+        self.wheel_scroll.cancel();
+        self.scroll_handle.scroll_to_item(index, strategy);
+    }
+
+    /// Whether `auto_scroll_to_top` should actually move the list.
+    ///
+    /// The setting means "don't miss a new entry", but jumping while the user is
+    /// reading deep history is the opposite of helpful: a single list refresh
+    /// used to yank the viewport from the bottom of the history straight back to
+    /// the newest row. So only these three cases snap to the latest entry:
+    ///
+    /// - the list was just refilled (first load, or the window was re-summoned
+    ///   after being hidden — `restore_scroll_to_latest`);
+    /// - the filter set changed, i.e. this is a different result set that should
+    ///   be read from its first screen;
+    /// - the viewport is still within [`AUTO_SCROLL_TOP_SLACK`] of the top, i.e.
+    ///   the user is already looking at the newest content.
+    fn should_auto_scroll_to_latest(&mut self, cx: &App) -> bool {
+        let signature = self.state.read(cx).filters.signature();
+        let filters_changed = signature != self.filter_signature;
+        self.filter_signature = signature;
+        if std::mem::take(&mut self.restore_scroll_to_latest) || filters_changed {
+            return true;
+        }
+        f32::from(self.scroll_handle.offset().y) > -sx(AUTO_SCROLL_TOP_SLACK)
+    }
+
     pub fn set_items(&mut self, items: Vec<ClipboardItem>, cx: &mut Context<Self>) {
         // A passive refresh (thumbnail ready, usage count) must not yank the
         // flyout away while the pointer is still on the same card. Only drop
@@ -688,8 +735,10 @@ impl ClipboardListView {
         self.selected_count = 0;
         self.hovered_index = None;
         self.modified_double_click_candidate = None;
-        let scroll_to_latest = self.state.read(cx).settings.auto_scroll_to_top;
-        if scroll_to_latest && !self.items.is_empty() {
+        let auto_scroll_to_top = self.state.read(cx).settings.auto_scroll_to_top;
+        let snap_to_latest =
+            auto_scroll_to_top && !self.items.is_empty() && self.should_auto_scroll_to_latest(cx);
+        if snap_to_latest {
             let latest_idx = self
                 .items
                 .iter()
@@ -699,8 +748,7 @@ impl ClipboardListView {
                 .map(|(i, _)| i)
                 .unwrap_or(0);
             self.select_index_without_scroll(latest_idx, cx);
-            self.scroll_handle
-                .scroll_to_item(latest_idx, ScrollStrategy::Top);
+            self.scroll_to_row(latest_idx, ScrollStrategy::Top);
         } else if let Some(last_selected_id) = self.last_selected_id {
             // --- Keep position: restore the previously selected selectable item. ---
             // Transfer entries have negative IDs, so sign cannot distinguish
@@ -711,7 +759,11 @@ impl ClipboardListView {
                 .position(|item| item.id == last_selected_id && !item_is_pending(item))
             {
                 self.select_index_without_scroll(idx, cx);
-                self.scroll_handle.scroll_to_item(idx, ScrollStrategy::Top);
+                // `auto_scroll_to_top` 开着却不归位，说明用户在翻历史：这时连
+                // 「跟到选中项」也要跳过，否则选中项在顶部时同样会把视口拽上去。
+                if !auto_scroll_to_top {
+                    self.scroll_to_row(idx, ScrollStrategy::Top);
+                }
             }
         }
         // --- Fallback: select first selectable (non-pending) item ---
@@ -744,7 +796,7 @@ impl ClipboardListView {
             // drop it and let the next mouse move recompute the hovered row.
             self.hovered_index = None;
             self.select_index_without_scroll(0, cx);
-            self.scroll_handle.scroll_to_item(0, ScrollStrategy::Top);
+            self.scroll_to_row(0, ScrollStrategy::Top);
         }
     }
 
@@ -761,7 +813,7 @@ impl ClipboardListView {
         self.hovered_index = None;
         if let Some(idx) = self.items.iter().position(|item| item.id == item_id) {
             self.select_index_without_scroll(idx, cx);
-            self.scroll_handle.scroll_to_item(idx, ScrollStrategy::Top);
+            self.scroll_to_row(idx, ScrollStrategy::Top);
         } else {
             self.select_and_scroll_to_top_if_favorites_first(cx);
         }
@@ -784,6 +836,8 @@ impl ClipboardListView {
         self.items.shrink_to_fit();
         self.toolbar_bounds.set(None);
         self.set_item_sizes(Vec::new());
+        // 下次填充（重新召唤窗口）仍要归位到最新条目。
+        self.restore_scroll_to_latest = true;
         self.selected_ids.clear();
         self.selected_ids.shrink_to_fit();
         self.selected_index = None;
@@ -1006,7 +1060,8 @@ impl ClipboardListView {
             self.hovered_index = item_index(&self.items, hovered_id);
             cx.notify();
         }
-        if self.state.read(cx).settings.auto_scroll_to_top && !self.items.is_empty() {
+        let auto_scroll_to_top = self.state.read(cx).settings.auto_scroll_to_top;
+        if auto_scroll_to_top && !self.items.is_empty() && self.should_auto_scroll_to_latest(cx) {
             let latest_idx = self
                 .items
                 .iter()
@@ -1015,8 +1070,7 @@ impl ClipboardListView {
                 .map(|(i, _)| i)
                 .unwrap_or(0);
             self.select_index_without_scroll(latest_idx, cx);
-            self.scroll_handle
-                .scroll_to_item(latest_idx, ScrollStrategy::Top);
+            self.scroll_to_row(latest_idx, ScrollStrategy::Top);
             cx.notify();
         }
     }
@@ -1046,7 +1100,7 @@ impl ClipboardListView {
             self.set_item_sizes(sizes_from_heights(&heights));
             self.sizes_font_scale = crate::ui::font::scale();
         }
-        if scroll_to_top && !self.items.is_empty() {
+        if scroll_to_top && !self.items.is_empty() && self.should_auto_scroll_to_latest(cx) {
             let latest_idx = self
                 .items
                 .iter()
@@ -1055,8 +1109,7 @@ impl ClipboardListView {
                 .map(|(i, _)| i)
                 .unwrap_or(0);
             self.select_index_without_scroll(latest_idx, cx);
-            self.scroll_handle
-                .scroll_to_item(latest_idx, ScrollStrategy::Top);
+            self.scroll_to_row(latest_idx, ScrollStrategy::Top);
         }
         cx.notify();
     }
@@ -1084,7 +1137,7 @@ impl ClipboardListView {
         self.anchor_index = Some(index);
         self.selected_count = 1;
         self.modified_double_click_candidate = None;
-        self.scroll_handle.scroll_to_item(index, scroll_strategy);
+        self.scroll_to_row(index, scroll_strategy);
         self.state.update(cx, move |state, _cx| {
             state.select_single(item_id);
         });
@@ -2742,8 +2795,7 @@ impl ClipboardListView {
         }
         if let Some(new_index) = self.items.iter().position(|item| item.id == item_id) {
             self.select_index_without_scroll(new_index, cx);
-            self.scroll_handle
-                .scroll_to_item(new_index, ScrollStrategy::Top);
+            self.scroll_to_row(new_index, ScrollStrategy::Top);
         }
     }
 
