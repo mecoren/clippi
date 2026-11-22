@@ -6164,17 +6164,15 @@ impl WindowManager {
                 let Some(this) = weak_self.upgrade() else {
                     return;
                 };
-                let (alive, still_hidden, reached) = this
-                    .update(cx, |wm, _cx| {
-                        let alive = wm
-                            .main_compacted_state
-                            .as_ref()
-                            .is_some_and(|s| s.generation == generation)
-                            && wm.surface_generation == generation;
-                        let reached = wm.macos_window_content_size_is(ns_window_ptr, 1.0, 1.0);
-                        (alive, !wm.visible, reached)
-                    })
-                    .unwrap_or((false, false, false));
+                let (alive, still_hidden, reached) = this.update(cx, |wm, _cx| {
+                    let alive = wm
+                        .main_compacted_state
+                        .as_ref()
+                        .is_some_and(|s| s.generation == generation)
+                        && wm.surface_generation == generation;
+                    let reached = wm.macos_window_content_size_is(ns_window_ptr, 1.0, 1.0);
+                    (alive, !wm.visible, reached)
+                });
                 if !alive || !still_hidden {
                     return; // superseded or re-shown before the shrink landed
                 }
@@ -6547,7 +6545,7 @@ impl WindowManager {
             }
             // Reposition through AppKit, outside the borrow for the same reason
             // the resize above goes through GPUI (see `position_ns_window`).
-            let quick_ns_window = this.update(cx, |wm, _cx| wm.quick_ns_window).unwrap_or(0);
+            let quick_ns_window = this.update(cx, |wm, _cx| wm.quick_ns_window);
             Self::position_ns_window(quick_ns_window, x, y);
 
             // Confirm the native size before showing so the popup can never
