@@ -236,7 +236,7 @@ define_i18n! {
     GroupUpdate:        ("更新", "Updates"),
     FontFamilySystem:    ("系统默认", "System"),
     FontFamilyPicker:    ("选择字体", "Choose a font"),
-    FontFamilySample:    ("中文字体 Aa", "Aa 字体"),
+    FontFamilySample:    ("中文字体 Aa", "Font sample Aa"),
 
     // ─── Position options ───
     PosCenter:          ("居中", "Center"),
@@ -878,5 +878,68 @@ pub fn text_transform_label(transform: crate::core::text_transform::TextTransfor
         T::Trim => I18nKey::CleanTrim.text(),
         T::Uppercase => I18nKey::CleanUppercase.text(),
         T::Lowercase => I18nKey::CleanLowercase.text(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::I18nKey;
+
+    /// CJK 统一表意文字及其扩展/兼容区、中文标点、全角形式。
+    fn is_cjk(c: char) -> bool {
+        matches!(
+            c as u32,
+            0x3000..=0x303F | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF | 0xFF00..=0xFFEF
+        )
+    }
+
+    /// 语言名按惯例用该语言自称（`中文` / `English`），是英文栏里唯一允许
+    /// 出现汉字的地方。
+    fn english_may_be_cjk(key: I18nKey) -> bool {
+        matches!(key, I18nKey::LangZh)
+    }
+
+    /// 每个 key 的两栏都必须填、去掉首尾空白、英文栏不能混进中文。
+    ///
+    /// 新增按钮 / 菜单项 / tooltip 时漏登记文案既不会编译失败，也不会被别的
+    /// 测试发现（界面上只会显示内部 key 或动作名），这一层是唯一的自动拦截。
+    #[test]
+    fn every_key_is_translated_and_trimmed() {
+        for &key in I18nKey::ALL {
+            let zh = key.chinese();
+            let en = key.english();
+            assert!(!zh.trim().is_empty(), "{key:?}: 缺中文");
+            assert!(!en.trim().is_empty(), "{key:?}: 缺英文");
+            assert_eq!(zh, zh.trim(), "{key:?}: 中文含首尾空白");
+            assert_eq!(en, en.trim(), "{key:?}: 英文含首尾空白");
+            if !english_may_be_cjk(key) {
+                assert!(!en.chars().any(is_cjk), "{key:?}: 英文栏混入中文 → {en}");
+            }
+        }
+    }
+
+    /// `ALL` 与枚举变体由同一个宏生成，长度异常说明宏被改坏了。
+    #[test]
+    fn the_key_table_stays_complete() {
+        assert!(
+            I18nKey::ALL.len() > 100,
+            "key 数量异常: {}",
+            I18nKey::ALL.len()
+        );
+    }
+
+    /// 两种语言的占位符必须一一对应，否则其中一种会残留 `{0}`。
+    #[test]
+    fn placeholders_match_across_languages() {
+        for &key in I18nKey::ALL {
+            for arg in 0..3 {
+                let placeholder = format!("{{{arg}}}");
+                assert_eq!(
+                    key.chinese().contains(&placeholder),
+                    key.english().contains(&placeholder),
+                    "{key:?}: 占位符 {placeholder} 两种语言不一致"
+                );
+            }
+        }
     }
 }

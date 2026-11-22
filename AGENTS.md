@@ -109,6 +109,17 @@ git push origin wait
 - 所有用户可见字符串必须经 `define_i18n!` 登记在 `src/core/i18n_keys.rs`，格式 `KeyName: ("中文", "English")`，通过 `I18nKey::KeyName.text()` 使用。
 - 禁止在 `src/ui/` 里硬编码中文或英文字面量；上游功能移植时要先抽出 key，再把文案填入。
 
+**新增功能时的国际化清单**（功能的一部分，与代码同一次提交完成，不留 TODO、不留英文占位）：
+
+- 逐个过一遍本次新增/改动的**每一处**人可见文本：按钮与菜单项标签、tooltip、`aria_label`、空态与错误提示、确认弹窗（标题/正文/按钮）、设置项标题与说明、托盘菜单、占位符、单位与计数文案（「N 个」类走 `.fmt(&[…])`）。
+- 新增带 `action` 的控件时**动作名与文案必须同时登记**，两处都要改：
+  - 卡片悬停工具条 `src/ui/hover_toolbar.rs` 的 `match action { … }` tooltip 映射表；
+  - 右键/三点菜单 `src/ui/context_menu.rs` 的 `RawMenuItem.label`。
+  漏登记的 tooltip 会落到兜底分支 `_ => action.to_string()`，界面上直接显示 `toggle_pin` 这种内部动作名（已发生过一次）。
+- 中英文两栏都要填且语义一致；禁止 `("中文", "")`、禁止只改中文栏。同义文案优先复用已有 key（如置顶复用 `CtxPin` / `CtxUnpin` / `CtxBatchPin`），新 key 按现有分组位置插入，不重复登记。
+- 提交前自查：对每个新增动作名 `rg "<action>" src/` 确认文案映射存在。**目前没有 i18n 单测兜底**（`i18n_keys.rs` 只有数据、没有校验），漏登记不会被 `cargo test` 拦住，只能靠这一步人工过。
+- 语言切换后自查一遍：「设置 → 语言」切到 English 再看新界面，确认没有残留中文或空字符串。
+
 ### 6.3 UI
 
 - 颜色、圆角、间距、字号优先取 `src/ui/theme.rs` 的令牌，新代码不新增硬编码颜色字面量。历史遗留的大量散落字面量见 `docs/ui-design-review.md`，处理时不要顺势扩大。
@@ -171,6 +182,7 @@ cargo test
 另外：
 
 - 主验证平台为 Windows，涉及平台差异的改动需说明另一平台是否受影响。
+- 本次改动涉及 UI（新增按钮、菜单项、tooltip、空态、设置项等）时，按 6.2 的「新增功能时的国际化清单」逐项过一遍：文案已登记、动作名与 tooltip 映射同时补齐、中英文都不留空。
 - 推送 `wait`（或向 `wait` 开 PR）会触发 `.github/workflows/ci.yml`：`windows-latest` 上依次跑 `cargo fmt --all -- --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test`。它是上面那份校验的远端版本，红了就是没完成；工具链在文件里锁版本（新 stable 会带来新 clippy lint），调整时与本地同步。
 - 合并后执行一次 `git diff --stat wait@{1} wait`，确认改动规模与预期一致，没有意外的大面积回退。
 - 不要提交 `target/`、临时脚本、调试输出。
