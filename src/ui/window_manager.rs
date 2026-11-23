@@ -4048,9 +4048,10 @@ impl WindowManager {
             }
         }
 
-        // Registry has V — try to register Win+V.
+        // Registry has V — try to register Win+V as an independent binding.
+        // The user's own main hotkey is never touched by the takeover.
         if let Some(ref mut hk) = self.hotkey {
-            match hk.update_hotkey("Win+V") {
+            match hk.set_win_v_takeover(true) {
                 Ok(()) => {
                     log::info!("Win+V takeover: registered successfully");
                     self.win_v_takeover_status = WinVTakeoverStatus::Active;
@@ -4077,9 +4078,10 @@ impl WindowManager {
             state.settings.save();
         });
 
-        // Try to register Win+V immediately; keep fallback on failure.
+        // Register Win+V alongside the existing hotkeys; the configured main
+        // hotkey keeps working regardless of the outcome.
         if let Some(ref mut hk) = self.hotkey {
-            match hk.update_hotkey("Win+V") {
+            match hk.set_win_v_takeover(true) {
                 Ok(()) => {
                     self.win_v_takeover_status = WinVTakeoverStatus::Active;
                 }
@@ -4094,23 +4096,19 @@ impl WindowManager {
         Ok(())
     }
 
-    /// Disable Win+V takeover: cleanup registry, then switch to fallback.
+    /// Disable Win+V takeover: drop the independent binding, then clean up the
+    /// registry.
     ///
-    /// Uses a commit/rollback strategy:
-    /// 1. Switch hotkey to fallback.
+    /// Uses a commit/rollback strategy for the registry half:
+    /// 1. Unregister the takeover binding (the user's hotkey is untouched).
     /// 2. Clean up the registry.
-    /// 3. If registry cleanup fails, switch back to Win+V.
-    /// 4. Only persist the setting change after all steps succeed.
+    /// 3. If registry cleanup fails, re-register the takeover binding.
+    /// 4. Only persist the setting change after the registry step succeeds.
     #[cfg(target_os = "windows")]
     pub fn disable_win_v_takeover(&mut self, cx: &mut Context<Self>) -> Result<(), String> {
-        let fallback = self.state.read(cx).settings.hotkey.clone();
-
-        // Step 1: Switch to fallback hotkey.
+        // Step 1: stop the takeover binding only; main/quick/etc. stay as-is.
         if let Some(ref mut hk) = self.hotkey {
-            hk.update_hotkey(&fallback).map_err(|e| {
-                log::warn!("Win+V takeover: cannot restore fallback hotkey: {e}");
-                I18nKey::WinVFallbackUnavailable.text().to_string()
-            })?;
+            let _ = hk.set_win_v_takeover(false);
         }
 
         // Step 2: Clean up registry.
@@ -4120,22 +4118,25 @@ impl WindowManager {
             }
             Err(e) => {
                 log::error!("Win+V takeover: registry cleanup failed: {e}");
-                // Rollback: try to re-register Win+V.
-                if let Some(ref mut hk) = self.hotkey {
-                    if let Err(re) = hk.update_hotkey("Win+V") {
-                        log::error!(
-                            "Win+V takeover: rollback also failed ({re}); hotkey state is uncertain"
-                        );
-                        self.win_v_takeover_status = WinVTakeoverStatus::HotkeyUnavailable;
-                        cx.notify();
-                        return Err(format!(
-                            "Registry cleanup failed and rollback also failed: {e}"
-                        ));
+                // Rollback: re-register Win+V, keep the takeover enabled.
+                let restored = if let Some(ref mut hk) = self.hotkey {
+                    match hk.set_win_v_takeover(true) {
+                        Ok(()) => true,
+                        Err(re) => {
+                            log::error!("Win+V takeover: rollback also failed ({re})");
+                            false
+                        }
                     }
-                }
-                self.win_v_takeover_status = WinVTakeoverStatus::Active;
+                } else {
+                    false
+                };
+                self.win_v_takeover_status = if restored {
+                    WinVTakeoverStatus::Active
+                } else {
+                    WinVTakeoverStatus::HotkeyUnavailable
+                };
                 cx.notify();
-                return Err(format!("Registry cleanup failed; Win+V restored: {e}"));
+                return Err(format!("Registry cleanup failed; Win+V kept: {e}"));
             }
         }
 
@@ -4185,7 +4186,7 @@ impl WindowManager {
         }
 
         if let Some(ref mut hk) = self.hotkey {
-            match hk.update_hotkey("Win+V") {
+            match hk.set_win_v_takeover(true) {
                 Ok(()) => {
                     log::info!("Win+V recheck: registered successfully");
                     self.win_v_takeover_status = WinVTakeoverStatus::Active;
@@ -4223,21 +4224,14 @@ impl WindowManager {
         match windows_hotkeys::inspect_win_v_registry() {
             Ok(snapshot) => {
                 if !snapshot.win_v_disabled {
-                    // V missing — if currently Active, fall back to configured hotkey.
+                    // V missing — Windows owns Win+V again. Drop only the
+                    // takeover binding; the user's main hotkey was never moved.
                     if self.win_v_takeover_status == WinVTakeoverStatus::Active {
-                        log::warn!("Win+V periodic: V removed from DisabledHotkeys; falling back");
-                        let fallback = self.state.read(cx).settings.hotkey.clone();
+                        log::warn!(
+                            "Win+V periodic: V removed from DisabledHotkeys; dropping takeover binding"
+                        );
                         if let Some(ref mut hk) = self.hotkey {
-                            if hk.update_hotkey(&fallback).is_err() {
-                                // Fallback registration failed, but Win+V is still
-                                // active (update_hotkey preserves old binding on
-                                // error).  Keep Active and retry next cycle.
-                                log::error!(
-                                    "Win+V periodic: fallback registration failed; Win+V still active"
-                                );
-                                cx.notify();
-                                return;
-                            }
+                            let _ = hk.set_win_v_takeover(false);
                         }
                     }
                     self.win_v_takeover_status = WinVTakeoverStatus::RegistryUpdateRequired;
@@ -4248,7 +4242,7 @@ impl WindowManager {
                 // V is present — attempt registration if not already Active.
                 if self.win_v_takeover_status != WinVTakeoverStatus::Active {
                     if let Some(ref mut hk) = self.hotkey {
-                        match hk.update_hotkey("Win+V") {
+                        match hk.set_win_v_takeover(true) {
                             Ok(()) => {
                                 log::info!("Win+V periodic: registered successfully");
                                 self.win_v_takeover_status = WinVTakeoverStatus::Active;
@@ -6825,10 +6819,8 @@ impl WindowManager {
     }
 
     pub fn start_hotkey_recording(&mut self, cx: &mut Context<Self>) {
-        // Reject main hotkey recording when Win+V takeover is enabled.
-        if self.win_v_takeover_status != WinVTakeoverStatus::Disabled {
-            return;
-        }
+        // 接管与主快捷键是两套独立绑定：录制主快捷键只临时注销全部注册，
+        // 结束后 register() 会同时恢复主快捷键与 Win+V 接管。
         if let Some(ref mut hk) = self.hotkey {
             hk.unregister();
             hk.start_recording();

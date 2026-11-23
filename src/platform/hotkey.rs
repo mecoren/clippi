@@ -77,6 +77,13 @@ pub trait HotkeyListener {
     fn update_paste_plain_hotkey(&mut self, _hotkey_str: &str) -> Result<(), String> {
         Ok(())
     }
+    /// Enable/disable the independent Win+V takeover binding (Windows).
+    ///
+    /// 接管与用户自己的主快捷键、快捷窗口等绑定并存：开启只额外注册
+    /// Win+V，关闭只注销它，不会替换或改写任何用户配置。Platform stubs no-op.
+    fn set_win_v_takeover(&mut self, _enabled: bool) -> Result<(), String> {
+        Ok(())
+    }
     fn start_recording(&mut self);
     fn finish_recording(&mut self);
     fn is_recording(&self) -> bool;
@@ -453,6 +460,9 @@ fn take_expired_recording_single(
 pub fn is_win_v_hotkey(hotkey: HotKey) -> bool {
     hotkey.id() == HotKey::new(Some(Modifiers::SUPER), Code::KeyV).id()
 }
+
+/// 接管模式使用的固定组合。作为独立绑定注册，不占用 `settings.hotkey`。
+const WIN_V_TAKEOVER_HOTKEY: &str = "Win+V";
 
 fn format_pressed_hotkey(modifiers: Modifiers, code: Code) -> String {
     let mut parts = Vec::new();
@@ -921,6 +931,14 @@ struct DesktopHotkeyListener {
     /// Current OS registration state of the paste-plain hotkey.
     paste_plain_registered: bool,
     paste_plain_double_press: bool,
+    /// Win+V takeover binding. Registered independently of `hotkey` so the
+    /// user's own main hotkey keeps working while the takeover is active.
+    takeover_hotkey: HotKey,
+    /// True when the takeover should be active (survives unregister/register).
+    takeover_enabled: bool,
+    /// Current OS registration state of the takeover binding. False when the
+    /// user's main hotkey already equals Win+V and serves both roles.
+    takeover_registered: bool,
     /// Actual main hotkey string (may differ from config if fallback used).
     actual_main_hotkey: String,
     /// Actual quick hotkey string (may differ from config if fallback used).
@@ -1048,6 +1066,9 @@ impl DesktopHotkeyListener {
             paste_plain_enabled: false,
             paste_plain_registered: false,
             paste_plain_double_press: false,
+            takeover_hotkey: HotKey::new(None, global_hotkey::hotkey::Code::F24),
+            takeover_enabled: false,
+            takeover_registered: false,
             actual_main_hotkey: actual_main.clone(),
             actual_quick_hotkey: actual_quick.clone(),
             main_fallback_used: main_fallback,
@@ -1077,6 +1098,9 @@ impl DesktopHotkeyListener {
     fn match_binding(&self, id: u32) -> Option<(HotkeyEvent, bool)> {
         if self.registered && id == self.hotkey.id() {
             Some((HotkeyEvent::Main, self.main_double_press))
+        } else if self.takeover_registered && id == self.takeover_hotkey.id() {
+            // 接管绑定是主窗口的第二入口，和主快捷键一样切换窗口。
+            Some((HotkeyEvent::Main, false))
         } else if self.quick_registered && id == self.quick_hotkey.id() {
             Some((HotkeyEvent::Quick, self.quick_double_press))
         } else if self.paste_plain_registered && id == self.paste_plain_hotkey.id() {
@@ -1115,6 +1139,12 @@ impl DesktopHotkeyListener {
         if !ignore_main && self.hotkey.id() == id {
             return true;
         }
+        // Check against the Win+V takeover binding. Enabling the takeover
+        // reserves Win+V for it even while the binding is temporarily
+        // unregistered (recording / blacklist cycle).
+        if self.takeover_enabled && self.takeover_hotkey.id() == id {
+            return true;
+        }
         // Check against quick hotkey.
         if !ignore_quick && self.quick_enabled && self.quick_hotkey.id() == id {
             return true;
@@ -1140,6 +1170,22 @@ impl DesktopHotkeyListener {
             return true;
         }
         false
+    }
+
+    /// Re-register the takeover binding when it is desired but not currently
+    /// registered (skipped while recording or when the main hotkey covers it).
+    fn restore_takeover_binding(&mut self) {
+        if !self.takeover_enabled
+            || self.takeover_registered
+            || self.is_recording
+            || self.hotkey.id() == self.takeover_hotkey.id()
+        {
+            return;
+        }
+        match self.register_hotkey(self.takeover_hotkey) {
+            Ok(()) => self.takeover_registered = true,
+            Err(e) => log::warn!("Win+V takeover register failed: {e}"),
+        }
     }
 }
 
@@ -1240,6 +1286,8 @@ impl HotkeyListener for DesktopHotkeyListener {
         self.main_double_press = is_double_hotkey(hotkey_str);
         self.actual_main_hotkey = hotkey_str.to_string();
         self.registered = true;
+        // 主快捷键从 Win+V 换走时，接管需要重新以自己的名义注册 Win+V。
+        self.restore_takeover_binding();
         Ok(())
     }
 
@@ -1325,6 +1373,41 @@ impl HotkeyListener for DesktopHotkeyListener {
         Ok(())
     }
 
+    fn set_win_v_takeover(&mut self, enabled: bool) -> Result<(), String> {
+        self.reset_gestures();
+        if !enabled {
+            self.takeover_enabled = false;
+            if self.takeover_registered {
+                let _ = self.manager.unregister(self.takeover_hotkey);
+                self.takeover_registered = false;
+            }
+            return Ok(());
+        }
+
+        let hotkey = parse_hotkey(WIN_V_TAKEOVER_HOTKEY)?;
+        let was_enabled = self.takeover_enabled;
+        self.takeover_hotkey = hotkey;
+        // 用户自己的主快捷键就是 Win+V：同一个注册同时承担两种角色，
+        // 不能再注册一次（RegisterHotKey 会报冲突）。
+        if self.hotkey.id() == hotkey.id() {
+            self.takeover_enabled = true;
+            self.takeover_registered = false;
+            return Ok(());
+        }
+        // 重复启用（周期性重检）时跳过冲突检查：接管自身已占用该组合。
+        if !was_enabled && self.is_conflicting_except(hotkey, None, None, false, false, false) {
+            return Err(I18nKey::HotkeyConflictCustom.text().to_string());
+        }
+        self.takeover_enabled = true;
+        // 录制期间只记录意图，实际注册交给录制结束后的 register()。
+        if self.takeover_registered || self.is_recording {
+            return Ok(());
+        }
+        self.register_hotkey(hotkey)?;
+        self.takeover_registered = true;
+        Ok(())
+    }
+
     fn actual_main_hotkey(&self) -> &str {
         &self.actual_main_hotkey
     }
@@ -1407,6 +1490,10 @@ impl HotkeyListener for DesktopHotkeyListener {
             let _ = self.manager.unregister(self.paste_plain_hotkey);
             self.paste_plain_registered = false;
         }
+        if self.takeover_registered {
+            let _ = self.manager.unregister(self.takeover_hotkey);
+            self.takeover_registered = false;
+        }
         for binding in &mut self.item_hotkeys {
             if binding.registered {
                 let _ = self.manager.unregister(binding.hotkey);
@@ -1445,6 +1532,7 @@ impl HotkeyListener for DesktopHotkeyListener {
                 Err(e) => log::error!("paste-plain hotkey register failed: {e}"),
             }
         }
+        self.restore_takeover_binding();
         let manager = &self.manager;
         for binding in &mut self.item_hotkeys {
             if !binding.registered {
@@ -1486,6 +1574,8 @@ impl HotkeyListener for DesktopHotkeyListener {
         } else if !allow_main && self.registered {
             self.unregister();
         }
+        // 接管绑定是主窗口的第二入口，与主快捷键同进同退。
+        self.restore_takeover_binding();
     }
 
     fn poll_event(&mut self) -> Option<HotkeyEvent> {
@@ -2162,6 +2252,9 @@ mod special_binding_tests {
             paste_plain_enabled: false,
             paste_plain_registered: false,
             paste_plain_double_press: false,
+            takeover_hotkey: HotKey::new(None, Code::F24),
+            takeover_enabled: false,
+            takeover_registered: false,
             actual_main_hotkey: "Double:Ctrl".to_string(),
             actual_quick_hotkey: String::new(),
             main_fallback_used: false,
@@ -2644,5 +2737,87 @@ mod special_binding_tests {
             listener.poll_recording_pressed(),
             Some(HotkeyRecordingPress::Hotkey("Mouse5".to_string()))
         );
+    }
+
+    #[test]
+    fn takeover_binding_is_reserved_independently_of_the_main_hotkey() {
+        let mut listener = listener();
+        listener.takeover_hotkey = parse_hotkey("Win+V").unwrap();
+        listener.takeover_enabled = true;
+        assert!(listener.registered, "main hotkey stays registered");
+        assert_eq!(listener.actual_main_hotkey(), "Double:Ctrl");
+        // Win+V is reserved for the takeover, not offered to other bindings.
+        assert!(listener.update_quick_hotkey("Win+V").is_err());
+        assert!(listener.update_paste_plain_hotkey("Win+V").is_err());
+        assert!(listener.register_item_hotkey(42, "Win+V").is_err());
+        assert!(listener.register_latest_hotkey(0, "Win+V").is_err());
+        assert!(listener.update_hotkey("Win+V").is_err());
+        // Disabling the takeover releases the reservation but keeps main.
+        listener.set_win_v_takeover(false).unwrap();
+        assert!(!listener.takeover_enabled);
+        assert!(listener.registered);
+    }
+
+    #[test]
+    fn takeover_binding_survives_unregister_cycles_without_touching_main() {
+        let mut listener = listener();
+        // Use a hook binding as a stand-in so the test never touches the OS.
+        listener.takeover_hotkey = parse_hotkey("Mouse5").unwrap();
+        listener.takeover_enabled = true;
+        listener.register();
+        assert!(listener.registered && listener.takeover_registered);
+
+        let at = Instant::now();
+        listener
+            .manager
+            .push_test_event(InputEvent::Press(parse_hotkey("Mouse5").unwrap(), at));
+        assert_eq!(listener.poll_event(), Some(HotkeyEvent::Main));
+        listener
+            .manager
+            .push_test_event(InputEvent::Press(listener.hotkey, at));
+        assert_eq!(listener.poll_event(), Some(HotkeyEvent::Main));
+
+        // Recording / blacklist temporarily unregisters everything.
+        listener.unregister();
+        assert!(!listener.registered && !listener.takeover_registered);
+        listener.register();
+        assert!(listener.registered && listener.takeover_registered);
+
+        // Disabling the takeover leaves the user's main hotkey untouched.
+        listener.set_win_v_takeover(false).unwrap();
+        assert!(listener.registered);
+        assert!(!listener.takeover_registered);
+    }
+
+    #[test]
+    fn takeover_reuses_win_v_when_it_is_already_the_main_hotkey() {
+        let mut listener = listener();
+        listener.hotkey = parse_hotkey("Win+V").unwrap();
+        listener.actual_main_hotkey = "Win+V".to_string();
+        listener.registered = true;
+
+        listener.set_win_v_takeover(true).unwrap();
+        assert!(listener.takeover_enabled);
+        assert!(
+            !listener.takeover_registered,
+            "the main registration already covers Win+V"
+        );
+
+        listener.set_win_v_takeover(false).unwrap();
+        assert!(listener.registered, "main hotkey must survive disabling");
+    }
+
+    #[test]
+    fn takeover_registration_is_deferred_while_recording() {
+        let mut listener = listener();
+        listener.start_custom_recording();
+        listener.set_win_v_takeover(true).unwrap();
+        assert!(listener.takeover_enabled);
+        assert!(
+            !listener.takeover_registered,
+            "recording must not register the takeover binding"
+        );
+        listener.finish_recording();
+        assert!(!listener.takeover_registered);
     }
 }

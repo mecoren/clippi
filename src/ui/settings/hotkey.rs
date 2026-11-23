@@ -817,8 +817,6 @@ impl SettingsPanel {
         let has_paste_plain_hotkey = !paste_plain_hotkey.is_empty();
         let recording_paste_plain = app.recording_paste_plain_hotkey;
         let alt_shortcuts_enabled = app.settings.alt_shortcuts_enabled;
-        #[cfg(target_os = "windows")]
-        let _replace_system_win_v = app.settings.replace_system_win_v;
         // borrow released
 
         let takeover_status = wm.read(cx).win_v_takeover_status();
@@ -830,117 +828,37 @@ impl SettingsPanel {
         let mut container = div().flex().flex_col().gap(px(12.)).pt(px(8.));
 
         // --- Global hotkeys ---
+        // 主快捷键始终由用户自己录制；Win+V 接管是独立的第二绑定，
+        // 不再替换或锁定这一行。
         let mut hotkey_rows: Vec<AnyElement> = vec![{
             let state = state.clone();
             let wm = wm.clone();
             let this = this.clone();
-
-            #[cfg(target_os = "windows")]
-            if takeover_active {
-                // --- Managed by takeover: show "Win+V" fixed, disable recording ---
-                let theme_text_1 = p.ink;
-                let theme_text_3 = p.ink_3;
-                div()
-                    .h(px(66.))
-                    .px(px(12.))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(2.))
-                            .child(
-                                div()
-                                    .text_size(fs(12.))
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(theme_text_1)
-                                    .child(I18nKey::HotkeyTabTitle.text()),
-                            )
-                            .child(
-                                div()
-                                    .text_size(fs(10.))
-                                    .text_color(theme_text_3)
-                                    .child(I18nKey::WinVManagedByMode.text()),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .h(px(28.))
-                            .w(px(80.))
-                            .rounded(Radius::Md.scaled())
-                            .bg(p.accent_soft())
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(
-                                div()
-                                    // 与相邻录制按钮同尺寸、同字号。
-                                    .text_size(fs(11.))
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(p.accent)
-                                    .child("Win+V"),
-                            ),
-                    )
-                    .into_any_element()
-            } else {
-                Self::render_recording_card(
-                    I18nKey::HotkeyTabTitle,
-                    "hotkey-main",
-                    main_hotkey_display.clone().into(),
-                    recording,
-                    pending_single.clone().filter(|_| recording),
-                    &p,
-                    move |_window, cx| {
-                        if state.read(cx).hotkey_recording
-                            && state.read(cx).pending_single_hotkey.is_some()
-                        {
-                            wm.update(cx, |wm, cx| {
-                                wm.confirm_pending_single_hotkey(cx);
-                            });
-                        } else {
-                            wm.update(cx, |wm, cx| wm.start_hotkey_recording(cx));
-                            state.update(cx, |s, _cx| s.hotkey_recording = true);
-                        }
-                        this.update(cx, |_panel, cx| cx.notify());
-                    },
-                    None,
-                    RecordingCardOptions::default(),
-                )
-                .into_any_element()
-            }
-
-            #[cfg(not(target_os = "windows"))]
-            {
-                Self::render_recording_card(
-                    I18nKey::HotkeyTabTitle,
-                    "hotkey-main",
-                    main_hotkey_display.clone().into(),
-                    recording,
-                    pending_single.clone().filter(|_| recording),
-                    &p,
-                    move |_window, cx| {
-                        if state.read(cx).hotkey_recording
-                            && state.read(cx).pending_single_hotkey.is_some()
-                        {
-                            wm.update(cx, |wm, cx| {
-                                wm.confirm_pending_single_hotkey(cx);
-                            });
-                        } else {
-                            wm.update(cx, |wm, cx| wm.start_hotkey_recording(cx));
-                            state.update(cx, |s, _cx| s.hotkey_recording = true);
-                        }
-                        this.update(cx, |_panel, cx| cx.notify());
-                    },
-                    None,
-                    RecordingCardOptions::default(),
-                )
-                .into_any_element()
-            }
-        }
-        .into_any_element()];
+            Self::render_recording_card(
+                I18nKey::HotkeyTabTitle,
+                "hotkey-main",
+                main_hotkey_display.clone().into(),
+                recording,
+                pending_single.clone().filter(|_| recording),
+                &p,
+                move |_window, cx| {
+                    if state.read(cx).hotkey_recording
+                        && state.read(cx).pending_single_hotkey.is_some()
+                    {
+                        wm.update(cx, |wm, cx| {
+                            wm.confirm_pending_single_hotkey(cx);
+                        });
+                    } else {
+                        wm.update(cx, |wm, cx| wm.start_hotkey_recording(cx));
+                        state.update(cx, |s, _cx| s.hotkey_recording = true);
+                    }
+                    this.update(cx, |_panel, cx| cx.notify());
+                },
+                None,
+                RecordingCardOptions::default(),
+            )
+            .into_any_element()
+        }];
         if self.state.read(cx).settings.quick_hotkey_enabled {
             // The conditional rows are written as row builders (closures) so
             // they can be pushed into the group's row list.
