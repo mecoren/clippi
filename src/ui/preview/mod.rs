@@ -30,7 +30,6 @@ pub struct PreviewFlyoutTarget {
     pub panel: Entity<PreviewPanelView>,
     pub card_top: f32,
     pub size: Size<Pixels>,
-    pub prefer_right: bool,
     /// Hovered card rect in logical screen coordinates.
     pub card: Bounds<Pixels>,
     /// Pointer Y in the main window's content space (the same space as

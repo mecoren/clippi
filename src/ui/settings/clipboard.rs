@@ -33,7 +33,12 @@ impl SettingsPanel {
         let record_files = app.settings.record_files;
         let search_favorites_first = app.settings.search_favorites_first;
         let card_height_mode = app.settings.card_height_mode.clone();
-        let paste_click_mode = app.settings.paste_click_mode_normalized();
+        let plain_content_preview = app.settings.plain_content_preview;
+        let merge_separator = app.settings.merge_separator_mode().to_string();
+        let click_actions = app.settings.click_actions();
+        let left_click_single = click_actions.single.id().to_string();
+        let left_click_double = click_actions.double.id().to_string();
+        let middle_click = click_actions.middle.id().to_string();
         let show_source_app = app.settings.show_source_app;
         let auto_scroll_to_top = app.settings.auto_scroll_to_top;
         let copy_as_plain_text = app.settings.copy_as_plain_text;
@@ -309,7 +314,7 @@ impl SettingsPanel {
             container.child(self.settings_group(I18nKey::GroupListDisplay.text(), list_rows));
 
         // --- Card layout ---
-        let card_rows: Vec<AnyElement> = vec![{
+        let mut card_rows: Vec<AnyElement> = vec![{
             let state = state.clone();
             let this = this.clone();
             self.setting_row_with_tabs(
@@ -341,8 +346,63 @@ impl SettingsPanel {
             )
         }
         .into_any_element()];
+        card_rows.push(
+            {
+                let this = this.clone();
+                self.render_toggle_row(
+                    I18nKey::SettingPlainContent,
+                    I18nKey::DescPlainContentOn,
+                    I18nKey::DescPlainContentOff,
+                    plain_content_preview,
+                    window,
+                    cx,
+                    move |state, _this, _window, cx| {
+                        state.update(cx, |s, _s_cx| {
+                            s.settings.plain_content_preview = !s.settings.plain_content_preview;
+                            s.settings.save();
+                        });
+                        this.update(cx, |_panel, cx| {
+                            cx.emit(super::SettingsEvent::ClipboardSettingsChanged {
+                                reload_items: false,
+                                scroll_to_top: false,
+                            });
+                            cx.notify();
+                        });
+                    },
+                )
+            }
+            .into_any_element(),
+        );
         container =
             container.child(self.settings_group(I18nKey::GroupCardLayout.text(), card_rows));
+
+        // --- Merge & batch paste ---
+        let merge_rows: Vec<AnyElement> = vec![{
+            let state = state.clone();
+            self.setting_row_with_tabs(
+                I18nKey::SettingMergeSeparator.text(),
+                I18nKey::DescMergeSeparator.text(),
+                "settings-merge-separator",
+                &[
+                    ("newline", I18nKey::MergeSepNewline.text()),
+                    ("space", I18nKey::MergeSepSpace.text()),
+                    ("comma", I18nKey::MergeSepComma.text()),
+                    ("none", I18nKey::MergeSepNone.text()),
+                ],
+                &merge_separator,
+                move |key, _window, _cx| {
+                    state.update(_cx, |s, _cx| {
+                        s.settings.merge_separator = key.to_string();
+                        s.settings.save();
+                    });
+                },
+                window,
+                cx,
+            )
+        }
+        .into_any_element()];
+        container =
+            container.child(self.settings_group(I18nKey::GroupMergePaste.text(), merge_rows));
 
         // --- Hover preview ---
         let mut preview_rows: Vec<AnyElement> = vec![self
@@ -412,38 +472,38 @@ impl SettingsPanel {
         container =
             container.child(self.settings_group(I18nKey::GroupPreview.text(), preview_rows));
 
+        // --- Pointer actions ---
+        let pointer_rows: Vec<AnyElement> = vec![
+            self.render_click_action_row(
+                I18nKey::SettingLeftClickSingle.text(),
+                "settings-left-click-single",
+                &left_click_single,
+                ClickActionSlot::Single,
+                window,
+                cx,
+            ),
+            self.render_click_action_row(
+                I18nKey::SettingLeftClickDouble.text(),
+                "settings-left-click-double",
+                &left_click_double,
+                ClickActionSlot::Double,
+                window,
+                cx,
+            ),
+            self.render_click_action_row(
+                I18nKey::SettingMiddleClick.text(),
+                "settings-middle-click",
+                &middle_click,
+                ClickActionSlot::Middle,
+                window,
+                cx,
+            ),
+        ];
+        container =
+            container.child(self.settings_group(I18nKey::GroupPointerActions.text(), pointer_rows));
+
         // --- Copy & paste ---
         let paste_rows: Vec<AnyElement> = vec![
-            {
-                let state = state.clone();
-                let this = this.clone();
-                self.setting_row_with_tabs(
-                    I18nKey::SettingPasteClickMode.text(),
-                    I18nKey::DescPasteClickMode.text(),
-                    "settings-paste-click-mode",
-                    &[
-                        ("double_click", I18nKey::PasteClickModeDouble.text()),
-                        ("single_click", I18nKey::PasteClickModeSingle.text()),
-                    ],
-                    &paste_click_mode,
-                    move |key, _window, _cx| {
-                        state.update(_cx, |s, _cx| {
-                            s.settings.paste_click_mode = key.to_string();
-                            s.settings.save();
-                        });
-                        this.update(_cx, |_panel, cx| {
-                            cx.emit(super::SettingsEvent::ClipboardSettingsChanged {
-                                reload_items: false,
-                                scroll_to_top: false,
-                            });
-                            cx.notify();
-                        });
-                    },
-                    window,
-                    cx,
-                )
-            }
-            .into_any_element(),
             self.render_toggle_row(
                 I18nKey::SettingCopyPlain,
                 I18nKey::DescCopyPlainOn,
@@ -814,4 +874,59 @@ impl SettingsPanel {
 
         container
     }
+
+    /// 一行「手势 → 动作」三选一（无动作 / 仅复制 / 粘贴）。
+    ///
+    /// 三行共用同一个数据源：`AppSettings::click_actions` 的解析结果。选中后
+    /// 写回对应字段的显式值，从此不再回看旧的 `paste_click_mode`。
+    fn render_click_action_row(
+        &self,
+        label: &str,
+        id: &'static str,
+        current: &str,
+        slot: ClickActionSlot,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let state = self.state.clone();
+        // 「顺序即展示顺序」由 `ClickAction::ALL` 保证，新增动作只需改那一处。
+        let options: Vec<(&'static str, &'static str)> =
+            crate::core::click_action::ClickAction::ALL
+                .iter()
+                .map(|action| {
+                    (
+                        action.id(),
+                        crate::core::i18n_keys::click_action_label(*action),
+                    )
+                })
+                .collect();
+        self.setting_row_with_tabs(
+            label,
+            I18nKey::DescPointerActions.text(),
+            id,
+            &options,
+            current,
+            move |key, _window, _cx| {
+                state.update(_cx, |s, _cx| {
+                    match slot {
+                        ClickActionSlot::Single => s.settings.left_click_single = key.to_string(),
+                        ClickActionSlot::Double => s.settings.left_click_double = key.to_string(),
+                        ClickActionSlot::Middle => s.settings.middle_click = key.to_string(),
+                    }
+                    s.settings.save();
+                });
+            },
+            window,
+            cx,
+        )
+        .into_any_element()
+    }
+}
+
+/// 指针动作设置行对应哪个字段。
+#[derive(Debug, Clone, Copy)]
+enum ClickActionSlot {
+    Single,
+    Double,
+    Middle,
 }

@@ -3827,27 +3827,25 @@ impl WindowManager {
                     let Some(this) = weak_self.upgrade() else {
                         return;
                     };
-                    let proceed = this
-                        .update(cx, |wm, _cx| {
-                            if ns_window == 0 {
-                                log::info!("wm show aborted reason=ns_window_zero");
-                                wm.main_show_pending = false;
-                                return false;
-                            }
-                            if !(wm.visible && wm.ns_window == ns_window) {
-                                log::info!(
-                                    "wm show aborted reason=state_changed visible={}",
-                                    wm.visible
-                                );
-                                wm.main_show_pending = false;
-                                // See the Windows branch: never keep a "visible"
-                                // state bit for a window that was not ordered front.
-                                wm.visible = false;
-                                return false;
-                            }
-                            true
-                        })
-                        .unwrap_or(false);
+                    let proceed = this.update(cx, |wm, _cx| {
+                        if ns_window == 0 {
+                            log::info!("wm show aborted reason=ns_window_zero");
+                            wm.main_show_pending = false;
+                            return false;
+                        }
+                        if !(wm.visible && wm.ns_window == ns_window) {
+                            log::info!(
+                                "wm show aborted reason=state_changed visible={}",
+                                wm.visible
+                            );
+                            wm.main_show_pending = false;
+                            // See the Windows branch: never keep a "visible"
+                            // state bit for a window that was not ordered front.
+                            wm.visible = false;
+                            return false;
+                        }
+                        true
+                    });
                     if !proceed {
                         return;
                     }
@@ -5043,6 +5041,8 @@ impl WindowManager {
             log::error!("Failed to initialize main window IME handling: {error}");
         }
         crate::platform::focus::set_clippi_hwnd(hwnd);
+        // 拖出需要一段不持有 GPUI 借用的窗口过程，见 `platform::drag_out`。
+        crate::platform::drag_out::install(hwnd);
     }
 
     pub fn set_quick_window(
@@ -5122,7 +5122,6 @@ impl WindowManager {
             anchor.3,
             f32::from(target.size.width),
             f32::from(target.size.height),
-            target.prefer_right,
         ) else {
             return;
         };
@@ -5163,7 +5162,6 @@ impl WindowManager {
             anchor.3,
             f32::from(target.size.width),
             f32::from(target.size.height),
-            target.prefer_right,
         ) else {
             self.hide_preview_flyout(cx);
             return;
@@ -5237,6 +5235,15 @@ impl WindowManager {
         let Some(attachment) = self.preview_flyout_attachment.clone() else {
             return;
         };
+        // The compact sheet shows a clipped excerpt and has no scroll target of
+        // its own, so a notch over it must keep scrolling the list; the expanded
+        // sheet owns the wheel (body scroll, image zoom). Read the content view
+        // rather than the flag: the view is what actually holds the wheel.
+        let expanded = self
+            .preview_flyout_view
+            .as_ref()
+            .is_some_and(|view| view.read(cx).is_expanded());
+        attachment.set_wheel_to_main(!expanded);
         let from = attachment.current_rect().unwrap_or(to);
         let Some(flyout_handle) = self.preview_flyout_window else {
             return;
@@ -6160,17 +6167,15 @@ impl WindowManager {
                 let Some(this) = weak_self.upgrade() else {
                     return;
                 };
-                let (alive, still_hidden, reached) = this
-                    .update(cx, |wm, _cx| {
-                        let alive = wm
-                            .main_compacted_state
-                            .as_ref()
-                            .is_some_and(|s| s.generation == generation)
-                            && wm.surface_generation == generation;
-                        let reached = wm.macos_window_content_size_is(ns_window_ptr, 1.0, 1.0);
-                        (alive, !wm.visible, reached)
-                    })
-                    .unwrap_or((false, false, false));
+                let (alive, still_hidden, reached) = this.update(cx, |wm, _cx| {
+                    let alive = wm
+                        .main_compacted_state
+                        .as_ref()
+                        .is_some_and(|s| s.generation == generation)
+                        && wm.surface_generation == generation;
+                    let reached = wm.macos_window_content_size_is(ns_window_ptr, 1.0, 1.0);
+                    (alive, !wm.visible, reached)
+                });
                 if !alive || !still_hidden {
                     return; // superseded or re-shown before the shrink landed
                 }
@@ -6258,19 +6263,17 @@ impl WindowManager {
                 let Some(this) = weak_self.upgrade() else {
                     return;
                 };
-                let (active, still_visible, reached) = this
-                    .update(cx, |wm, _cx| {
-                        (
-                            wm.surface_generation == restore_generation
-                                && wm
-                                    .main_compacted_state
-                                    .as_ref()
-                                    .is_some_and(|s| s.generation == restore_generation),
-                            wm.visible,
-                            wm.macos_window_content_size_is(ns_window, target_w, target_h),
-                        )
-                    })
-                    .unwrap_or((false, false, false));
+                let (active, still_visible, reached) = this.update(cx, |wm, _cx| {
+                    (
+                        wm.surface_generation == restore_generation
+                            && wm
+                                .main_compacted_state
+                                .as_ref()
+                                .is_some_and(|s| s.generation == restore_generation),
+                        wm.visible,
+                        wm.macos_window_content_size_is(ns_window, target_w, target_h),
+                    )
+                });
                 if !active || !still_visible {
                     return; // superseded or hidden again while restoring
                 }
@@ -6309,27 +6312,24 @@ impl WindowManager {
             let Some(this) = weak_self.upgrade() else {
                 return;
             };
-            let shown = this
-                .update(cx, |wm, _cx| {
-                    if !wm.visible
-                        || wm.surface_generation != restore_generation
-                        || wm
-                            .main_compacted_state
-                            .as_ref()
-                            .is_none_or(|s| s.generation != restore_generation)
-                    {
-                        return None;
-                    }
-                    // Clear the guard only in the same update that claims the
-                    // confirmed full-size window, before it is positioned and
-                    // ordered front. This prevents the 200 ms geometry poll from
-                    // ever observing an in-flight 1×1 restore as a normal
-                    // visible window.
-                    wm.main_compacted_state = None;
-                    Some((wm.calculate_position(), wm.ns_window))
-                })
-                .ok()
-                .flatten();
+            let shown = this.update(cx, |wm, _cx| {
+                if !wm.visible
+                    || wm.surface_generation != restore_generation
+                    || wm
+                        .main_compacted_state
+                        .as_ref()
+                        .is_none_or(|s| s.generation != restore_generation)
+                {
+                    return None;
+                }
+                // Clear the guard only in the same update that claims the
+                // confirmed full-size window, before it is positioned and
+                // ordered front. This prevents the 200 ms geometry poll from
+                // ever observing an in-flight 1×1 restore as a normal
+                // visible window.
+                wm.main_compacted_state = None;
+                Some((wm.calculate_position(), wm.ns_window))
+            });
             // Position and order front outside the app borrow: the move must not
             // be made while an update is on the stack (see `position_ns_window`).
             // Nothing is awaited in between, so the window still appears at the
@@ -6421,17 +6421,15 @@ impl WindowManager {
                 let Some(this) = weak_self.upgrade() else {
                     return;
                 };
-                let (alive, still_hidden, reached) = this
-                    .update(cx, |wm, _cx| {
-                        let alive = wm
-                            .quick_compacted_state
-                            .as_ref()
-                            .is_some_and(|s| s.generation == generation)
-                            && wm.surface_generation == generation;
-                        let reached = wm.macos_window_content_size_is(ns_window_ptr, 1.0, 1.0);
-                        (alive, !wm.quick_visible, reached)
-                    })
-                    .unwrap_or((false, false, false));
+                let (alive, still_hidden, reached) = this.update(cx, |wm, _cx| {
+                    let alive = wm
+                        .quick_compacted_state
+                        .as_ref()
+                        .is_some_and(|s| s.generation == generation)
+                        && wm.surface_generation == generation;
+                    let reached = wm.macos_window_content_size_is(ns_window_ptr, 1.0, 1.0);
+                    (alive, !wm.quick_visible, reached)
+                });
                 if !alive || !still_hidden {
                     return; // superseded or re-shown before the shrink landed
                 }
@@ -6529,11 +6527,9 @@ impl WindowManager {
             let Some(this) = weak_self.upgrade() else {
                 return;
             };
-            let should_apply = this
-                .update(cx, |wm, _cx| {
-                    wm.quick_visible && wm.surface_generation == generation
-                })
-                .unwrap_or(false);
+            let should_apply = this.update(cx, |wm, _cx| {
+                wm.quick_visible && wm.surface_generation == generation
+            });
             if !should_apply {
                 return; // superseded, or hidden before the frame landed
             }
@@ -6544,7 +6540,7 @@ impl WindowManager {
             // update released the app borrow and GPUI's `on_resize` can update
             // `viewport_size`. Calling AppKit's resize directly here would
             // re-enter the borrow we are currently inside.
-            let window_handle = this.update(cx, |wm, _cx| wm.quick_window).ok().flatten();
+            let window_handle = this.update(cx, |wm, _cx| wm.quick_window);
             if let Some(handle) = window_handle {
                 let _ = cx.update_window(handle, |_view, window, _cx| {
                     window.resize(size(px(QUICK_WINDOW_WIDTH), px(height)));
@@ -6552,7 +6548,7 @@ impl WindowManager {
             }
             // Reposition through AppKit, outside the borrow for the same reason
             // the resize above goes through GPUI (see `position_ns_window`).
-            let quick_ns_window = this.update(cx, |wm, _cx| wm.quick_ns_window).unwrap_or(0);
+            let quick_ns_window = this.update(cx, |wm, _cx| wm.quick_ns_window);
             Self::position_ns_window(quick_ns_window, x, y);
 
             // Confirm the native size before showing so the popup can never
@@ -6567,25 +6563,23 @@ impl WindowManager {
                 let Some(this) = weak_self.upgrade() else {
                     return;
                 };
-                let decision = this
-                    .update(cx, |wm, _cx| {
-                        if !wm.quick_visible || wm.surface_generation != generation {
-                            return Some(false);
-                        }
-                        if wm.macos_window_content_size_is(ns_window, target_w, target_h) {
-                            Some(true)
-                        } else if Instant::now() >= deadline {
-                            wm.macos_compaction_disabled = true;
-                            log::warn!(
-                                "quick show: resize not confirmed within 100ms; \
+                let decision = this.update(cx, |wm, _cx| {
+                    if !wm.quick_visible || wm.surface_generation != generation {
+                        return Some(false);
+                    }
+                    if wm.macos_window_content_size_is(ns_window, target_w, target_h) {
+                        Some(true)
+                    } else if Instant::now() >= deadline {
+                        wm.macos_compaction_disabled = true;
+                        log::warn!(
+                            "quick show: resize not confirmed within 100ms; \
                                  compaction disabled (gen {generation})"
-                            );
-                            Some(true)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(Some(false));
+                        );
+                        Some(true)
+                    } else {
+                        None
+                    }
+                });
                 match decision {
                     Some(true) => {
                         this.update(cx, |wm, _cx| {
@@ -7614,14 +7608,18 @@ impl WindowManager {
 
         // 4. Periodic check: use the software update frequency and persist
         // attempt time, so offline restarts do not repeatedly surface errors.
-        let settings = self.state.read(cx).settings.clone();
-        if settings.auto_check_updates
-            && !self.update_check_running.load(Ordering::Acquire)
-            && update::scheduled_update_check_due(
-                &settings.update_last_check_at,
-                chrono::Utc::now(),
-            )
-        {
+        // The due check borrows the two fields it needs instead of cloning the
+        // whole settings snapshot on every 200 ms tick.
+        let update_due = {
+            let settings = &self.state.read(cx).settings;
+            settings.auto_check_updates
+                && !self.update_check_running.load(Ordering::Acquire)
+                && update::scheduled_update_check_due(
+                    &settings.update_last_check_at,
+                    chrono::Utc::now(),
+                )
+        };
+        if update_due {
             self.start_scheduled_update_check(cx);
         }
     }
@@ -7857,24 +7855,39 @@ impl WindowManager {
             self.maintenance_retry_after = None;
         }
 
-        let settings = self.state.read(cx).settings.clone();
-        let transfer_available = self.state.read(cx).transfer_available();
-        let interval = settings.cleanup_interval.as_str();
-        let retention_days = settings.retention_days;
+        // Due checks read a handful of fields; the full snapshot is only cloned
+        // once a job is actually going to run.
         let today = chrono::Local::now().date_naive();
-        let cache_needed = cache_cleanup_due(interval, &settings.cleanup_last_date, today);
-        let retention_needed =
-            retention_cleanup_due(retention_days, &settings.retention_cleanup_last_date, today);
-        let transfer_needed = transfer_cleanup_due(
-            transfer_available,
-            settings.transfer_retention_days,
-            &settings.transfer_cleanup_last_date,
-            today,
-        );
+        let (cache_needed, retention_needed, transfer_needed) = {
+            let state = self.state.read(cx);
+            let settings = &state.settings;
+            (
+                cache_cleanup_due(
+                    settings.cleanup_interval.as_str(),
+                    &settings.cleanup_last_date,
+                    today,
+                ),
+                retention_cleanup_due(
+                    settings.retention_days,
+                    &settings.retention_cleanup_last_date,
+                    today,
+                ),
+                transfer_cleanup_due(
+                    state.transfer_available(),
+                    settings.transfer_retention_days,
+                    &settings.transfer_cleanup_last_date,
+                    today,
+                ),
+            )
+        };
 
         if !cache_needed && !retention_needed && !transfer_needed {
             return;
         }
+
+        let settings = self.state.read(cx).settings.clone();
+        let interval = settings.cleanup_interval.as_str();
+        let retention_days = settings.retention_days;
 
         if transfer_needed {
             let daily_marker = today.format("%Y-%m-%d").to_string();

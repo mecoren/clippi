@@ -76,6 +76,14 @@ pub struct PrunedClipboardItem {
 }
 
 const SOURCE_APP_ICON_INLINE_LIMIT: usize = 256 * 1024;
+/// How many ids one tag query binds at a time.
+///
+/// SQLite's `MAX_VARIABLE_NUMBER` defaults to 32766 and rejects the whole
+/// statement above it, so a page-wide `IN (?,?…)` silently broke list loading
+/// once a page exceeded that many rows (32,767 items reproduced it). Batching
+/// keeps every statement far below the limit regardless of history size.
+const TAG_QUERY_BATCH: usize = 8_000;
+
 const LIST_FULL_TEXT_LIMIT: usize = 8192;
 const LIST_RICH_HTML_LIMIT: usize = 4096;
 const LIST_RICH_AUX_LIMIT: usize = 2048;
@@ -88,11 +96,12 @@ const STALE_OBSERVATION_COUNT_MAX: i64 = 1_000;
 
 /// Predicate matching the rows that automatic history maintenance may delete:
 /// the retention window, the item limit, and the stale-item cleanup all use
-/// it. Favorites, tagged items, noted items, and items with a custom hotkey
-/// are user-curated — they neither count toward `max_items` nor expire nor get
-/// reclaimed when their source disappears, so curating an item is what makes
-/// it permanent.
+/// it. Pinned items, favorites, tagged items, noted items, and items with a
+/// custom hotkey are user-curated — they neither count toward `max_items` nor
+/// expire nor get reclaimed when their source disappears, so curating an item
+/// is what makes it permanent.
 const MAINTENANCE_DELETABLE_PREDICATE: &str = "meta_type != 'transfer' \
+     AND pinned = 0 \
      AND is_favorite = 0 \
      AND custom_hotkey = '' \
      AND note = '' \
@@ -103,8 +112,11 @@ const MAINTENANCE_DELETABLE_PREDICATE: &str = "meta_type != 'transfer' \
 /// Predicate selecting the rows a "clear clipboard history" call deletes.
 /// Each `include_*` flag turns one protection off instead of deleting that
 /// category by default, so favorites, tagged items, and noted items survive
-/// unless the user opts in.
+/// unless the user opts in. Pinned items are protected unconditionally: the
+/// bulletproof intent of a pin is "keep this", so clearing is never allowed to
+/// discard one without an explicit unpin first.
 const CLEAR_HISTORY_SELECTION_PREDICATE: &str = "meta_type != 'transfer' \
+     AND pinned = 0 \
      AND (?1 OR is_favorite = 0) \
      AND (?2 OR NOT EXISTS ( \
          SELECT 1 FROM item_tags WHERE item_tags.item_id = clipboard_items.id \
@@ -157,8 +169,32 @@ fn file_icon_cache_key(file_path: &str, is_dir: bool) -> String {
 }
 
 fn item_select_columns() -> String {
+    item_select_columns_with_icon(true)
+}
+
+/// Full-payload column list for callers that only *scan* rows.
+///
+/// The keyword search reads up to [`crate::state::app`]'s scan limit rows per
+/// keystroke just to decide whether each one matches. Nothing on that path
+/// looks at `source_app_icon`, and the inline icon (a base64 PNG, capped at
+/// [`SOURCE_APP_ICON_INLINE_LIMIT`] per row) is the largest field it would
+/// otherwise drag along for every scanned row. The column is kept in place —
+/// [`row_to_item`] reads by position — but resolved to an empty string;
+/// survivors get their icon back through [`Database::fill_source_app_icons`].
+fn item_scan_columns() -> String {
+    item_select_columns_with_icon(false)
+}
+
+fn item_select_columns_with_icon(inline_icon: bool) -> String {
+    let icon = if inline_icon {
+        format!(
+            "CASE WHEN length(source_app_icon) <= {SOURCE_APP_ICON_INLINE_LIMIT} THEN source_app_icon ELSE '' END"
+        )
+    } else {
+        "''".to_string()
+    };
     format!(
-        "id, content_type, full_text, content_hash, created_at, updated_at, image_path, rich_data, file_data, is_favorite, note, source_app_name, CASE WHEN length(source_app_icon) <= {SOURCE_APP_ICON_INLINE_LIMIT} THEN source_app_icon ELSE '' END, image_width, image_height, size, meta_type, custom_hotkey, custom_hotkey_format, existence_observed_at"
+        "id, content_type, full_text, content_hash, created_at, updated_at, image_path, rich_data, file_data, is_favorite, note, source_app_name, {icon}, image_width, image_height, size, meta_type, custom_hotkey, custom_hotkey_format, existence_observed_at, pinned"
     )
 }
 
@@ -198,7 +234,7 @@ fn list_item_select_columns() -> String {
                  'remote_host', NULLIF(substr(coalesce(json_extract(rich_data, '$.remote_host'), ''), 1, {LIST_RICH_AUX_LIMIT}), '')
              )
          END,
-         file_data, is_favorite, substr(note, 1, {LIST_NOTE_LIMIT}), source_app_name, CASE WHEN length(source_app_icon) <= {SOURCE_APP_ICON_INLINE_LIMIT} THEN source_app_icon ELSE '' END, image_width, image_height, size, meta_type, custom_hotkey, custom_hotkey_format, existence_observed_at"
+         file_data, is_favorite, substr(note, 1, {LIST_NOTE_LIMIT}), source_app_name, CASE WHEN length(source_app_icon) <= {SOURCE_APP_ICON_INLINE_LIMIT} THEN source_app_icon ELSE '' END, image_width, image_height, size, meta_type, custom_hotkey, custom_hotkey_format, existence_observed_at, pinned"
     )
 }
 
@@ -582,9 +618,12 @@ impl Database {
         let order_col = Self::validate_order_by(order_by);
         let (where_clause, mut filter_params) = filters.db_where();
         let limit_clause = if limit.is_some() { " LIMIT ?" } else { "" };
+        // Pinned rows always lead; the chosen sort column only orders the rest.
+        // The prefix has to stay inside SQL rather than a post-load Rust sort so
+        // that `limit`/`offset` paging and keyword scan pages agree on it.
         let query = format!(
             "SELECT {columns}
-             FROM clipboard_items {} ORDER BY {} DESC{}",
+             FROM clipboard_items {} ORDER BY pinned DESC, {} DESC{}",
             where_clause, order_col, limit_clause
         );
         if let Some(limit) = limit {
@@ -595,24 +634,27 @@ impl Database {
         items.collect()
     }
 
-    pub fn load_filtered_page(
+    fn load_filtered_page_with_columns(
         &self,
         filters: &ClipboardFilters,
         limit: usize,
         offset: usize,
         order_by: &str,
+        columns: &str,
     ) -> SqlResult<Vec<ClipboardItem>> {
         let order_col = Self::validate_order_by(order_by);
         let (where_clause, mut filter_params) = filters.db_where();
-        let columns = item_select_columns();
         let query = format!(
             "SELECT {columns}
-             FROM clipboard_items {} ORDER BY {} DESC LIMIT ? OFFSET ?",
+             FROM clipboard_items {} ORDER BY pinned DESC, {} DESC LIMIT ? OFFSET ?",
             where_clause, order_col
         );
         filter_params.push((limit as i64).into());
         filter_params.push((offset as i64).into());
-        let mut stmt = self.conn.prepare(&query)?;
+        // Keyword paging re-runs this exact statement once per page, so the
+        // compiled form is worth keeping: re-preparing it per page costs a
+        // parse on every keystroke.
+        let mut stmt = self.conn.prepare_cached(&query)?;
         let items = stmt.query_map(rusqlite::params_from_iter(filter_params), row_to_item)?;
         items.collect()
     }
@@ -660,6 +702,35 @@ impl Database {
             "UPDATE clipboard_items SET is_favorite = ?2 WHERE id = ?1",
             params![id, value as i32],
         )?;
+        Ok(())
+    }
+
+    /// Pin or unpin one item.
+    ///
+    /// `updated_at` is deliberately left alone: pinning must not make an old
+    /// entry look recently used, and the row keeps its place inside the pinned
+    /// group instead of jumping to the top.
+    pub fn set_pinned(&self, id: i64, value: bool) -> SqlResult<()> {
+        self.conn.execute(
+            "UPDATE clipboard_items SET pinned = ?2 WHERE id = ?1",
+            params![id, value as i32],
+        )?;
+        Ok(())
+    }
+
+    /// Pin or unpin a batch of items in one transaction.
+    pub fn set_pinned_many(&self, ids: &[i64], value: bool) -> SqlResult<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut stmt = tx.prepare("UPDATE clipboard_items SET pinned = ?2 WHERE id = ?1")?;
+            for id in ids {
+                stmt.execute(params![id, value as i32])?;
+            }
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -736,6 +807,18 @@ impl Database {
         )?;
         *self.titlebar_stats_cache.borrow_mut() = Some(TitlebarStatsCache { revision, stats });
         Ok(stats)
+    }
+
+    /// 库里的剪贴条目总数，不受任何筛选影响。标题栏用它显示「有多少条剪贴
+    /// 数据」，因此不能走列表分页的 `items.len()`（那一页永远只装得下
+    /// query_limit 条）。中转站条目是文件清单，不算剪贴数据，和
+    /// [`Self::count_clearable_history`] 一样排除。
+    pub fn count_clipboard_items(&self) -> SqlResult<u32> {
+        self.conn.query_row(
+            "SELECT COUNT(*) FROM clipboard_items WHERE meta_type != 'transfer'",
+            [],
+            |row| row.get::<_, i64>(0).map(|count| count as u32),
+        )
     }
 
     /// Number of non-transfer rows `clear_clipboard_history` would delete for
@@ -867,36 +950,49 @@ impl Database {
         &self,
         item_ids: &[i64],
     ) -> SqlResult<std::collections::HashMap<i64, Vec<TagInfo>>> {
+        self.get_tags_for_items_batched(item_ids, TAG_QUERY_BATCH)
+    }
+
+    /// [`Self::get_tags_for_items`] with an explicit batch width.
+    ///
+    /// The width is a parameter only so tests can exercise the multi-batch path
+    /// against a handful of rows.
+    fn get_tags_for_items_batched(
+        &self,
+        item_ids: &[i64],
+        batch: usize,
+    ) -> SqlResult<std::collections::HashMap<i64, Vec<TagInfo>>> {
         let mut map: std::collections::HashMap<i64, Vec<TagInfo>> =
             std::collections::HashMap::new();
-        if item_ids.is_empty() {
-            return Ok(map);
-        }
-        let placeholders: Vec<String> = item_ids.iter().map(|_| "?".to_string()).collect();
-        let query = format!(
-            "SELECT it.item_id, t.id, t.uid, t.name, t.color, t.updated_at FROM tags t \
-             INNER JOIN item_tags it ON t.id = it.tag_id \
-             WHERE it.item_id IN ({}) ORDER BY it.used_at DESC",
-            placeholders.join(",")
-        );
-        let mut stmt = self.conn.prepare(&query)?;
-        let params: Vec<rusqlite::types::Value> = item_ids.iter().map(|&id| (id).into()).collect();
-        let rows = stmt.query_map(rusqlite::params_from_iter(params), |row| {
-            let updated_str: String = row.get::<_, String>(5).unwrap_or_default();
-            Ok((
-                row.get::<_, i64>(0)?,
-                TagInfo {
-                    id: row.get(1)?,
-                    uid: row.get(2)?,
-                    name: row.get(3)?,
-                    color: row.get(4)?,
-                    updated_at: updated_str,
-                },
-            ))
-        })?;
-        for row in rows {
-            let (item_id, tag) = row?;
-            map.entry(item_id).or_default().push(tag);
+        let batch = batch.max(1);
+        for ids in item_ids.chunks(batch) {
+            let query = format!(
+                "SELECT it.item_id, t.id, t.uid, t.name, t.color, t.updated_at FROM tags t \
+                 INNER JOIN item_tags it ON t.id = it.tag_id \
+                 WHERE it.item_id IN ({}) ORDER BY it.used_at DESC",
+                vec!["?"; ids.len()].join(",")
+            );
+            // `prepare_cached` keeps one compiled statement per batch width, so
+            // a full page pays the compile cost once instead of once per batch.
+            let mut stmt = self.conn.prepare_cached(&query)?;
+            let params: Vec<rusqlite::types::Value> = ids.iter().map(|&id| (id).into()).collect();
+            let rows = stmt.query_map(rusqlite::params_from_iter(params), |row| {
+                let updated_str: String = row.get::<_, String>(5).unwrap_or_default();
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    TagInfo {
+                        id: row.get(1)?,
+                        uid: row.get(2)?,
+                        name: row.get(3)?,
+                        color: row.get(4)?,
+                        updated_at: updated_str,
+                    },
+                ))
+            })?;
+            for row in rows {
+                let (item_id, tag) = row?;
+                map.entry(item_id).or_default().push(tag);
+            }
         }
         Ok(map)
     }
@@ -1006,18 +1102,6 @@ impl Database {
         Ok(items)
     }
 
-    pub fn load_filtered_page_with_tags(
-        &self,
-        filters: &ClipboardFilters,
-        limit: usize,
-        offset: usize,
-        order_by: &str,
-    ) -> SqlResult<Vec<ClipboardItem>> {
-        let mut items = self.load_filtered_page(filters, limit, offset, order_by)?;
-        self.fill_tags(&mut items)?;
-        Ok(items)
-    }
-
     pub fn load_filtered_list_with_tags(
         &self,
         filters: &ClipboardFilters,
@@ -1027,6 +1111,74 @@ impl Database {
         let mut items = self.load_filtered_list(filters, limit, order_by)?;
         self.fill_tags(&mut items)?;
         Ok(items)
+    }
+
+    /// Load one page of rows for the keyword scan.
+    ///
+    /// Predicate, ordering and tags are the same as the list loaders; the only
+    /// difference is that the inline source-app icon is left out of the
+    /// payload. The scan matches on
+    /// text, note and tags and never reads the icon, so carrying it would move
+    /// up to [`SOURCE_APP_ICON_INLINE_LIMIT`] of base64 per scanned row through
+    /// the UI thread for rows that never reach the screen. Rows that survive
+    /// the filter get their icon back via [`Self::fill_source_app_icons`].
+    pub fn load_filtered_scan_page_with_tags(
+        &self,
+        filters: &ClipboardFilters,
+        limit: usize,
+        offset: usize,
+        order_by: &str,
+    ) -> SqlResult<Vec<ClipboardItem>> {
+        let mut items = self.load_filtered_page_with_columns(
+            filters,
+            limit,
+            offset,
+            order_by,
+            &item_scan_columns(),
+        )?;
+        self.fill_tags(&mut items)?;
+        Ok(items)
+    }
+
+    /// Restore the inline `source_app_icon` on rows read by
+    /// [`Self::load_filtered_scan_page_with_tags`].
+    ///
+    /// One lookup for the whole batch; rows that already carry an icon are left
+    /// untouched so the regular display path pays nothing for this.
+    pub fn fill_source_app_icons(&self, items: &mut [ClipboardItem]) -> SqlResult<()> {
+        let ids: Vec<i64> = items
+            .iter()
+            .filter(|item| item.source_app_icon.is_empty())
+            .map(|item| item.id)
+            .collect();
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let placeholders = vec!["?"; ids.len()].join(",");
+        let query = format!(
+            "SELECT id, CASE WHEN length(source_app_icon) <= {SOURCE_APP_ICON_INLINE_LIMIT} \
+             THEN source_app_icon ELSE '' END \
+             FROM clipboard_items WHERE id IN ({placeholders})"
+        );
+        let mut stmt = self.conn.prepare(&query)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(ids.iter()), |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut icons: std::collections::HashMap<i64, String> = std::collections::HashMap::new();
+        for row in rows {
+            let (id, icon) = row?;
+            if !icon.is_empty() {
+                icons.insert(id, icon);
+            }
+        }
+        for item in items.iter_mut() {
+            if item.source_app_icon.is_empty() {
+                if let Some(icon) = icons.get(&item.id) {
+                    item.source_app_icon = icon.clone();
+                }
+            }
+        }
+        Ok(())
     }
 
     fn fill_tags(&self, items: &mut [ClipboardItem]) -> SqlResult<()> {
@@ -1672,7 +1824,7 @@ impl Database {
         // every eligible row and truncating in memory.
         let mut stmt = self.conn.prepare(&format!(
             "SELECT id FROM clipboard_items WHERE {MAINTENANCE_DELETABLE_PREDICATE} AND (?2 IS NULL OR id != ?2) \
-             ORDER BY created_at ASC LIMIT ?1"
+             ORDER BY created_at ASC, id ASC LIMIT ?1"
         ))?;
         let pruned_ids: Vec<i64> = stmt
             .query_map(params![excess as i64, preserve_id], |row| row.get(0))?
@@ -2798,6 +2950,7 @@ fn row_to_item(row: &rusqlite::Row<'_>) -> SqlResult<ClipboardItem> {
         custom_hotkey: row.get(17).unwrap_or_default(),
         custom_hotkey_format: row.get(18).unwrap_or_default(),
         existence_observed_at: row.get(19).unwrap_or_default(),
+        pinned: row.get::<_, i32>(20).unwrap_or(0) != 0,
     })
 }
 
@@ -2881,6 +3034,79 @@ mod tests {
             rusqlite::params![text, hash as i64, updated, updated],
         )
         .unwrap();
+    }
+
+    /// 一页 id 全绑进一条 `IN (?,…)` 会超过 SQLite 的变量上限（32766）；
+    /// 标签查询必须分批，且分批之后一行标签都不能漏。
+    #[test]
+    fn tags_for_a_large_page_are_fetched_in_batches() {
+        let db = Database::open(":memory:").unwrap();
+        let tag_id = db.create_tag("work", "#FF0000").unwrap();
+        let mut ids = Vec::new();
+        for hash in 1..=5u64 {
+            insert_item(&db, hash, "text", "2026-01-01T00:00:00Z");
+            let id = db.get_by_hash(hash).unwrap().unwrap().id;
+            db.add_item_tag(id, tag_id).unwrap();
+            ids.push(id);
+        }
+        // batch=2 强制拆成三次查询，等价于真实页面的分批路径。
+        let map = db.get_tags_for_items_batched(&ids, 2).unwrap();
+        assert_eq!(map.len(), ids.len());
+        for id in &ids {
+            let tags = &map[id];
+            assert_eq!(tags.len(), 1);
+            assert_eq!(tags[0].name, "work");
+        }
+        assert!(db.get_tags_for_items(&[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn clipboard_item_count_ignores_transfer_rows() {
+        let db = Database::open(":memory:").unwrap();
+        insert_item(&db, 1, "first", "2026-01-01T00:00:00Z");
+        insert_item(&db, 2, "second", "2026-01-02T00:00:00Z");
+        assert_eq!(db.count_clipboard_items().unwrap(), 2);
+
+        // 中转站条目是文件清单，不算剪贴数据。
+        db.conn
+            .execute(
+                "UPDATE clipboard_items SET meta_type = 'transfer' WHERE content_hash = 2",
+                [],
+            )
+            .unwrap();
+        assert_eq!(db.count_clipboard_items().unwrap(), 1);
+    }
+
+    #[test]
+    fn keyword_scan_page_omits_inline_icon_until_backfilled() {
+        let (_path, db) = temp_db("scan-icon");
+        insert_item(&db, 1, "alpha", "2026-01-01T00:00:00Z");
+        insert_item(&db, 2, "beta", "2026-01-02T00:00:00Z");
+        db.conn
+            .execute(
+                "UPDATE clipboard_items SET source_app_name = 'Editor', source_app_icon = 'QUJD'",
+                [],
+            )
+            .unwrap();
+
+        let filters = ClipboardFilters::default();
+        let mut page = db
+            .load_filtered_scan_page_with_tags(&filters, 10, 0, "updated_at")
+            .unwrap();
+        assert_eq!(page.len(), 2);
+        assert!(page.iter().all(|item| item.source_app_name == "Editor"));
+        assert!(
+            page.iter().all(|item| item.source_app_icon.is_empty()),
+            "the scan payload must not carry the inline icon"
+        );
+
+        db.fill_source_app_icons(&mut page).unwrap();
+        assert!(page.iter().all(|item| item.source_app_icon == "QUJD"));
+
+        // The other read paths keep the icon inline: only the scan payload is
+        // trimmed, so display behaviour is unchanged.
+        let full = db.get_by_id(page[0].id).unwrap().unwrap();
+        assert_eq!(full.source_app_icon, "QUJD");
     }
 
     #[test]
@@ -3917,6 +4143,81 @@ mod tests {
         assert_eq!(result.deleted_items, 1);
         assert!(db.get_by_hash(202).unwrap().is_none());
         std::fs::remove_file(temporary_file).unwrap();
+    }
+
+    #[test]
+    fn pinned_items_lead_every_list_query_regardless_of_sort_column() {
+        let (_path, db) = temp_db("pinned-order");
+        insert_item(&db, 1, "oldest", "2026-01-01T00:00:00Z");
+        insert_item(&db, 2, "middle", "2026-02-01T00:00:00Z");
+        insert_item(&db, 3, "newest", "2026-03-01T00:00:00Z");
+        let oldest = db.get_by_hash(1).unwrap().unwrap();
+        assert!(!oldest.pinned);
+        db.set_pinned(oldest.id, true).unwrap();
+
+        for order_by in ["updated_at", "created_at"] {
+            let items = db
+                .load_filtered(&ClipboardFilters::default(), 10, order_by)
+                .unwrap();
+            assert_eq!(
+                items.iter().map(|i| i.content_hash).collect::<Vec<_>>(),
+                [1, 3, 2],
+                "pinned row must lead ORDER BY {order_by}"
+            );
+        }
+
+        // Paging keeps the same prefix, so page 2 starts after the pinned row.
+        let first_page = db
+            .load_filtered_scan_page_with_tags(&ClipboardFilters::default(), 2, 0, "updated_at")
+            .unwrap();
+        assert_eq!(
+            first_page
+                .iter()
+                .map(|i| i.content_hash)
+                .collect::<Vec<_>>(),
+            [1, 3]
+        );
+        let second_page = db
+            .load_filtered_scan_page_with_tags(&ClipboardFilters::default(), 2, 2, "updated_at")
+            .unwrap();
+        assert_eq!(second_page.len(), 1);
+        assert_eq!(second_page[0].content_hash, 2);
+
+        db.set_pinned_many(&[oldest.id], false).unwrap();
+        assert!(!db.get_by_hash(1).unwrap().unwrap().pinned);
+    }
+
+    #[test]
+    fn pinned_items_are_exempt_from_maintenance_and_clear_history() {
+        let (_path, db) = temp_db("pinned-protected");
+        insert_item(&db, 11, "pinned", "2026-01-01T00:00:00Z");
+        insert_item(&db, 12, "regular-old", "2026-01-02T00:00:00Z");
+        insert_item(&db, 13, "regular-new", "2026-01-03T00:00:00Z");
+        let pinned = db.get_by_hash(11).unwrap().unwrap();
+        db.set_pinned(pinned.id, true).unwrap();
+
+        // The item limit only counts deletable rows, so the pinned row survives
+        // and the oldest *unpinned* row is the one trimmed.
+        let removed = db.prune_items_over_limit(1).unwrap();
+        assert_eq!(removed.len(), 1);
+        assert!(db.get_by_hash(12).unwrap().is_none());
+        assert!(db.get_by_hash(11).unwrap().is_some());
+        assert!(db.get_by_hash(13).unwrap().is_some());
+
+        // Retention pruning skips it too.
+        let expired = db.prune_expired_items(1).unwrap();
+        assert_eq!(expired.len(), 1);
+        assert_eq!(expired[0].content_hash, 13);
+        assert!(db.get_by_hash(11).unwrap().is_some());
+
+        // Clearing history with every opt-in still keeps pinned rows.
+        insert_item(&db, 14, "regular-later", "2026-01-04T00:00:00Z");
+        let result = db
+            .clear_clipboard_history("test-device", true, true, true)
+            .unwrap();
+        assert_eq!(result.deleted_items, 1);
+        assert!(db.get_by_hash(14).unwrap().is_none());
+        assert!(db.get_by_hash(11).unwrap().is_some());
     }
 
     #[test]

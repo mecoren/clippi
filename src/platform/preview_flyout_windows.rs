@@ -18,8 +18,8 @@ use windows_sys::Win32::{
             GetWindowLongW, GetWindowRect, IsWindowVisible, SetWindowLongPtrW, SetWindowLongW,
             SetWindowPos, GWLP_HWNDPARENT, GWL_STYLE, HTCLIENT, HTTRANSPARENT, SWP_FRAMECHANGED,
             SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE,
-            SWP_NOZORDER, WM_NCDESTROY, WM_NCHITTEST, WS_BORDER, WS_CAPTION, WS_DLGFRAME,
-            WS_SYSMENU, WS_THICKFRAME,
+            SWP_NOZORDER, WM_MOUSEHWHEEL, WM_MOUSEWHEEL, WM_NCDESTROY, WM_NCHITTEST, WS_BORDER,
+            WS_CAPTION, WS_DLGFRAME, WS_SYSMENU, WS_THICKFRAME,
         },
     },
 };
@@ -39,6 +39,10 @@ thread_local! {
     /// the whole work area and never resizes while shown; only the card inside
     /// it may receive input, everything else passes through to the windows below.
     static CARD_HIT: RefCell<HashMap<isize, ScreenRect>> = RefCell::new(HashMap::new());
+    /// Whether the wheel over this flyout belongs to the main list (compact
+    /// hover sheet) rather than to the preview content (expanded sheet, where
+    /// the wheel scrolls the body and zooms the image).
+    static WHEEL_TO_MAIN: RefCell<HashMap<isize, bool>> = RefCell::new(HashMap::new());
 }
 
 pub struct Attachment {
@@ -129,7 +133,6 @@ impl Attachment {
         card_height: f32,
         width: f32,
         height: f32,
-        prefer_right: bool,
     ) -> Option<LogicalRect> {
         let (main, scale, work) = self.screen_context()?;
         let mut client_origin = POINT { x: 0, y: 0 };
@@ -158,7 +161,6 @@ impl Attachment {
             anchor_y,
             work_logical,
             (width, height),
-            prefer_right,
         ))
     }
 
@@ -168,7 +170,22 @@ impl Attachment {
         CARD_HIT.with(|hits| {
             hits.borrow_mut().remove(&self.flyout);
         });
+        WHEEL_TO_MAIN.with(|flags| {
+            flags.borrow_mut().remove(&self.flyout);
+        });
         quick_window::hide(self.flyout);
+    }
+
+    /// Route wheel input over the flyout to the main list (`forward = true`) or
+    /// keep it for the preview content (`false`, the expanded sheet).
+    ///
+    /// The compact hover sheet has nothing to scroll — it shows a clipped
+    /// excerpt — so a notch over it must keep scrolling the list. The expanded
+    /// sheet owns the wheel: its body scrolls and an image zooms.
+    pub fn set_wheel_to_main(&self, forward: bool) {
+        WHEEL_TO_MAIN.with(|flags| {
+            flags.borrow_mut().insert(self.flyout, forward);
+        });
     }
 
     /// Expanded rect for the full preview, grown from the current card:
@@ -334,9 +351,26 @@ unsafe extern "system" fn hit_proc(
                 HTTRANSPARENT as LRESULT
             }
         }
+        // Windows hands the wheel to the window under the pointer, so a notch
+        // over the compact sheet would die here while the list stays put — the
+        // user reads that as "scrolling is dead until the preview goes away".
+        WM_MOUSEWHEEL | WM_MOUSEHWHEEL => {
+            let to_main = WHEEL_TO_MAIN
+                .with(|flags| flags.borrow().get(&(hwnd as isize)).copied())
+                .unwrap_or(false);
+            if to_main && quick_window::forward_wheel_to_owner(hwnd, message, wparam, lparam) {
+                0
+            } else {
+                // SAFETY: preview content owns the wheel; hand it to GPUI.
+                unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
+            }
+        }
         WM_NCDESTROY => {
             CARD_HIT.with(|hits| {
                 hits.borrow_mut().remove(&(hwnd as isize));
+            });
+            WHEEL_TO_MAIN.with(|flags| {
+                flags.borrow_mut().remove(&(hwnd as isize));
             });
             // SAFETY: remove only our subclass and forward final destruction.
             unsafe {

@@ -2370,6 +2370,7 @@ mod tests {
             custom_hotkey: String::new(),
             custom_hotkey_format: String::new(),
             existence_observed_at: String::new(),
+            pinned: false,
         }
     }
 

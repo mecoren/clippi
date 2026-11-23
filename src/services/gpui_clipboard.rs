@@ -213,7 +213,7 @@ impl GpuiClipboardService {
         // Snapshot placeholders and ready items under the same lock order used
         // by ImagePersistWorker. This makes placeholder -> ready publication
         // atomic from the GPUI poller's perspective.
-        let (pending_images, pending) = {
+        let (pending_images_changed, pending_images, pending) = {
             let Ok(image_guard) = self.shared.pending_images.lock() else {
                 log::error!("Clipboard pending_images lock poisoned");
                 return false;
@@ -222,12 +222,19 @@ impl GpuiClipboardService {
                 log::error!("Clipboard pending lock poisoned");
                 return false;
             };
+            // Compare in place and clone only on a real change: the snapshot
+            // carries base64 icons and this runs on every poll tick.
+            let changed = *image_guard != state.pending_images;
             (
-                image_guard.clone(),
+                changed,
+                if changed {
+                    image_guard.clone()
+                } else {
+                    Vec::new()
+                },
                 pending_guard.drain(..).collect::<Vec<_>>(),
             )
         };
-        let pending_images_changed = state.pending_images != pending_images;
         if pending_images_changed {
             state.pending_images = pending_images;
         }

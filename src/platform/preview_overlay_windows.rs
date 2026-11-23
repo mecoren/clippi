@@ -17,9 +17,9 @@ use windows_sys::Win32::{
     UI::WindowsAndMessaging::{
         GetWindowLongW, SetWindowLongPtrW, SetWindowLongW, SetWindowPos, GWLP_HWNDPARENT,
         GWL_EXSTYLE, GWL_STYLE, HTTRANSPARENT, SWP_FRAMECHANGED, SWP_HIDEWINDOW, SWP_NOACTIVATE,
-        SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WM_NCDESTROY,
-        WM_NCHITTEST, WS_BORDER, WS_CAPTION, WS_DLGFRAME, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-        WS_SYSMENU, WS_THICKFRAME,
+        SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WM_MOUSEHWHEEL,
+        WM_MOUSEWHEEL, WM_NCDESTROY, WM_NCHITTEST, WS_BORDER, WS_CAPTION, WS_DLGFRAME,
+        WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_SYSMENU, WS_THICKFRAME,
     },
 };
 
@@ -146,6 +146,18 @@ unsafe extern "system" fn window_proc(
         // The overlay paints a line; every pixel passes input to the windows
         // below (same thread), so the list keeps receiving hover events.
         WM_NCHITTEST => HTTRANSPARENT as LRESULT,
+        // Wheel input follows the window under the pointer, and a work-area
+        // canvas has nothing to scroll: hand it straight to the main window so
+        // the list keeps scrolling while the connector is up.
+        WM_MOUSEWHEEL | WM_MOUSEHWHEEL => {
+            if crate::platform::quick_window::forward_wheel_to_owner(hwnd, message, wparam, lparam)
+            {
+                0
+            } else {
+                // SAFETY: no owner to forward to; leave it to GPUI/Windows.
+                unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
+            }
+        }
         WM_NCDESTROY => unsafe {
             RemoveWindowSubclass(hwnd, Some(window_proc), SUBCLASS_ID);
             DefSubclassProc(hwnd, message, wparam, lparam)

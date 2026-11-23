@@ -198,6 +198,8 @@ define_i18n! {
     GroupQuickWindow:   ("快速粘贴窗口", "Quick paste window"),
     GroupListDisplay:   ("列表与显示", "List & display"),
     GroupCardLayout:    ("卡片布局", "Card layout"),
+    GroupMergePaste:    ("合并与批量粘贴", "Merge & batch paste"),
+    GroupPointerActions: ("指针动作", "Pointer actions"),
     GroupPreview:       ("预览", "Preview"),
     SettingPreviewHover: ("悬停预览", "Hover preview"),
     DescPreviewHoverOn:  ("悬停卡片后显示内容预览", "Show a preview while hovering a card"),
@@ -234,7 +236,7 @@ define_i18n! {
     GroupUpdate:        ("更新", "Updates"),
     FontFamilySystem:    ("系统默认", "System"),
     FontFamilyPicker:    ("选择字体", "Choose a font"),
-    FontFamilySample:    ("中文字体 Aa", "Aa 字体"),
+    FontFamilySample:    ("中文字体 Aa", "Font sample Aa"),
 
     // ─── Position options ───
     PosCenter:          ("居中", "Center"),
@@ -255,6 +257,22 @@ define_i18n! {
     DescSearchFavoritesFirstOff:   ("搜索结果保持当前时间排序", "Keep the current time order for search results"),
     SettingCardHeight:      ("卡片高度", "Card height"),
     DescCardHeight:         ("调整卡片高度", "Adjust card height"),
+    SettingPlainContent:    ("纯文本内容预览", "Plain content preview"),
+    DescPlainContentOn:     ("只显示原始文本，不做富文本样式还原", "Raw text only, no rich styling"),
+    DescPlainContentOff:    ("还原富文本、链接与颜色等样式", "Restore rich text, link and color styling"),
+    SettingMergeSeparator:  ("分隔符", "Separator"),
+    DescMergeSeparator:     ("合并条目、批量粘贴时插在两条之间的字符", "Inserted between entries when merging or pasting in batches"),
+    MergeSepNewline:        ("换行", "Newline"),
+    MergeSepSpace:          ("空格", "Space"),
+    MergeSepComma:          ("逗号", "Comma"),
+    MergeSepNone:           ("无", "None"),
+    SettingLeftClickSingle: ("左键单击", "Single click"),
+    SettingLeftClickDouble: ("左键双击", "Double click"),
+    SettingMiddleClick:     ("中键", "Middle click"),
+    DescPointerActions:     ("每种手势对应的动作", "Action performed by each gesture"),
+    ClickActionNone:        ("无动作", "No action"),
+    ClickActionCopy:        ("仅复制", "Copy only"),
+    ClickActionPaste:       ("粘贴", "Paste"),
     CardHeightTall:         ("高", "Tall"),
     CardHeightMed:          ("中", "Med"),
     CardHeightShort:        ("低", "Short"),
@@ -469,6 +487,13 @@ define_i18n! {
     CtxPreview:         ("预览", "Preview"),
     CtxPaste:           ("粘贴", "Paste"),
     CtxPastePlain:      ("粘贴纯文本", "Paste Plain Text"),
+    CtxCleanPaste:      ("清理后粘贴", "Paste cleaned"),
+    CleanRemoveLineBreaks: ("去除换行", "Remove line breaks"),
+    CleanTrimLines:     ("每行去空白去空行", "Trim each line"),
+    CleanTrim:          ("去首尾空白", "Trim spaces"),
+    CleanUppercase:     ("转为大写", "Uppercase"),
+    CleanLowercase:     ("转为小写", "Lowercase"),
+    ToastCleanPasteEmpty: ("清理后没有可粘贴的内容", "Nothing left to paste after cleaning"),
     CtxEdit:            ("编辑", "Edit"),
     CtxDelete:          ("删除", "Delete"),
     CtxTag:             ("标签", "Tag"),
@@ -493,6 +518,9 @@ define_i18n! {
     ToastOpenExternalFailed: ("无法打开外部编辑器", "Couldn't open the external editor"),
     CtxFav:             ("收藏", "Fav"),
     CtxUnfav:           ("取消收藏", "Unfav"),
+    CtxPin:             ("置顶", "Pin"),
+    CtxUnpin:           ("取消置顶", "Unpin"),
+    CtxBatchPin:        ("批量置顶", "Batch pin"),
     ToastPreparingBitmapImage: ("正在准备位图图片...", "Preparing bitmap image..."),
 
     // ─── Edit panel ───
@@ -666,6 +694,7 @@ define_i18n! {
     TitlebarTooltipHotkeys:  ("快捷键项目", "Items with hotkeys"),
     TitlebarTooltipFavorites:("收藏项目", "Favorite items"),
     TitlebarTooltipPin:      ("固定窗口", "Pin window"),
+    TitlebarItemCount:       ("{0} 项", "{0} items"),
     TitlebarTooltipUnpin:    ("取消固定", "Unpin window"),
     FilterConfigTitle:      ("筛选类型", "Filter Types"),
     TagTooltipToggleMode:   ("切换筛选模式", "Toggle Filter Mode"),
@@ -823,5 +852,92 @@ define_i18n! {
     // ─── Clipboard list ───
     ListNoItems:            ("暂无条目", "No items yet"),
     ListEmptyHint:          ("复制的内容将显示在这里", "Copied items will appear here"),
+    ListLoadFailed:         ("历史加载失败", "Failed to load history"),
+    ListLoadFailedRetry:    ("重试", "Retry"),
     ListNotePlaceholder:    ("添加备注...", "Add a note..."),
+}
+
+/// 指针动作在设置页里的文案。
+pub fn click_action_label(action: crate::core::click_action::ClickAction) -> &'static str {
+    use crate::core::click_action::ClickAction as A;
+    match action {
+        A::None => I18nKey::ClickActionNone.text(),
+        A::Copy => I18nKey::ClickActionCopy.text(),
+        A::Paste => I18nKey::ClickActionPaste.text(),
+    }
+}
+
+/// 文本清理变换在菜单/提示里的文案。
+pub fn text_transform_label(transform: crate::core::text_transform::TextTransform) -> &'static str {
+    use crate::core::text_transform::TextTransform as T;
+    match transform {
+        T::RemoveLineBreaks => I18nKey::CleanRemoveLineBreaks.text(),
+        T::TrimLines => I18nKey::CleanTrimLines.text(),
+        T::Trim => I18nKey::CleanTrim.text(),
+        T::Uppercase => I18nKey::CleanUppercase.text(),
+        T::Lowercase => I18nKey::CleanLowercase.text(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::I18nKey;
+
+    /// CJK 统一表意文字及其扩展/兼容区、中文标点、全角形式。
+    fn is_cjk(c: char) -> bool {
+        matches!(
+            c as u32,
+            0x3000..=0x303F | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF | 0xFF00..=0xFFEF
+        )
+    }
+
+    /// 语言名按惯例用该语言自称（`中文` / `English`），是英文栏里唯一允许
+    /// 出现汉字的地方。
+    fn english_may_be_cjk(key: I18nKey) -> bool {
+        matches!(key, I18nKey::LangZh)
+    }
+
+    /// 每个 key 的两栏都必须填、去掉首尾空白、英文栏不能混进中文。
+    ///
+    /// 新增按钮 / 菜单项 / tooltip 时漏登记文案既不会编译失败，也不会被别的
+    /// 测试发现（界面上只会显示内部 key 或动作名），这一层是唯一的自动拦截。
+    #[test]
+    fn every_key_is_translated_and_trimmed() {
+        for &key in I18nKey::ALL {
+            let zh = key.chinese();
+            let en = key.english();
+            assert!(!zh.trim().is_empty(), "{key:?}: 缺中文");
+            assert!(!en.trim().is_empty(), "{key:?}: 缺英文");
+            assert_eq!(zh, zh.trim(), "{key:?}: 中文含首尾空白");
+            assert_eq!(en, en.trim(), "{key:?}: 英文含首尾空白");
+            if !english_may_be_cjk(key) {
+                assert!(!en.chars().any(is_cjk), "{key:?}: 英文栏混入中文 → {en}");
+            }
+        }
+    }
+
+    /// `ALL` 与枚举变体由同一个宏生成，长度异常说明宏被改坏了。
+    #[test]
+    fn the_key_table_stays_complete() {
+        assert!(
+            I18nKey::ALL.len() > 100,
+            "key 数量异常: {}",
+            I18nKey::ALL.len()
+        );
+    }
+
+    /// 两种语言的占位符必须一一对应，否则其中一种会残留 `{0}`。
+    #[test]
+    fn placeholders_match_across_languages() {
+        for &key in I18nKey::ALL {
+            for arg in 0..3 {
+                let placeholder = format!("{{{arg}}}");
+                assert_eq!(
+                    key.chinese().contains(&placeholder),
+                    key.english().contains(&placeholder),
+                    "{key:?}: 占位符 {placeholder} 两种语言不一致"
+                );
+            }
+        }
+    }
 }

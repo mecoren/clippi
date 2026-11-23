@@ -106,6 +106,26 @@ const DB_MIGRATIONS: &[DbMigration] = &[
         description: "Add sync_pending flag for sync-owned images awaiting blob download",
         sql: "",
     },
+    DbMigration {
+        version: 10,
+        description: "Add local-only pinned flag with its list ordering index",
+        sql: "",
+    },
+    DbMigration {
+        version: 11,
+        description: "Rebuild pinned-first list indexes with a DESC pin column",
+        // The list order is `pinned DESC, <time> DESC`. `(pinned ASC, <time> DESC)`
+        // cannot serve it: SQLite walks the index backwards for the pin column,
+        // which turns the time column ASC, and then sorts every row through a
+        // temporary B-tree for each list page (measured ~8x slower keyword
+        // paging on a 10k-row history). Both directions have to be DESC.
+        sql: concat!(
+            "DROP INDEX IF EXISTS idx_pinned_updated;",
+            "DROP INDEX IF EXISTS idx_pinned_created;",
+            "CREATE INDEX IF NOT EXISTS idx_pinned_updated ON clipboard_items(pinned DESC, updated_at DESC);",
+            "CREATE INDEX IF NOT EXISTS idx_pinned_created ON clipboard_items(pinned DESC, created_at DESC);",
+        ),
+    },
 ];
 
 /// Run all pending database migrations, updating `PRAGMA user_version`.
@@ -145,6 +165,9 @@ pub fn run_db_migrations(conn: &Connection) -> rusqlite::Result<()> {
             if migration.version == 9 {
                 migrate_sync_pending(conn)?;
             }
+            if migration.version == 10 {
+                migrate_pinned(conn)?;
+            }
             conn.pragma_update(None, "user_version", migration.version)?;
         }
     }
@@ -157,6 +180,7 @@ pub fn run_db_migrations(conn: &Connection) -> rusqlite::Result<()> {
 fn repair_db_schema(conn: &Connection) -> rusqlite::Result<()> {
     migrate_item_hotkey_columns(conn)?;
     migrate_existence_observed_at(conn)?;
+    migrate_pinned(conn)?;
     // Schema repair only guarantees the column exists. If it was missing
     // entirely (partial migration / corrupted schema), the rows predate the
     // column and need the same one-time conservative backfill as the v9
@@ -165,6 +189,27 @@ fn repair_db_schema(conn: &Connection) -> rusqlite::Result<()> {
     if ensure_sync_pending_column(conn)? {
         backfill_sync_pending(conn, &images_prefix())?;
     }
+    Ok(())
+}
+
+/// v10: local-only pin flag plus the index that serves the pinned-first list
+/// ordering. Existing rows start unpinned; nothing is backfilled because a pin
+/// is an explicit user action.
+fn migrate_pinned(conn: &Connection) -> rusqlite::Result<()> {
+    if !column_exists(conn, "clipboard_items", "pinned")? {
+        conn.execute(
+            "ALTER TABLE clipboard_items ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+    // The pin column must be declared `DESC` for the index to serve
+    // `ORDER BY pinned DESC, <time> DESC` without a temporary sort; see the v11
+    // migration for why. Kept idempotent here so a repaired schema always gets
+    // the usable form.
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_pinned_updated ON clipboard_items(pinned DESC, updated_at DESC);
+         CREATE INDEX IF NOT EXISTS idx_pinned_created ON clipboard_items(pinned DESC, created_at DESC);",
+    )?;
     Ok(())
 }
 
@@ -702,5 +747,104 @@ mod tests {
         };
         migrate_file_manifest(&mut manifest);
         assert_eq!(manifest.version, TRANSFER_PROTOCOL_VERSION + 1);
+    }
+
+    /// A v10-shaped database: the `pinned` column exists, but its list indexes
+    /// carry an ASC pin column.
+    fn v10_database_with_pinned_indexes() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE clipboard_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                content_type TEXT NOT NULL DEFAULT 'text',
+                full_text TEXT NOT NULL,
+                content_hash INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                image_path TEXT NOT NULL DEFAULT '',
+                rich_data TEXT NOT NULL DEFAULT '',
+                file_data TEXT NOT NULL DEFAULT '',
+                is_favorite INTEGER NOT NULL DEFAULT 0,
+                note TEXT NOT NULL DEFAULT '',
+                source_app_name TEXT NOT NULL DEFAULT '',
+                source_app_icon TEXT NOT NULL DEFAULT '',
+                image_width INTEGER NOT NULL DEFAULT 0,
+                image_height INTEGER NOT NULL DEFAULT 0,
+                size INTEGER NOT NULL DEFAULT 0,
+                meta_type TEXT NOT NULL DEFAULT '',
+                custom_hotkey TEXT NOT NULL DEFAULT '',
+                custom_hotkey_format TEXT NOT NULL DEFAULT '',
+                existence_observed_at TEXT NOT NULL DEFAULT '',
+                sync_pending INTEGER NOT NULL DEFAULT 0,
+                pinned INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX idx_pinned_updated ON clipboard_items(pinned, updated_at DESC);
+            CREATE INDEX idx_pinned_created ON clipboard_items(pinned, created_at DESC);
+            PRAGMA user_version = 10;",
+        )
+        .unwrap();
+        conn
+    }
+
+    /// v11 exists because `(pinned ASC, <time> DESC)` cannot serve
+    /// `ORDER BY pinned DESC, <time> DESC`: SQLite walks the index backwards,
+    /// the time column comes out ASC, and every list page pays a temporary
+    /// B-tree sort over the whole table. Upgrading must replace the indexes in
+    /// place, not just create the usable form for fresh databases.
+    #[test]
+    fn upgrading_a_v10_database_rebuilds_the_pinned_indexes() {
+        let conn = v10_database_with_pinned_indexes();
+        run_db_migrations(&conn).unwrap();
+
+        let version: i64 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, DB_VERSION);
+        for name in ["idx_pinned_updated", "idx_pinned_created"] {
+            let sql: String = conn
+                .query_row(
+                    "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?1",
+                    [name],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert!(
+                sql.contains("pinned DESC"),
+                "{name} kept the unusable ASC pin column: {sql}"
+            );
+        }
+    }
+
+    /// The list order must be index-served. A regression here costs roughly an
+    /// order of magnitude on keyword paging (every page re-sorts the table).
+    #[test]
+    fn list_order_is_served_by_the_pinned_indexes() {
+        let conn = v10_database_with_pinned_indexes();
+        run_db_migrations(&conn).unwrap();
+
+        for order_col in ["updated_at", "created_at"] {
+            for query in [
+                format!(
+                    "SELECT id FROM clipboard_items ORDER BY pinned DESC, {order_col} DESC LIMIT 128"
+                ),
+                format!(
+                    "SELECT id FROM clipboard_items WHERE meta_type != 'transfer' \
+                     ORDER BY pinned DESC, {order_col} DESC LIMIT 128 OFFSET 64"
+                ),
+            ] {
+                let mut stmt = conn
+                    .prepare(&format!("EXPLAIN QUERY PLAN {query}"))
+                    .unwrap();
+                let plan: Vec<String> = stmt
+                    .query_map([], |row| row.get::<_, String>(3))
+                    .unwrap()
+                    .map(|row| row.unwrap())
+                    .collect();
+                assert!(
+                    !plan.iter().any(|step| step.contains("TEMP B-TREE")),
+                    "list order ({order_col}) must be index-served, plan was {plan:?}"
+                );
+            }
+        }
     }
 }

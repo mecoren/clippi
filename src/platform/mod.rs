@@ -3,6 +3,7 @@
 pub mod accent;
 pub mod blacklist;
 pub mod clipboard;
+pub mod drag_out;
 pub mod focus;
 #[cfg(target_os = "windows")]
 pub(crate) mod focus_restore;

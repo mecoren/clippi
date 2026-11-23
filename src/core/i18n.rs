@@ -65,6 +65,27 @@ macro_rules! define_i18n {
                 }
             }
 
+            /// Every key, for the translation self-check tests.
+            #[cfg(test)]
+            pub const ALL: &'static [I18nKey] = &[$(I18nKey::$key,)*];
+
+            /// Chinese text regardless of the active language (tests/audit only;
+            /// the UI must go through [`I18nKey::text`]).
+            #[cfg(test)]
+            pub const fn chinese(self) -> &'static str {
+                match self {
+                    $(I18nKey::$key => $zh,)*
+                }
+            }
+
+            /// English text regardless of the active language (tests/audit only).
+            #[cfg(test)]
+            pub const fn english(self) -> &'static str {
+                match self {
+                    $(I18nKey::$key => $en,)*
+                }
+            }
+
             /// Format with positional placeholders: `{0}`, `{1}`, …
             /// Allocates a `String` only when args are provided.
             pub fn fmt(self, args: &[&str]) -> String {

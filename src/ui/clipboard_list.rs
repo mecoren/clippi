@@ -4,8 +4,13 @@
 //! --- of clipboard items with dynamic card heights (68— 28px). ---
 
 use crate::ui::font::fs;
+use chrono::{DateTime, Utc};
 use std::time::Instant;
-use std::{cell::Cell, collections::HashSet, rc::Rc};
+use std::{
+    cell::Cell,
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
@@ -14,6 +19,7 @@ use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
 use gpui_kit::component::v_virtual_list;
 use gpui_kit::component::VirtualListScrollHandle;
 
+use crate::core::click_action::ClickAction;
 use crate::core::i18n_keys::I18nKey;
 use crate::core::types::{
     ClipboardItem, ContentType, FileData, HotkeyPasteFormat, PendingImageView,
@@ -32,6 +38,9 @@ use super::tag_picker::TagState;
 
 const CLIPBOARD_ROW_VERTICAL_SPACE: f32 = 12.0;
 const CLIPBOARD_BOTTOM_SCROLL_INSET: f32 = 36.0;
+/// `auto_scroll_to_top` 的生效半径：视口距列表顶部不超过这么多像素时，才算
+/// 「用户还在看最新」，否则视为在翻历史，不做程序化归位。
+const AUTO_SCROLL_TOP_SLACK: f32 = 120.0;
 const CLIPBOARD_SCROLLBAR_WIDTH: f32 = 16.0;
 /// 卡片与窗口左右边缘的间距。滚动区本身铺满面板宽度，间距由行内边距提供，
 /// 这样滚动条能贴在面板最右侧（与设置页一致）。
@@ -223,14 +232,14 @@ pub(crate) enum PasteClickMode {
 }
 
 impl PasteClickMode {
-    /// Normalize the persisted `paste_click_mode` string to a mode. The settings
-    /// accessor `paste_click_mode_normalized` already falls back to the default
-    /// on unknown values, so this only distinguishes the two known modes.
-    fn from_settings(value: &str) -> Self {
-        if value == "single_click" {
-            PasteClickMode::SingleClick
-        } else {
+    /// 手势模式由「左键单击是否有动作」决定：单击有动作就是单击模式（每次
+    /// 点击最多触发一次动作，双击事件不再重复触发）；单击无动作则退回双击
+    /// 模式，由第二次点击决定。
+    fn from_actions(actions: &crate::core::click_action::ClickActions) -> Self {
+        if actions.single == crate::core::click_action::ClickAction::None {
             PasteClickMode::DoubleClick
+        } else {
+            PasteClickMode::SingleClick
         }
     }
 }
@@ -409,18 +418,63 @@ fn resolve_card_click_action(
 
 impl EventEmitter<ClipboardListEvent> for ClipboardListView {}
 
+/// 按住左键移动多少像素后算「拖出」而不是「点击」。
+///
+/// 6 px 是常见的小抖动容忍值：小于它的位移仍然被当成点击，避免手抖把粘贴
+/// 变成拖出。
+const DRAG_OUT_THRESHOLD: f32 = 6.0;
+
+/// 卡片工具条上会弹出菜单的按钮。
+///
+/// 这些菜单只包含该按钮自己的动作，条目上下文仍取自 `context_menu_item`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CardMenu {
+    /// 三点按钮：预览、打开、备注、标签；图片条目另加「粘贴为位图」
+    /// 「查看图片」。条目类型由 `context_menu_item` 现场推导，不用预先传入。
+    More,
+    /// 清理按钮：五种清理后粘贴。
+    Clean,
+}
+
 /// The clipboard list view entity.
 pub struct ClipboardListView {
     items: Vec<ClipboardItem>,
     pending_images: Vec<PendingImageView>,
     item_sizes: Rc<Vec<Size<Pixels>>>,
+    /// Cumulative row tops matching [`Self::item_sizes`] (see [`row_offsets`]).
+    ///
+    /// Rebuilt together with `item_sizes` so pointer hit tests can binary
+    /// search instead of walking from row 0 on every mouse move.
+    row_offsets: Rc<Vec<f32>>,
     card_height_mode: String,
     /// Scale the current `item_sizes` were computed at. When the font size
     /// setting changes, this differs from the live `font::scale()` and the
     /// cached heights are recomputed on the next refresh.
     sizes_font_scale: f32,
+    /// Per-row heights keyed by item id, stamped with the `updated_at` they
+    /// were computed from.
+    ///
+    /// `estimate_card_height` parses each row's `rich_data` (and `file_data`
+    /// for file rows), so recomputing every row on each `set_items` made a
+    /// keyword keystroke parse the whole result page a second time right after
+    /// the database scan had already parsed it. A row's height only depends on
+    /// its content, the height mode and the font scale, and `updated_at` moves
+    /// whenever the content is rewritten.
+    height_cache: HashMap<i64, (DateTime<Utc>, f32)>,
+    /// Height mode `height_cache` was built for.
+    height_cache_mode: String,
+    /// Font scale `height_cache` was built for.
+    height_cache_scale: f32,
     scroll_handle: VirtualListScrollHandle,
     wheel_scroll: SmoothScroll,
+    /// Fingerprint of the filter set the last auto-scroll decision saw, so a
+    /// refresh of the same result set can be told apart from a new one (see
+    /// `should_auto_scroll_to_latest`).
+    filter_signature: String,
+    /// The list was emptied (window hidden) and is about to be refilled: the
+    /// next fill still honours `auto_scroll_to_top`, because summoning the
+    /// window should show the newest entry no matter where the user left off.
+    restore_scroll_to_latest: bool,
     focus_handle: FocusHandle,
     selected_ids: Vec<i64>,
     selected_index: Option<usize>,
@@ -472,8 +526,11 @@ pub struct ClipboardListView {
     context_menu_y: f32,
     context_menu_item: Option<ClipboardItem>,
     context_menu_is_batch: bool,
-    /// 当前菜单由卡片三点按钮弹出（只含备注、标签），不是右键菜单。
-    context_menu_card_more: bool,
+    /// 当前菜单由卡片工具条上的某个按钮弹出（只含该按钮自己的动作），
+    /// 不是右键菜单。
+    context_menu_card_menu: Option<CardMenu>,
+    /// 左键按下的卡片与位置：按住移动超过阈值即开始拖出。
+    drag_origin: Option<(usize, Point<Pixels>)>,
     tag_picker_visible: bool,
     tag_picker_x: f32,
     tag_picker_y: f32,
@@ -520,7 +577,9 @@ impl ClipboardListView {
         window_manager: Entity<crate::ui::window_manager::WindowManager>,
     ) -> Self {
         let card_height_mode = state.read(cx).settings.card_height_mode.clone();
-        let item_sizes = Rc::new(Self::compute_sizes(&items, &card_height_mode));
+        let item_sizes = Self::compute_sizes(&items, &card_height_mode);
+        let row_offsets = Rc::new(row_offsets(&item_sizes));
+        let item_sizes = Rc::new(item_sizes);
         let preview_panel = cx.new(|cx| PreviewPanelView::new(cx));
         let scroll_handle = VirtualListScrollHandle::new();
         let wheel_scroll = SmoothScroll::new(scroll_handle.base_handle());
@@ -528,10 +587,16 @@ impl ClipboardListView {
             items,
             pending_images: Vec::new(),
             item_sizes,
+            row_offsets,
             card_height_mode,
             sizes_font_scale: crate::ui::font::scale(),
+            height_cache: HashMap::new(),
+            height_cache_mode: String::new(),
+            height_cache_scale: 0.0,
             scroll_handle,
             wheel_scroll,
+            filter_signature: String::new(),
+            restore_scroll_to_latest: true,
             focus_handle: cx.focus_handle(),
             selected_ids: Vec::new(),
             selected_index: None,
@@ -567,7 +632,8 @@ impl ClipboardListView {
             context_menu_y: 0.0,
             context_menu_item: None,
             context_menu_is_batch: false,
-            context_menu_card_more: false,
+            context_menu_card_menu: None,
+            drag_origin: None,
             tag_picker_visible: false,
             tag_picker_x: 0.0,
             tag_picker_y: 0.0,
@@ -594,6 +660,50 @@ impl ClipboardListView {
         }
     }
 
+    /// Replace the virtual-list geometry in one go.
+    ///
+    /// `item_sizes` and `row_offsets` must always describe the same rows, so
+    /// every caller funnels through here instead of assigning `item_sizes`
+    /// directly.
+    fn set_item_sizes(&mut self, sizes: Vec<Size<Pixels>>) {
+        self.row_offsets = Rc::new(row_offsets(&sizes));
+        self.item_sizes = Rc::new(sizes);
+    }
+
+    /// Programmatic scroll to a row.
+    ///
+    /// Every "reveal this row" path funnels through here so a wheel glide that
+    /// is still animating cannot keep writing the old offset after the list was
+    /// moved deliberately — the jump would be undone by momentum the user no
+    /// longer owns, which reads as "the wheel stopped working".
+    fn scroll_to_row(&mut self, index: usize, strategy: ScrollStrategy) {
+        self.wheel_scroll.cancel();
+        self.scroll_handle.scroll_to_item(index, strategy);
+    }
+
+    /// Whether `auto_scroll_to_top` should actually move the list.
+    ///
+    /// The setting means "don't miss a new entry", but jumping while the user is
+    /// reading deep history is the opposite of helpful: a single list refresh
+    /// used to yank the viewport from the bottom of the history straight back to
+    /// the newest row. So only these three cases snap to the latest entry:
+    ///
+    /// - the list was just refilled (first load, or the window was re-summoned
+    ///   after being hidden — `restore_scroll_to_latest`);
+    /// - the filter set changed, i.e. this is a different result set that should
+    ///   be read from its first screen;
+    /// - the viewport is still within [`AUTO_SCROLL_TOP_SLACK`] of the top, i.e.
+    ///   the user is already looking at the newest content.
+    fn should_auto_scroll_to_latest(&mut self, cx: &App) -> bool {
+        let signature = self.state.read(cx).filters.signature();
+        let filters_changed = signature != self.filter_signature;
+        self.filter_signature = signature;
+        if std::mem::take(&mut self.restore_scroll_to_latest) || filters_changed {
+            return true;
+        }
+        f32::from(self.scroll_handle.offset().y) > -sx(AUTO_SCROLL_TOP_SLACK)
+    }
+
     pub fn set_items(&mut self, items: Vec<ClipboardItem>, cx: &mut Context<Self>) {
         // A passive refresh (thumbnail ready, usage count) must not yank the
         // flyout away while the pointer is still on the same card. Only drop
@@ -604,7 +714,10 @@ impl ClipboardListView {
         self.pending_images = self.state.read(cx).pending_images.clone();
         let combined = self.combined_with_pending(items);
         self.toolbar_bounds.set(None);
-        self.item_sizes = Rc::new(Self::compute_sizes(&combined, &self.card_height_mode));
+        self.prepare_height_cache();
+        let heights =
+            resolve_row_heights(&mut self.height_cache, &combined, &self.card_height_mode);
+        self.set_item_sizes(sizes_from_heights(&heights));
         self.sizes_font_scale = crate::ui::font::scale();
         // --- Persist current selection before swap (survives empty-item clears ---
         // --- during window hide, when hide() emits ClipboardChanged).         ---
@@ -620,8 +733,10 @@ impl ClipboardListView {
         self.selected_count = 0;
         self.hovered_index = None;
         self.modified_double_click_candidate = None;
-        let scroll_to_latest = self.state.read(cx).settings.auto_scroll_to_top;
-        if scroll_to_latest && !self.items.is_empty() {
+        let auto_scroll_to_top = self.state.read(cx).settings.auto_scroll_to_top;
+        let snap_to_latest =
+            auto_scroll_to_top && !self.items.is_empty() && self.should_auto_scroll_to_latest(cx);
+        if snap_to_latest {
             let latest_idx = self
                 .items
                 .iter()
@@ -631,8 +746,7 @@ impl ClipboardListView {
                 .map(|(i, _)| i)
                 .unwrap_or(0);
             self.select_index_without_scroll(latest_idx, cx);
-            self.scroll_handle
-                .scroll_to_item(latest_idx, ScrollStrategy::Top);
+            self.scroll_to_row(latest_idx, ScrollStrategy::Top);
         } else if let Some(last_selected_id) = self.last_selected_id {
             // --- Keep position: restore the previously selected selectable item. ---
             // Transfer entries have negative IDs, so sign cannot distinguish
@@ -643,7 +757,11 @@ impl ClipboardListView {
                 .position(|item| item.id == last_selected_id && !item_is_pending(item))
             {
                 self.select_index_without_scroll(idx, cx);
-                self.scroll_handle.scroll_to_item(idx, ScrollStrategy::Top);
+                // `auto_scroll_to_top` 开着却不归位，说明用户在翻历史：这时连
+                // 「跟到选中项」也要跳过，否则选中项在顶部时同样会把视口拽上去。
+                if !auto_scroll_to_top {
+                    self.scroll_to_row(idx, ScrollStrategy::Top);
+                }
             }
         }
         // --- Fallback: select first selectable (non-pending) item ---
@@ -676,7 +794,7 @@ impl ClipboardListView {
             // drop it and let the next mouse move recompute the hovered row.
             self.hovered_index = None;
             self.select_index_without_scroll(0, cx);
-            self.scroll_handle.scroll_to_item(0, ScrollStrategy::Top);
+            self.scroll_to_row(0, ScrollStrategy::Top);
         }
     }
 
@@ -693,7 +811,7 @@ impl ClipboardListView {
         self.hovered_index = None;
         if let Some(idx) = self.items.iter().position(|item| item.id == item_id) {
             self.select_index_without_scroll(idx, cx);
-            self.scroll_handle.scroll_to_item(idx, ScrollStrategy::Top);
+            self.scroll_to_row(idx, ScrollStrategy::Top);
         } else {
             self.select_and_scroll_to_top_if_favorites_first(cx);
         }
@@ -715,7 +833,9 @@ impl ClipboardListView {
         self.items.clear();
         self.items.shrink_to_fit();
         self.toolbar_bounds.set(None);
-        self.item_sizes = Rc::new(Vec::new());
+        self.set_item_sizes(Vec::new());
+        // 下次填充（重新召唤窗口）仍要归位到最新条目。
+        self.restore_scroll_to_latest = true;
         self.selected_ids.clear();
         self.selected_ids.shrink_to_fit();
         self.selected_index = None;
@@ -748,7 +868,10 @@ impl ClipboardListView {
         self.pending_images = self.state.read(cx).pending_images.clone();
         let combined = self.combined_with_pending(app_items);
         self.toolbar_bounds.set(None);
-        self.item_sizes = Rc::new(Self::compute_sizes(&combined, &self.card_height_mode));
+        self.prepare_height_cache();
+        let heights =
+            resolve_row_heights(&mut self.height_cache, &combined, &self.card_height_mode);
+        self.set_item_sizes(sizes_from_heights(&heights));
         self.sizes_font_scale = crate::ui::font::scale();
 
         // Capture the previous interaction positions by stable item ID before
@@ -928,14 +1051,15 @@ impl ClipboardListView {
             }
             self.items = new_items;
             self.toolbar_bounds.set(None);
-            self.item_sizes = Rc::new(new_sizes);
+            self.set_item_sizes(new_sizes);
             self.selected_index = item_index(&self.items, selected_id);
             self.anchor_index = item_index(&self.items, anchor_id);
             self.toolbar_bounds.set(None);
             self.hovered_index = item_index(&self.items, hovered_id);
             cx.notify();
         }
-        if self.state.read(cx).settings.auto_scroll_to_top && !self.items.is_empty() {
+        let auto_scroll_to_top = self.state.read(cx).settings.auto_scroll_to_top;
+        if auto_scroll_to_top && !self.items.is_empty() && self.should_auto_scroll_to_latest(cx) {
             let latest_idx = self
                 .items
                 .iter()
@@ -944,8 +1068,7 @@ impl ClipboardListView {
                 .map(|(i, _)| i)
                 .unwrap_or(0);
             self.select_index_without_scroll(latest_idx, cx);
-            self.scroll_handle
-                .scroll_to_item(latest_idx, ScrollStrategy::Top);
+            self.scroll_to_row(latest_idx, ScrollStrategy::Top);
             cx.notify();
         }
     }
@@ -969,10 +1092,13 @@ impl ClipboardListView {
         if self.card_height_mode != card_height_mode || scale_changed {
             self.card_height_mode = card_height_mode;
             self.toolbar_bounds.set(None);
-            self.item_sizes = Rc::new(Self::compute_sizes(&self.items, &self.card_height_mode));
+            self.prepare_height_cache();
+            let heights =
+                resolve_row_heights(&mut self.height_cache, &self.items, &self.card_height_mode);
+            self.set_item_sizes(sizes_from_heights(&heights));
             self.sizes_font_scale = crate::ui::font::scale();
         }
-        if scroll_to_top && !self.items.is_empty() {
+        if scroll_to_top && !self.items.is_empty() && self.should_auto_scroll_to_latest(cx) {
             let latest_idx = self
                 .items
                 .iter()
@@ -981,8 +1107,7 @@ impl ClipboardListView {
                 .map(|(i, _)| i)
                 .unwrap_or(0);
             self.select_index_without_scroll(latest_idx, cx);
-            self.scroll_handle
-                .scroll_to_item(latest_idx, ScrollStrategy::Top);
+            self.scroll_to_row(latest_idx, ScrollStrategy::Top);
         }
         cx.notify();
     }
@@ -1010,7 +1135,7 @@ impl ClipboardListView {
         self.anchor_index = Some(index);
         self.selected_count = 1;
         self.modified_double_click_candidate = None;
-        self.scroll_handle.scroll_to_item(index, scroll_strategy);
+        self.scroll_to_row(index, scroll_strategy);
         self.state.update(cx, move |state, _cx| {
             state.select_single(item_id);
         });
@@ -1260,13 +1385,89 @@ impl ClipboardListView {
             return;
         }
 
-        let mode = PasteClickMode::from_settings(
-            &self.state.read(cx).settings.paste_click_mode_normalized(),
-        );
+        let mode = PasteClickMode::from_actions(&self.state.read(cx).settings.click_actions());
         match mode {
             PasteClickMode::SingleClick => self.handle_card_click_single(index, modifiers, cx),
             PasteClickMode::DoubleClick => self.handle_card_click_double(index, modifiers, cx),
         }
+    }
+
+    /// 按住左键移动：越过阈值就把这条拖出到外部应用。
+    ///
+    /// 只在「左键单击不粘贴」的配置下生效：否则按下时粘贴已经发生，再拖出
+    /// 等于同一手势做两件事。
+    fn handle_card_drag_move(
+        &mut self,
+        index: usize,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((origin_index, origin)) = self.drag_origin else {
+            return;
+        };
+        if origin_index != index {
+            return;
+        }
+        let dx = f32::from(position.x) - f32::from(origin.x);
+        let dy = f32::from(position.y) - f32::from(origin.y);
+        if (dx * dx + dy * dy).sqrt() < DRAG_OUT_THRESHOLD {
+            return;
+        }
+        // 一次手势只起一次拖放。
+        self.drag_origin = None;
+
+        if self.state.read(cx).settings.click_actions().single == ClickAction::Paste {
+            return;
+        }
+        let Some(item) = self.items.get(index) else {
+            return;
+        };
+        if item_is_pending(item) || !crate::platform::drag_out::item_can_drag_out(item) {
+            return;
+        }
+        let item_id = item.id;
+        let wrote = self
+            .state
+            .update(cx, |state, _cx| state.write_item_for_drag_out(item_id));
+        if !wrote {
+            return;
+        }
+        // 只投递请求：真正的 OLE 拖放由主窗口过程执行（见 `platform::drag_out`）。
+        // 在这里直接调 `DoDragDrop` 会在 GPUI 的可变借用里嵌套派发消息并崩溃。
+        if !crate::platform::drag_out::request_drag_out(window) {
+            log::debug!("drag_out: gesture could not start");
+        }
+    }
+
+    /// 中键动作：不改变选中，直接按配置复制或粘贴。
+    fn handle_middle_click(&mut self, index: usize, cx: &mut Context<Self>) {
+        let action = self.state.read(cx).settings.click_actions().middle;
+        if action == ClickAction::None {
+            return;
+        }
+        let Some(item) = self.items.get(index) else {
+            return;
+        };
+        if item_is_pending(item) {
+            return;
+        }
+        // 中转条目没有「复制到剪贴板」的对应物，交给左键/右键处理。
+        if item.id < 0 && item.meta_type == "transfer" {
+            return;
+        }
+        let item_id = item.id;
+        match action {
+            ClickAction::Copy => {
+                let plain = self.state.read(cx).settings.copy_as_plain_text;
+                self.state.update(cx, |s, _cx| s.copy_item(item_id, plain));
+            }
+            ClickAction::Paste => {
+                self.state.update(cx, |s, _cx| s.paste_item(item_id, false));
+            }
+            ClickAction::None => return,
+        }
+        self.sync_items_from_state_for_usage(cx);
     }
 
     /// Single-click paste mode dispatch (04-spec §2.3). The decision reads the
@@ -1289,9 +1490,7 @@ impl ClipboardListView {
         let clicked_is_selected = self.selected_ids.contains(&item_id);
         let selected_count = self.selected_ids.len();
         let is_image = item.content_type == ContentType::Image;
-        let mode = PasteClickMode::from_settings(
-            &self.state.read(cx).settings.paste_click_mode_normalized(),
-        );
+        let mode = PasteClickMode::from_actions(&self.state.read(cx).settings.click_actions());
         let action = resolve_card_click_action(
             mode,
             clicked_is_selected,
@@ -1349,9 +1548,20 @@ impl ClipboardListView {
             return;
         }
         let item_id = item.id;
-        self.state.update(cx, |state, _cx| {
-            state.paste_item(item_id, false);
-        });
+        let action = self.state.read(cx).settings.click_actions().single;
+        match action {
+            ClickAction::Copy => {
+                let plain = self.state.read(cx).settings.copy_as_plain_text;
+                self.state
+                    .update(cx, |state, _cx| state.copy_item(item_id, plain));
+            }
+            ClickAction::Paste => {
+                self.state.update(cx, |state, _cx| {
+                    state.paste_item(item_id, false);
+                });
+            }
+            ClickAction::None => return,
+        }
         self.sync_items_from_state_for_usage(cx);
     }
 
@@ -1399,29 +1609,48 @@ impl ClipboardListView {
     /// pastes with full formatting, except a single transfer entry (unmodified)
     /// which opens/downloads instead of pasting (§2.4).
     fn double_click_paste_default(&mut self, index: usize, cx: &mut Context<Self>) {
-        if self.selected_ids.len() > 1 {
+        let action = self.state.read(cx).settings.click_actions().double;
+        if action == ClickAction::None {
+            return;
+        }
+        // Only Paste batches a multi-selection; Copy always targets the clicked
+        // card, because "copy 5 items" has no unambiguous meaning on the
+        // clipboard.
+        if action == ClickAction::Paste && self.selected_ids.len() > 1 {
             let ids = self.selected_ids.clone();
             self.state.update(cx, |s, _cx| s.batch_paste(&ids, false));
             self.sync_items_from_state_for_usage(cx);
-        } else if let Some(item) = self.items.get(index) {
-            if item.id < 0 && item.meta_type == "transfer" {
-                let file_data = crate::core::types::FileData::from_json(&item.file_data);
-                let hash = file_data.remote_hash;
-                let local_path = file_data.files.first().map(|file| file.path.clone());
-                self.state.update(cx, |state, _cx| {
-                    if let Some(path) = local_path.filter(|path| !path.is_empty()) {
-                        state.open_transfer_location(&path);
-                    } else {
-                        state.download_transfer_entry(&hash);
-                    }
-                });
-                self.sync_items_from_state(cx);
-                return;
-            }
-            let item_id = item.id;
-            self.state.update(cx, |s, _cx| s.paste_item(item_id, false));
-            self.sync_items_from_state_for_usage(cx);
+            return;
         }
+        let Some(item) = self.items.get(index) else {
+            return;
+        };
+        if item.id < 0 && item.meta_type == "transfer" {
+            let file_data = crate::core::types::FileData::from_json(&item.file_data);
+            let hash = file_data.remote_hash;
+            let local_path = file_data.files.first().map(|file| file.path.clone());
+            self.state.update(cx, |state, _cx| {
+                if let Some(path) = local_path.filter(|path| !path.is_empty()) {
+                    state.open_transfer_location(&path);
+                } else {
+                    state.download_transfer_entry(&hash);
+                }
+            });
+            self.sync_items_from_state(cx);
+            return;
+        }
+        let item_id = item.id;
+        match action {
+            ClickAction::Copy => {
+                let plain = self.state.read(cx).settings.copy_as_plain_text;
+                self.state.update(cx, |s, _cx| s.copy_item(item_id, plain));
+            }
+            ClickAction::Paste => {
+                self.state.update(cx, |s, _cx| s.paste_item(item_id, false));
+            }
+            ClickAction::None => unreachable!("guarded above"),
+        }
+        self.sync_items_from_state_for_usage(cx);
     }
 
     /// Double-click with modifiers: paste only when the first click left the
@@ -1432,9 +1661,7 @@ impl ClipboardListView {
     /// already performed the paste, so the second click of a fast double-click
     /// must not paste again (§2.4 single paste per gesture).
     fn handle_double_click(&mut self, index: usize, modifiers: Modifiers, cx: &mut Context<Self>) {
-        let mode = PasteClickMode::from_settings(
-            &self.state.read(cx).settings.paste_click_mode_normalized(),
-        );
+        let mode = PasteClickMode::from_actions(&self.state.read(cx).settings.click_actions());
         if mode == PasteClickMode::SingleClick {
             self.modified_double_click_candidate = None;
             return;
@@ -1582,12 +1809,8 @@ impl ClipboardListView {
             return None;
         }
 
-        let row_top = self
-            .item_sizes
-            .iter()
-            .take(selected_index)
-            .map(|size| f32::from(size.height))
-            .sum::<f32>();
+        // Prefix sums replace the O(selected_index) height walk.
+        let row_top = self.row_offsets[selected_index.min(self.row_offsets.len() - 1)];
         let scroll_y = f32::from(self.scroll_handle.offset().y);
         let y = f32::from(list_bounds.top()) + row_top + scroll_y + TAG_PICKER_CARD_ANCHOR_Y;
 
@@ -1603,6 +1826,36 @@ impl ClipboardListView {
         }
     }
 
+    /// Grow the loaded page when scrolling nears the end of it.
+    ///
+    /// The list starts with a single page (see `AppState`'s incremental
+    /// pagination). The virtual list renders the visible slice only, so the
+    /// rest of the history is fetched lazily: once fewer than a few viewport
+    /// heights of content remain below the fold, double the page width and
+    /// re-sync. Deferred so this never mutates entities from a render pass —
+    /// `refresh_pointer_hover` also runs at the top of `render`.
+    fn request_next_page_if_near_end(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let Some(&content_height) = self.row_offsets.last() else {
+            return;
+        };
+        let viewport_height = f32::from(self.hover_viewport.size.height);
+        if viewport_height <= 0. {
+            return;
+        }
+        // 内容坐标系里视口底边之上的剩余内容：滚得越深，`hover_scroll_y`
+        // 越负，剩余越少。
+        let below_fold = content_height + f32::from(self.hover_scroll_y) - viewport_height;
+        if below_fold > viewport_height * 3. {
+            return;
+        }
+        cx.defer_in(window, |this, _window, cx| {
+            if this.state.update(cx, |state, _| state.grow_loaded_page()) {
+                this.sync_items_from_state(cx);
+                cx.notify();
+            }
+        });
+    }
+
     /// Hover is geometric, independent of keyboard selection and item ordering.
     /// Run on pointer movement and after layout so wheel/scrollbar/programmatic
     /// scrolling works even when the pointer is stationary.
@@ -1614,6 +1867,7 @@ impl ClipboardListView {
             self.toolbar_bounds.set(None);
             self.hover_scroll_y = scroll_y;
             self.hide_preview_panel(cx);
+            self.request_next_page_if_near_end(window, cx);
         }
         let pointer = window.mouse_position();
         let bounds = self.scroll_handle.bounds();
@@ -1642,8 +1896,11 @@ impl ClipboardListView {
                     pointer,
                     bounds,
                     scroll_y,
-                    &self.item_sizes,
-                    self.items.len(),
+                    RowGeometry {
+                        sizes: &self.item_sizes,
+                        offsets: &self.row_offsets,
+                        item_count: self.items.len(),
+                    },
                     self.hovered_index,
                     toolbar.map(|(_, bounds)| bounds),
                 )
@@ -1721,22 +1978,21 @@ impl ClipboardListView {
         if self.hover_viewport.size.width <= px(0.) || index >= self.items.len() {
             return None;
         }
-        let mut top = self.hover_viewport.top() + self.scroll_handle.offset().y;
-        for (current, card_size) in self.item_sizes.iter().take(self.items.len()).enumerate() {
-            if current == index {
-                let card_left = self.hover_viewport.left() + px(CLIPBOARD_ROW_HORIZONTAL_PADDING);
-                let card_width = (self.hover_viewport.size.width
-                    - px(CLIPBOARD_ROW_HORIZONTAL_PADDING * 2.)
-                    - px(CLIPBOARD_SCROLLBAR_WIDTH))
-                .max(px(0.));
-                return Some(Bounds::new(
-                    point(card_left, top + px(4.)),
-                    gpui::size(card_width, (card_size.height - px(8.)).max(px(0.))),
-                ));
-            }
-            top += card_size.height;
-        }
-        None
+        // The prefix sums carry the row top directly; no walk from row 0.
+        let top = self.row_offsets.get(index)?;
+        let card_size = self.item_sizes.get(index)?;
+        let card_left = self.hover_viewport.left() + px(CLIPBOARD_ROW_HORIZONTAL_PADDING);
+        let card_width = (self.hover_viewport.size.width
+            - px(CLIPBOARD_ROW_HORIZONTAL_PADDING * 2.)
+            - px(CLIPBOARD_SCROLLBAR_WIDTH))
+        .max(px(0.));
+        Some(Bounds::new(
+            point(
+                card_left,
+                self.hover_viewport.top() + self.scroll_handle.offset().y + px(*top) + px(4.),
+            ),
+            gpui::size(card_width, (card_size.height - px(8.)).max(px(0.))),
+        ))
     }
 
     fn open_preview_panel(
@@ -1844,7 +2100,6 @@ impl ClipboardListView {
             panel: self.preview_panel.clone(),
             card_top: f32::from(card.top()),
             size,
-            prefer_right: pointer.x >= card.center().x,
             card: Bounds::new(
                 point(card.origin.x + origin.x, card.origin.y + origin.y),
                 card.size,
@@ -2024,8 +2279,11 @@ impl ClipboardListView {
             pointer,
             viewport,
             scroll_y,
-            &self.item_sizes,
-            self.items.len(),
+            RowGeometry {
+                sizes: &self.item_sizes,
+                offsets: &self.row_offsets,
+                item_count: self.items.len(),
+            },
             self.hovered_index,
             None,
         )
@@ -2320,14 +2578,15 @@ impl ClipboardListView {
         self.context_menu_is_batch
     }
 
-    /// 当前菜单是否由卡片三点按钮弹出（只含备注 / 标签）。
-    pub fn context_menu_is_card_more(&self) -> bool {
-        self.context_menu_card_more
+    /// 当前菜单是否由卡片工具条按钮弹出，以及是哪一张。
+    pub fn context_menu_card_menu(&self) -> Option<CardMenu> {
+        self.context_menu_card_menu
     }
 
-    /// 卡片三点按钮：在点击位置弹出备注 / 标签菜单。
-    pub fn open_card_more_menu(
+    /// 卡片工具条按钮：在点击位置弹出该按钮自己的小菜单。
+    pub fn open_card_menu(
         &mut self,
+        menu: CardMenu,
         item_id: i64,
         position: Point<Pixels>,
         _window: &mut Window,
@@ -2347,7 +2606,7 @@ impl ClipboardListView {
         };
         self.context_menu_visible = true;
         self.context_menu_is_batch = false;
-        self.context_menu_card_more = true;
+        self.context_menu_card_menu = Some(menu);
         self.context_menu_x = f32::from(position.x);
         self.context_menu_y = f32::from(position.y);
         self.context_menu_item = Some(item);
@@ -2376,7 +2635,7 @@ impl ClipboardListView {
         self.context_menu_visible = false;
         self.context_menu_item = None;
         self.context_menu_is_batch = false;
-        self.context_menu_card_more = false;
+        self.context_menu_card_menu = None;
         self.hovered_index = None;
         cx.notify();
     }
@@ -2387,7 +2646,7 @@ impl ClipboardListView {
         self.context_menu_visible = false;
         self.context_menu_item = None;
         self.context_menu_is_batch = false;
-        self.context_menu_card_more = false;
+        self.context_menu_card_menu = None;
         self.hovered_index = None;
         self.tag_picker_visible = false;
         self.tag_picker_item_id = -1;
@@ -2534,8 +2793,7 @@ impl ClipboardListView {
         }
         if let Some(new_index) = self.items.iter().position(|item| item.id == item_id) {
             self.select_index_without_scroll(new_index, cx);
-            self.scroll_handle
-                .scroll_to_item(new_index, ScrollStrategy::Top);
+            self.scroll_to_row(new_index, ScrollStrategy::Top);
         }
     }
 
@@ -2689,7 +2947,7 @@ impl ClipboardListView {
     pub(crate) fn hide_context_menu(&mut self, cx: &mut Context<Self>) {
         self.context_menu_visible = false;
         self.context_menu_item = None;
-        self.context_menu_card_more = false;
+        self.context_menu_card_menu = None;
         cx.notify();
     }
 
@@ -2704,6 +2962,37 @@ impl ClipboardListView {
         cx.notify();
     }
 
+    /// 「清理后粘贴」：把菜单项里的变换 id 交给状态层执行。
+    fn clean_paste(&mut self, item_id: i64, transform_id: &str, cx: &mut Context<Self>) {
+        let Some(transform) = crate::core::text_transform::TextTransform::from_id(transform_id)
+        else {
+            log::warn!("clean_paste: unknown transform {transform_id:?}");
+            return;
+        };
+        self.state
+            .update(cx, |s, _cx| s.paste_item_transformed(item_id, transform));
+        self.sync_items_from_state_for_usage(cx);
+    }
+
+    /// Ctrl/Cmd+Shift+Enter：复用上次的清理变换，直接粘贴选中的条目。
+    pub(crate) fn action_clean_paste_last(&mut self, cx: &mut Context<Self>) {
+        if self.guard_panels_before_paste(cx) {
+            return;
+        }
+        // 单选之外（多选、无选中）不响应：清理只针对一条文本。
+        let Some(item) = self
+            .single_selected_id()
+            .and_then(|id| self.items.iter().find(|item| item.id == id))
+        else {
+            return;
+        };
+        let item_id = item.id;
+        let transform = self.state.read(cx).settings.last_clean_paste_transform();
+        self.state
+            .update(cx, |s, _cx| s.paste_item_transformed(item_id, transform));
+        self.sync_items_from_state_for_usage(cx);
+    }
+
     pub(crate) fn handle_menu_action(
         &mut self,
         action: &str,
@@ -2712,6 +3001,14 @@ impl ClipboardListView {
     ) {
         self.hide_preview_panel(cx);
         let plain = self.state.read(cx).settings.copy_as_plain_text;
+        if let Some(transform_id) = action.strip_prefix("clean_paste:") {
+            if let Some(ref item) = self.context_menu_item {
+                let item_id = item.id;
+                self.clean_paste(item_id, transform_id, cx);
+            }
+            self.hide_context_menu(cx);
+            return;
+        }
         match action {
             "copy" => {
                 if let Some(ref item) = self.context_menu_item {
@@ -2801,10 +3098,21 @@ impl ClipboardListView {
                     return; // Don't call hide_context_menu again at end
                 }
             }
+            "toggle_pin" => {
+                if let Some(ref item) = self.context_menu_item {
+                    let id = item.id;
+                    self.state.update(cx, |s, _cx| s.toggle_pinned(id));
+                    self.sync_items_from_state(cx);
+                }
+            }
             "batch_favorite" => {
                 self.state.update(cx, |s, _cx| s.batch_toggle_favorite());
                 self.sync_items_from_state(cx);
                 self.select_and_scroll_to_top_if_favorites_first(cx);
+            }
+            "batch_pin" => {
+                self.state.update(cx, |s, _cx| s.batch_toggle_pinned());
+                self.sync_items_from_state(cx);
             }
             "batch_delete" => {
                 let count = self.selected_ids.len();
@@ -3084,10 +3392,23 @@ impl ClipboardListView {
                     }
                 }
             }
+            "toggle_pin" => {
+                if let Some(index) = self.hovered_index {
+                    if let Some(item) = self.items.get(index) {
+                        let id = item.id;
+                        self.state.update(cx, |s, _cx| s.toggle_pinned(id));
+                        self.sync_items_from_state(cx);
+                    }
+                }
+            }
             "batch_favorite" => {
                 self.state.update(cx, |s, _cx| s.batch_toggle_favorite());
                 self.sync_items_from_state(cx);
                 self.select_and_scroll_to_top_if_favorites_first(cx);
+            }
+            "batch_pin" => {
+                self.state.update(cx, |s, _cx| s.batch_toggle_pinned());
+                self.sync_items_from_state(cx);
             }
             "batch_delete" => {
                 let count = self.selected_ids.len();
@@ -3154,25 +3475,71 @@ impl ClipboardListView {
     }
 
     fn compute_sizes(items: &[ClipboardItem], mode: &str) -> Vec<Size<Pixels>> {
-        let mut sizes: Vec<_> = items
-            .iter()
-            .map(|item| {
-                // estimate_card_height is already scaled; scale the inter-row
-                // gap too so the whole list zooms proportionally.
-                let h = estimate_card_height(item, mode) + sx(CLIPBOARD_ROW_VERTICAL_SPACE);
-                size(px(308.), px(h))
-            })
-            .collect();
-        // Append a sentinel spacer so the last real item can scroll fully into view.
-        // The render callback's `filter_map` (via `this.items.get(i)`) returns None
-        // for this out-of-bounds index, so nothing visible is painted — just empty
-        // --- scrollable space. This avoids inflating the last card's visual height ---
-        // --- when there are only a few items in the list. ---
-        if !sizes.is_empty() {
-            sizes.push(size(px(308.), px(sx(CLIPBOARD_BOTTOM_SCROLL_INSET))));
-        }
-        sizes
+        let heights = resolve_row_heights(&mut HashMap::new(), items, mode);
+        sizes_from_heights(&heights)
     }
+
+    /// Drop cached heights that can no longer be valid: a change of height mode
+    /// or font scale invalidates all of them, and rows that left the view would
+    /// otherwise accumulate for as long as the session lasts.
+    fn prepare_height_cache(&mut self) {
+        let scale = crate::ui::font::scale();
+        if self.height_cache_mode != self.card_height_mode || self.height_cache_scale != scale {
+            self.height_cache.clear();
+            self.height_cache_mode.clone_from(&self.card_height_mode);
+            self.height_cache_scale = scale;
+        }
+        if self.height_cache.len() > self.items.len().saturating_mul(2).max(512) {
+            let live: HashSet<i64> = self.items.iter().map(|item| item.id).collect();
+            self.height_cache.retain(|id, _| live.contains(id));
+        }
+    }
+}
+
+/// One card height per item, reusing `cache` entries whose `updated_at` still
+/// matches the row.
+///
+/// Split out of the view so the reuse rule can be tested without a gpui
+/// context. `estimate_card_height` is the expensive part: it parses the row's
+/// `rich_data` (and `file_data`).
+fn resolve_row_heights(
+    cache: &mut HashMap<i64, (DateTime<Utc>, f32)>,
+    items: &[ClipboardItem],
+    mode: &str,
+) -> Vec<f32> {
+    let mut heights = Vec::with_capacity(items.len());
+    for item in items {
+        let height = match cache.get(&item.id) {
+            Some((stamp, height)) if *stamp == item.updated_at => *height,
+            _ => {
+                let height = estimate_card_height(item, mode);
+                cache.insert(item.id, (item.updated_at, height));
+                height
+            }
+        };
+        heights.push(height);
+    }
+    heights
+}
+
+fn sizes_from_heights(heights: &[f32]) -> Vec<Size<Pixels>> {
+    let mut sizes: Vec<_> = heights
+        .iter()
+        .map(|h| {
+            // estimate_card_height is already scaled; scale the inter-row gap
+            // too so the whole list zooms proportionally.
+            size(px(308.), px(h + sx(CLIPBOARD_ROW_VERTICAL_SPACE)))
+        })
+        .collect();
+    // Append a sentinel spacer so the last real item can scroll fully into view.
+    // The render callback's `filter_map` (via `this.items.get(i)`) returns None
+    // for this out-of-bounds index, so nothing visible is painted — just empty
+    // --- scrollable space. This avoids inflating the last card's visual height ---
+    // --- when there are only a few items in the list. ---
+    if !sizes.is_empty() {
+        sizes.push(size(px(308.), px(sx(CLIPBOARD_BOTTOM_SCROLL_INSET))));
+    }
+    sizes
 }
 
 /// Render the in-memory pending image placeholders using the same image card
@@ -3195,19 +3562,57 @@ fn synthesize_pending_item(p: &PendingImageView, index: usize) -> ClipboardItem 
     item
 }
 
+/// Cumulative tops of the virtual-list rows, plus the content height.
+///
+/// `offsets[i]` is the distance from the first row's top to row `i`'s top in
+/// content coordinates; the final entry is the bottom of the last row. Rebuilt
+/// together with `item_sizes` (see `ClipboardListView::set_item_sizes`), the
+/// two must always describe the same rows.
+fn row_offsets(sizes: &[Size<Pixels>]) -> Vec<f32> {
+    let mut offsets = Vec::with_capacity(sizes.len() + 1);
+    let mut top = 0f32;
+    for size in sizes {
+        offsets.push(top);
+        top += f32::from(size.height);
+    }
+    offsets.push(top);
+    offsets
+}
+
+/// Virtual-list row geometry for hit tests: the per-row sizes, their prefix
+/// sums and how many of them are real rows (the trailing size is the scroll
+/// spacer, never hit-testable).
+struct RowGeometry<'a> {
+    sizes: &'a [Size<Pixels>],
+    offsets: &'a [f32],
+    item_count: usize,
+}
+
 fn pointer_hover_index(
     pointer: Point<Pixels>,
     viewport: Bounds<Pixels>,
     scroll_y: Pixels,
-    sizes: &[Size<Pixels>],
-    item_count: usize,
+    rows: RowGeometry<'_>,
     previous: Option<usize>,
     toolbar: Option<Bounds<Pixels>>,
 ) -> Option<usize> {
     if viewport.size.width <= px(0.) || viewport.size.height <= px(0.) {
         return None;
     }
-    let mut top = viewport.top() + scroll_y;
+    // Binary-search the prefix sums for the first row reaching into the
+    // viewport. Walking from row 0 made every pointer event O(scroll depth),
+    // which on a deep list turned each mouse move into a scan of everything
+    // above the fold.
+    let content_top = -f32::from(scroll_y);
+    let mut start = rows
+        .offsets
+        .partition_point(|&offset| offset <= content_top)
+        .saturating_sub(1);
+    // The previously hovered row can sit above that first visible row (its
+    // toolbar must stay anchored while scrolling), so never skip past it.
+    if let Some(previous) = previous {
+        start = start.min(previous);
+    }
     let mut pointed_row = None;
     let mut previous_card = None;
     // 滚动区铺满面板，卡片左右各让出一段行内边距，右侧再让出滚动条槽位。
@@ -3216,21 +3621,36 @@ fn pointer_hover_index(
         - px(CLIPBOARD_ROW_HORIZONTAL_PADDING * 2.)
         - px(CLIPBOARD_SCROLLBAR_WIDTH))
     .max(px(0.));
-    for (index, size) in sizes.iter().take(item_count).enumerate() {
-        let card = Bounds::new(
-            point(card_left, top + px(4.)),
-            gpui::size(card_width, (size.height - px(8.)).max(px(0.))),
-        );
-        if previous == Some(index)
-            && card.bottom() > viewport.top()
-            && card.top() < viewport.bottom()
-        {
-            previous_card = Some(card);
+    for (index, (size, &offset)) in rows
+        .sizes
+        .iter()
+        .zip(rows.offsets)
+        .enumerate()
+        .take(rows.item_count)
+        .skip(start)
+    {
+        let row_top = viewport.top() + scroll_y + px(offset) + px(4.);
+        let row_height = (size.height - px(8.)).max(px(0.));
+        let row_bottom = row_top + row_height;
+        // Only rows that intersect the viewport can hold the pointer; rows
+        // before `start` are provably above it and rows past the viewport
+        // bottom end the scan instead of walking the whole history.
+        let row_in_view = row_bottom > viewport.top() && row_top < viewport.bottom();
+        if row_in_view || previous == Some(index) {
+            let card = Bounds::new(
+                point(card_left, row_top),
+                gpui::size(card_width, row_height),
+            );
+            if previous == Some(index) && row_in_view {
+                previous_card = Some(card);
+            }
+            if row_in_view && viewport.contains(&pointer) && card.contains(&pointer) {
+                pointed_row = Some(index);
+            }
         }
-        if viewport.contains(&pointer) && card.contains(&pointer) {
-            pointed_row = Some(index);
+        if row_top >= viewport.bottom() {
+            break;
         }
-        top += size.height;
     }
     // Keep a full-card-width corridor between the card and its tabs. A narrow
     // toolbar-only hit area drops hover when approaching the first tab diagonally.
@@ -3278,10 +3698,74 @@ impl Render for ClipboardListView {
         let text_3 = p.ink_3;
 
         let empty_state = items_count == 0;
+        let load_error = self.state.read(cx).load_error.clone();
 
         // --- Empty state — render a lightweight static placeholder, completely ---
         // --- avoiding the virtual list subtree so GPUI releases its element cache. ---
         if empty_state {
+            // An empty list has two very different causes: nothing has been
+            // copied yet, or the query failed. Both used to render as "no items
+            // yet", so a load failure looked like an empty history. The error
+            // case now says so and offers a retry.
+            let body = match load_error {
+                Some(error) => div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(4.))
+                    .child(
+                        div()
+                            .text_size(fs(13.))
+                            .text_color(p.warn)
+                            .child(I18nKey::ListLoadFailed.text()),
+                    )
+                    .child(
+                        div()
+                            .max_w(px(280.))
+                            .text_size(fs(12.))
+                            .text_color(text_3)
+                            .child(error),
+                    )
+                    .child(
+                        div()
+                            .id("clippi-list-load-retry")
+                            .mt(px(4.))
+                            .px(px(10.))
+                            .py(px(4.))
+                            .rounded(px(6.))
+                            .text_size(fs(12.))
+                            .text_color(p.accent)
+                            .cursor_pointer()
+                            .hover(|style| style.bg(p.hover))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _, cx| {
+                                    this.state.update(cx, |state, _| state.reload_items());
+                                    this.sync_items_from_state(cx);
+                                    cx.notify();
+                                }),
+                            )
+                            .child(I18nKey::ListLoadFailedRetry.text()),
+                    )
+                    .into_any_element(),
+                None => div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .child(
+                        div()
+                            .text_size(fs(13.))
+                            .text_color(text_2)
+                            .child(I18nKey::ListNoItems.text()),
+                    )
+                    .child(
+                        div()
+                            .text_size(fs(12.))
+                            .text_color(text_3)
+                            .child(I18nKey::ListEmptyHint.text()),
+                    )
+                    .into_any_element(),
+            };
             return div()
                 // Keep the focused list in the dispatch tree so root-level
                 // shortcuts and modifier releases still work with no results.
@@ -3302,18 +3786,7 @@ impl Render for ClipboardListView {
                 .pb(px(8.))
                 .rounded_b(px(12.))
                 .bg(bg)
-                .child(
-                    div()
-                        .text_size(fs(13.))
-                        .text_color(text_2)
-                        .child(I18nKey::ListNoItems.text()),
-                )
-                .child(
-                    div()
-                        .text_size(fs(12.))
-                        .text_color(text_3)
-                        .child(I18nKey::ListEmptyHint.text()),
-                )
+                .child(body)
                 .into_any_element();
         }
 
@@ -3393,9 +3866,13 @@ impl Render for ClipboardListView {
                             "enter" if !shift => {
                                 // Ctrl/Cmd+Enter — bitmap paste for a single selected
                                 // image, default paste otherwise. The floating-panel
-                                // guard lives inside the action method. Ctrl/Cmd+Shift+Enter
-                                // is intentionally unhandled.
+                                // guard lives inside the action method.
                                 this.action_paste_bitmap_or_default(cx);
+                                cx.stop_propagation();
+                            }
+                            "enter" if !this.has_any_panel_or_editing() => {
+                                // Ctrl/Cmd+Shift+Enter — 清理后粘贴，复用上次的变换。
+                                this.action_clean_paste_last(cx);
                                 cx.stop_propagation();
                             }
                             "d" if !this.has_any_panel_or_editing() => {
@@ -3564,6 +4041,17 @@ impl Render for ClipboardListView {
                             move |this, range, window, cx| {
                                 this.refresh_pointer_hover(window, cx);
                                 let selected_count = this.selected_count;
+                                // One pass for the whole visible range. Both the
+                                // selected test and the badge order used to scan
+                                // `selected_ids` once per row, so a Ctrl+A with a
+                                // long history cost O(visible rows × selection)
+                                // on every frame.
+                                let selection_order_by_id: HashMap<i64, usize> = this
+                                    .selected_ids
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(order, id)| (*id, order + 1))
+                                    .collect();
                                 let can_merge_selection =
                                     this.state.read(cx).can_merge_selected_items();
                                 let hovered_index = this.hovered_index;
@@ -3595,17 +4083,17 @@ impl Render for ClipboardListView {
                                     .filter_map(|i| {
                                         let item = this.items.get(i)?;
                                         let item_id = item.id;
-                                        // 「更多」菜单开着时鼠标已不在卡片上，
+                                        // 工具条小菜单开着时鼠标已不在卡片上，
                                         // 但这一行的工具条要保持展开。
                                         let card_more_open = this.context_menu_visible
-                                            && this.context_menu_card_more
+                                            && this.context_menu_card_menu.is_some()
                                             && this
                                                 .context_menu_item
                                                 .as_ref()
                                                 .is_some_and(|menu_item| menu_item.id == item_id);
                                         let inline_locked = inline_locked_item_id == Some(item_id);
-                                        let selected =
-                                            inline_locked || this.selected_ids.contains(&item_id);
+                                        let selected = inline_locked
+                                            || selection_order_by_id.contains_key(&item_id);
                                         let is_hovered = inline_locked_item_id.is_none()
                                             && hovered_index == Some(i);
                                         let list_view = list_entity.clone();
@@ -3628,10 +4116,13 @@ impl Render for ClipboardListView {
                                         let click_handler = Rc::new(
                                             move |idx: usize,
                                                   modifiers: Modifiers,
+                                                  position: Point<Pixels>,
                                                   window: &mut Window,
                                                   cx: &mut App| {
                                                 focus_handle.focus(window, cx);
                                                 list_view.update(cx, move |this, cx| {
+                                                    // 记下按下点，供「按住移动」判断是否已成拖出。
+                                                    this.drag_origin = Some((idx, position));
                                                     this.handle_card_click(idx, modifiers, window, cx);
                                                 });
                                             },
@@ -3644,12 +4135,8 @@ impl Render for ClipboardListView {
                                         let list_for_note_commit = list_entity.clone();
 
                                         // Compute 1-based selection order for badge display
-                                        let selection_order = this
-                                            .selected_ids
-                                            .iter()
-                                            .position(|&id| id == item_id)
-                                            .map(|p| p + 1)
-                                            .unwrap_or(0);
+                                        let selection_order =
+                                            selection_order_by_id.get(&item_id).copied().unwrap_or(0);
 
                                         Some(
                                             div()
@@ -3778,8 +4265,7 @@ impl Render for ClipboardListView {
                                                                     Some(item.clone());
                                                                 this.context_menu_is_batch =
                                                                     is_batch;
-                                                                this.context_menu_card_more =
-                                                                    false;
+                                                                this.context_menu_card_menu = None;
                                                                 cx.notify();
                                                             }
                                                         });
@@ -3799,6 +4285,12 @@ impl Render for ClipboardListView {
                                                     .privacy_types(this.state.read(cx).settings.privacy_protection_types.clone())
                                                     .show_original_on_hover(show_original_on_hover)
                                                     .show_page_title(show_page_title)
+                                                    .plain_content_preview(
+                                                        this.state
+                                                            .read(cx)
+                                                            .settings
+                                                            .plain_content_preview,
+                                                    )
                                                     .source_is_uploading(source_is_uploading)
                                                     .image_cache(image_cache.clone())
                                                     .search_terms(search_terms.clone())
@@ -3843,10 +4335,14 @@ impl Render for ClipboardListView {
                                                             );
                                                         });
                                                     })
-                                                    .on_toolbar_more(move |position, window, cx| {
+                                                    .on_toolbar_more(move |kind, position, window, cx| {
+                                                        let menu = match kind {
+                                                            "clean" => CardMenu::Clean,
+                                                            _ => CardMenu::More,
+                                                        };
                                                         list_for_more.update(cx, |this, cx| {
-                                                            this.open_card_more_menu(
-                                                                item_id, position, window, cx,
+                                                            this.open_card_menu(
+                                                                menu, item_id, position, window, cx,
                                                             );
                                                         });
                                                     })
@@ -3855,6 +4351,24 @@ impl Render for ClipboardListView {
                                                         Rc::new(move |idx, modifiers, _window, cx| {
                                                             list_for_dbl.update(cx, |this, cx| {
                                                                 this.handle_double_click(idx, modifiers, cx);
+                                                            });
+                                                        })
+                                                    })
+                                                    .on_middle_click({
+                                                        let list_for_middle = list_entity.clone();
+                                                        Rc::new(move |idx, _window, cx| {
+                                                            list_for_middle.update(cx, |this, cx| {
+                                                                this.handle_middle_click(idx, cx);
+                                                            });
+                                                        })
+                                                    })
+                                                    .on_drag_out({
+                                                        let list_for_drag = list_entity.clone();
+                                                        Rc::new(move |idx, position, window, cx| {
+                                                            list_for_drag.update(cx, |this, cx| {
+                                                                this.handle_card_drag_move(
+                                                                    idx, position, window, cx,
+                                                                );
                                                             });
                                                         })
                                                     });
@@ -3941,11 +4455,126 @@ impl Render for ClipboardListView {
 mod tests {
     use super::{
         can_incrementally_sync_usage, classify_card_modifier, collect_selectable_ids, item_id_at,
-        item_index, item_is_pending, pointer_hover_index, reorder_usage_pairs,
-        resolve_card_click_action, CardClickAction, CardModifier, PasteClickMode,
+        item_index, item_is_pending, reorder_usage_pairs, resolve_card_click_action,
+        resolve_row_heights, row_offsets, CardClickAction, CardModifier, PasteClickMode,
+        RowGeometry,
     };
     use crate::core::types::{ClipboardItem, ContentType};
     use gpui::{point, px, size, Bounds, Modifiers, Pixels};
+
+    /// `super::pointer_hover_index` with the prefix sums derived from the rows.
+    ///
+    /// Production keeps the offsets cached alongside the sizes; the tests pass
+    /// only the rows, so this wrapper rebuilds them for every call.
+    fn pointer_hover_index(
+        pointer: gpui::Point<Pixels>,
+        viewport: Bounds<Pixels>,
+        scroll_y: Pixels,
+        rows: &[gpui::Size<Pixels>],
+        item_count: usize,
+        previous: Option<usize>,
+        toolbar: Option<Bounds<Pixels>>,
+    ) -> Option<usize> {
+        let offsets = row_offsets(rows);
+        super::pointer_hover_index(
+            pointer,
+            viewport,
+            scroll_y,
+            RowGeometry {
+                sizes: rows,
+                offsets: &offsets,
+                item_count,
+            },
+            previous,
+            toolbar,
+        )
+    }
+
+    /// The binary search must land on the first row intersecting the viewport,
+    /// not on row 0 — a deep scroll pays O(log n), not O(depth).
+    #[test]
+    fn pointer_hover_skips_rows_above_the_viewport_via_binary_search() {
+        let viewport = Bounds::new(point(px(10.), px(100.)), size(px(300.), px(160.)));
+        let rows: Vec<_> = (0..5000usize)
+            .map(|i| size(px(300.), px(if i.is_multiple_of(7) { 120. } else { 80. })))
+            .collect();
+        let offsets = row_offsets(&rows);
+        // Scrolled 40 000px down: rows 0..~499 are above the fold.
+        let scroll_y = px(-40_000.);
+        // Pointer inside the viewport hits whatever row lands there.
+        let pointer = point(px(100.), px(180.));
+        let index = super::pointer_hover_index(
+            pointer,
+            viewport,
+            scroll_y,
+            RowGeometry {
+                sizes: &rows,
+                offsets: &offsets,
+                item_count: rows.len(),
+            },
+            Option::None,
+            Option::None,
+        )
+        .expect("a row is under the pointer");
+        // The hit must sit geometrically under the pointer: the prefix sums put
+        // the card exactly where the old top-accumulating walk would have.
+        let card_top = 100. + (-40_000.) + offsets[index] + 4.;
+        let card_height = f32::from(rows[index].height) - 8.;
+        assert!(
+            card_top <= 180. && 180. < card_top + card_height,
+            "card [{card_top}, {}] must contain pointer y=180",
+            card_top + card_height
+        );
+        // …and the hit must be deep in the list, not row 0: the binary search
+        // skipped the ~470 rows above the fold instead of walking them.
+        assert!(index > 100, "the hit must be deep in the list, got {index}");
+    }
+
+    #[test]
+    fn row_offsets_accumulate_every_height_and_end_with_the_total() {
+        let rows = vec![size(px(300.), px(80.)), size(px(300.), px(120.))];
+        assert_eq!(row_offsets(&rows), vec![0., 80., 200.]);
+        assert!(row_offsets(&[]).len() == 1);
+    }
+
+    #[test]
+    fn cached_height_is_reused_while_the_row_is_unchanged() {
+        let item = ClipboardItem::new_text(
+            7,
+            "hello",
+            ContentType::PlainText,
+            Option::None,
+            Option::None,
+        );
+        let mut cache = std::collections::HashMap::new();
+        cache.insert(7, (item.updated_at, 4242.0));
+
+        let heights = resolve_row_heights(&mut cache, std::slice::from_ref(&item), "auto");
+
+        // The sentinel height only survives if the parse was skipped entirely.
+        assert_eq!(heights, vec![4242.0]);
+    }
+
+    #[test]
+    fn stale_height_entry_is_recomputed_after_the_row_changes() {
+        let mut item = ClipboardItem::new_text(
+            7,
+            "hello",
+            ContentType::PlainText,
+            Option::None,
+            Option::None,
+        );
+        let stale = item.updated_at - chrono::Duration::days(1);
+        item.updated_at += chrono::Duration::days(1);
+        let mut cache = std::collections::HashMap::new();
+        cache.insert(7, (stale, 4242.0));
+
+        let heights = resolve_row_heights(&mut cache, std::slice::from_ref(&item), "auto");
+
+        assert_ne!(heights[0], 4242.0);
+        assert_eq!(cache[&7].0, item.updated_at);
+        assert_eq!(cache[&7].1, heights[0]);
+    }
 
     #[test]
     fn pointer_hover_follows_stationary_mouse_after_scroll() {
@@ -4220,6 +4849,7 @@ mod tests {
             custom_hotkey: String::new(),
             custom_hotkey_format: String::new(),
             existence_observed_at: String::new(),
+            pinned: false,
         }
     }
 

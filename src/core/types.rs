@@ -200,6 +200,12 @@ pub struct ClipboardItem {
     /// (legacy or never-observed) — such items are never auto-deleted by the
     /// stale-item cleanup. Local-only field, not part of the sync payload.
     pub existence_observed_at: String,
+    /// 置顶：置顶条目恒排在列表最前，且不会被自动清理/清空历史删除。
+    ///
+    /// 与 `settings.pinned_tag_ids` 一样是**本地偏好**，不进同步载荷：置顶
+    /// 没有对应的 tombstone 机制，跨设备传播会出现「一端取消置顶、另一端
+    /// 又推回」的抖动，收益不足以抵消这层复杂度。
+    pub pinned: bool,
 }
 
 /// Four-state classification of a single filesystem path, replacing the old
@@ -417,6 +423,7 @@ impl ClipboardItem {
             custom_hotkey: String::new(),
             custom_hotkey_format: String::new(),
             existence_observed_at: String::new(),
+            pinned: false,
         }
     }
 
@@ -454,6 +461,7 @@ impl ClipboardItem {
             custom_hotkey: String::new(),
             custom_hotkey_format: String::new(),
             existence_observed_at: String::new(),
+            pinned: false,
         }
     }
 
@@ -491,6 +499,7 @@ impl ClipboardItem {
             custom_hotkey: String::new(),
             custom_hotkey_format: String::new(),
             existence_observed_at: String::new(),
+            pinned: false,
         }
     }
 

@@ -35,6 +35,13 @@ const KEYWORD_SEARCH_SCAN_MULTIPLIER: usize = 8;
 /// future "the window froze while searching" report can be checked against the
 /// log instead of reproduced.
 const KEYWORD_SEARCH_SLOW_LOG: std::time::Duration = std::time::Duration::from_millis(100);
+/// 主列表首批（以及每次扩容后的目标增量）加载多少行。
+///
+/// 全量预载让启动随历史长度线性变慢（100 万条实测 5.4 s，其中标签分批
+/// 查询修复前还会整体失败）。虚拟列表只渲染可见行，所以主列表改为增量
+/// 分页：首屏只取这么多，滚动接近已加载页末尾时由列表视图调
+/// [`AppState::grow_loaded_page`] 翻倍页宽，上限仍是 `query_limit()`。
+const LIST_PAGE_STEP: usize = 500;
 const LIST_FULL_TEXT_LIMIT: usize = 8192;
 const LIST_RICH_HTML_LIMIT: usize = 4096;
 const LIST_RICH_AUX_LIMIT: usize = 2048;
@@ -95,6 +102,7 @@ fn empty_editor_item() -> ClipboardItem {
         custom_hotkey: String::new(),
         custom_hotkey_format: String::new(),
         existence_observed_at: String::new(),
+        pinned: false,
     }
 }
 
@@ -121,6 +129,22 @@ pub struct AppState {
     pub db: Database,
     /// Clipboard items loaded from DB
     pub items: Vec<ClipboardItem>,
+    /// 库里的条目总数（不受筛选影响），标题栏显示用。每次重载列表时刷新。
+    pub total_item_count: u32,
+    /// 最近一次列表加载的问题描述，`None` 表示正常。
+    ///
+    /// 列表为空有两种原因：真的没有数据，或者查询失败。以前两者都渲染成
+    /// 「暂无条目」，用户看到的是空历史而不是错误。列表页把这个字段当空态
+    /// 里的错误提示 + 重试入口用。
+    pub load_error: Option<String>,
+    /// 主列表当前最多允许加载多少行（增量分页的页宽）。
+    ///
+    /// 起始为 [`LIST_PAGE_STEP`]，滚动接近页尾时翻倍，上限 `query_limit()`。
+    /// `reload_items` 始终按这个宽度读取，所以「已加载的列表」永远是结果集
+    /// 的一个前缀——追加不会移动既有行，选择、拖拽、悬停都仍然安全。
+    loaded_limit: usize,
+    /// 结果集（按当前筛选）在库里已经没有更多行可加载。
+    list_exhausted: bool,
     pub source_app_names: Vec<String>,
     pub source_app_icons: std::collections::HashMap<String, std::path::PathBuf>,
     /// In-memory image placeholders awaiting background persistence.
@@ -507,6 +531,29 @@ fn reorder_by_usage(items: &mut [ClipboardItem], sort_by_created: bool, favorite
     }
 }
 
+/// Read one page of the list, degrading to "no tags" when only the tag lookup
+/// fails.
+///
+/// Tags are decoration: letting a tag-query failure empty the whole page turns a
+/// recoverable error into "my history is gone" — which is exactly what happened
+/// when a page exceeded SQLite's bind-variable limit. `Err` therefore means the
+/// items themselves could not be read, and the caller must surface it.
+fn load_page_or_degrade_tags(
+    db: &Database,
+    filters: &ClipboardFilters,
+    limit: usize,
+    order_by: &str,
+) -> Result<Vec<ClipboardItem>, String> {
+    match db.load_filtered_list_with_tags(filters, limit, order_by) {
+        Ok(items) => Ok(items),
+        Err(tags_error) => {
+            log::warn!("Tags unavailable, listing the page without them: {tags_error}");
+            db.load_filtered_list(filters, limit, order_by)
+                .map_err(|error| error.to_string())
+        }
+    }
+}
+
 /// Deduplicate ids preserving first-occurrence order.
 fn dedupe_ids(ids: &[i64]) -> Vec<i64> {
     let mut seen = std::collections::HashSet::new();
@@ -542,6 +589,8 @@ impl AppState {
         } else {
             (settings.max_items as usize).saturating_mul(2).max(200)
         };
+        // 增量分页：首屏只取一页，其余行在滚动接近页尾时按需扩容。
+        let loaded_limit = LIST_PAGE_STEP.min(query_limit);
         let db = Database::open(&db_path.to_string_lossy())
             .unwrap_or_else(|e| panic!("Failed to open database at {db_path:?}: {e}"));
         // Startup cleanup is deferred to the first WindowManager poll tick
@@ -549,12 +598,19 @@ impl AppState {
         // schedules the work on a background thread.
         let initial_cleanup_dirty = false;
 
-        let items = db
-            .load_filtered_list_with_tags(&ClipboardFilters::default(), query_limit, order_by)
-            .unwrap_or_else(|e| {
-                log::error!("Failed to load initial items: {e}");
-                Vec::new()
-            });
+        let (items, load_error) = match load_page_or_degrade_tags(
+            &db,
+            &ClipboardFilters::default(),
+            loaded_limit,
+            order_by,
+        ) {
+            Ok(items) => (items, None),
+            Err(error) => {
+                log::error!("Failed to load initial items: {error}");
+                (Vec::new(), Some(error))
+            }
+        };
+        let list_exhausted = items.len() < loaded_limit;
 
         let mut tags = db.get_all_tags().unwrap_or_else(|e| {
             log::error!("Failed to load tags: {e}");
@@ -568,6 +624,11 @@ impl AppState {
             crate::core::db::TitlebarStats::default()
         });
 
+        // 标题栏的条目总数：先算好再进结构体，`db` 一旦 move 进去就不能再借用。
+        let total_item_count = db.count_clipboard_items().unwrap_or_else(|error| {
+            log::error!("Failed to count clipboard items: {error}");
+            items.len() as u32
+        });
         Self {
             source_app_icons: if settings.show_source_app_filter() {
                 db.source_app_icon_paths().unwrap_or_else(|error| {
@@ -588,6 +649,10 @@ impl AppState {
             settings,
             db,
             items,
+            total_item_count,
+            load_error,
+            loaded_limit,
+            list_exhausted,
             pending_images: Vec::new(),
             tags,
             filters: ClipboardFilters::default(),
@@ -703,11 +768,14 @@ impl AppState {
         let source_started = Instant::now();
         self.refresh_source_apps();
         let source_apps = source_started.elapsed();
+        // 增量分页的页宽。`query_limit()` 仍是硬顶：用户把「最大保存条数」
+        // 调小后，已加载的页宽不允许超过新的顶。
+        let limit_used = self.loaded_limit.min(self.query_limit());
         let result = if self.filters.has_keyword() {
             self.load_keyword_filtered_items(&self.filters)
+                .map_err(|error| error.to_string())
         } else {
-            self.db
-                .load_filtered_list_with_tags(&self.filters, self.query_limit(), self.order_by())
+            load_page_or_degrade_tags(&self.db, &self.filters, limit_used, self.order_by())
         };
 
         let keyword_filtered = self.filters.has_keyword();
@@ -729,8 +797,25 @@ impl AppState {
                     });
                 }
                 self.items = items;
+                self.load_error = None;
+                if !keyword_filtered {
+                    // 少于页宽说明结果集已经见底；关键字搜索走自己的扫描
+                    // 上限，不参与这个判定。
+                    self.list_exhausted = self.items.len() < limit_used;
+                }
             }
-            Err(e) => log::error!("Failed to reload items: {e}"),
+            Err(e) => {
+                // Keep whatever is already on screen: a failed reload must not
+                // blank a list the user is reading. The banner only shows when
+                // the list is empty, so this message stays the honest record.
+                log::error!("Failed to reload items: {e}");
+                self.load_error = Some(e);
+            }
+        }
+        // 标题栏的计数是「库里一共多少条」，与当前筛选和分页无关。
+        match self.db.count_clipboard_items() {
+            Ok(count) => self.total_item_count = count,
+            Err(e) => log::error!("Failed to count clipboard items: {e}"),
         }
         let titlebar_started = Instant::now();
         self.refresh_titlebar_filter_availability();
@@ -766,6 +851,25 @@ impl AppState {
                 quick_page_skipped
             );
         }
+    }
+
+    /// 把主列表的已加载页宽翻倍并立即重读。
+    ///
+    /// 返回 `false` 表示没有扩容，调用方无需刷新：库里已经见底、已到
+    /// `query_limit()` 上限，或当前在关键字搜索/中转站视图下（两者各有
+    /// 自己的结果集，不参与主列表分页）。
+    pub fn grow_loaded_page(&mut self) -> bool {
+        let cap = self.query_limit();
+        if self.list_exhausted
+            || self.loaded_limit >= cap
+            || self.filters.has_keyword()
+            || self.transfer_filter_active
+        {
+            return false;
+        }
+        self.loaded_limit = (self.loaded_limit * 2).min(cap);
+        self.reload_items();
+        true
     }
 
     /// Whether the quick popup keeps its own filter state.
@@ -1068,6 +1172,8 @@ impl AppState {
                 offset += page_limit;
             }
 
+            // The scan reads text only; the cards still need the icon.
+            self.db.fill_source_app_icons(&mut matches)?;
             return Ok(matches);
         }
 
@@ -1108,7 +1214,13 @@ impl AppState {
         }
 
         favorite_matches.extend(regular_matches);
+        // Favorites-first is the only list order decided outside SQL. Pinned
+        // rows must still lead (the database orders by `pinned DESC, …`), and a
+        // pinned non-favorite would otherwise sink below an unpinned favorite.
+        // `sort_by_key` is stable, so the time order inside each group holds.
+        favorite_matches.sort_by_key(|item| std::cmp::Reverse(item.pinned));
         favorite_matches.truncate(result_limit);
+        self.db.fill_source_app_icons(&mut favorite_matches)?;
         Ok(favorite_matches)
     }
 
@@ -1130,9 +1242,12 @@ impl AppState {
         page_limit: usize,
         offset: usize,
     ) -> rusqlite::Result<KeywordPage> {
-        let mut page =
-            self.db
-                .load_filtered_page_with_tags(filters, page_limit, offset, self.order_by())?;
+        let mut page = self.db.load_filtered_scan_page_with_tags(
+            filters,
+            page_limit,
+            offset,
+            self.order_by(),
+        )?;
         let exhausted = page.is_empty();
         if self.settings.filter_foreign_paths {
             page.retain(|item| {
@@ -1158,6 +1273,10 @@ impl AppState {
         self.quick_items.clear();
         self.quick_items.shrink_to_fit();
         self.selected_ids.clear();
+        // 隐藏期间把页宽重置回首屏大小：重新显示时从一页起步，而不是
+        // 带着隐藏前滚到很深时的页宽立即重读那么多次行。
+        self.loaded_limit = LIST_PAGE_STEP.min(self.query_limit());
+        self.list_exhausted = false;
     }
 
     /// Record whether the quick popup is on screen.
@@ -1622,6 +1741,7 @@ impl AppState {
             custom_hotkey: String::new(),
             custom_hotkey_format: String::new(),
             existence_observed_at: String::new(),
+            pinned: false,
         };
 
         // Upsert by content hash: re-creating existing content refreshes that
@@ -2887,6 +3007,74 @@ impl AppState {
         paste_after_delay(shortcuts);
     }
 
+    /// 把条目写进剪贴板，供「拖出到外部应用」使用。
+    ///
+    /// 写入走内部通道（不重新采集），成功返回 `true`；之后的 OLE 拖放由
+    /// `platform::drag_out` 完成。
+    pub fn write_item_for_drag_out(&mut self, id: i64) -> bool {
+        let item = match self.db.get_by_id(id) {
+            Ok(Some(item)) => item,
+            Ok(None) => {
+                log::warn!("write_item_for_drag_out: item {id} not found");
+                return false;
+            }
+            Err(e) => {
+                log::error!("write_item_for_drag_out: db error for {id}: {e}");
+                return false;
+            }
+        };
+        self.touch_item_usage(&item);
+        self.write_item_to_clipboard_internal(&item, false);
+        true
+    }
+
+    /// 清理后粘贴：对条目的纯文本表示做一次变换，写入剪贴板再模拟粘贴。
+    ///
+    /// 历史条目本身不被改写（见 `core::text_transform` 的模块说明）。选中的
+    /// 变换会被记住，Ctrl+Shift+Enter 下次直接复用它。
+    pub fn paste_item_transformed(
+        &mut self,
+        id: i64,
+        transform: crate::core::text_transform::TextTransform,
+    ) {
+        use crate::platform::paste::{paste_after_delay, restore_paste_target};
+
+        let item = match self.db.get_by_id(id) {
+            Ok(Some(item)) => item,
+            Ok(None) => {
+                log::warn!("paste_item_transformed: item {id} not found");
+                return;
+            }
+            Err(e) => {
+                log::error!("paste_item_transformed: db error for {id}: {e}");
+                return;
+            }
+        };
+
+        let source = crate::services::clipboard_ops::plain_text_for_item(&item);
+        let Some(text) = transform.apply(&source) else {
+            self.show_warning_toast(I18nKey::ToastCleanPasteEmpty.text());
+            return;
+        };
+
+        self.touch_item_usage(&item);
+        if !self.write_text_to_clipboard_internal(&text) {
+            log::warn!("paste_item_transformed: failed to write clipboard for item {id}");
+            return;
+        }
+        crate::services::clipboard_ops::verify_clipboard_content(&text, 200);
+
+        let transform_id = transform.id();
+        if self.settings.last_clean_paste != transform_id {
+            self.settings.last_clean_paste = transform_id.to_string();
+            self.settings.save();
+        }
+
+        restore_paste_target();
+        let shortcuts = std::sync::Arc::new(self.settings.paste_shortcuts.clone());
+        paste_after_delay(shortcuts);
+    }
+
     /// Convert a color item from HEX to RGB and paste.
     pub fn paste_as_rgb(&mut self, id: i64) {
         use crate::core::color::detect_color;
@@ -2955,10 +3143,15 @@ impl AppState {
         self.touch_items_usage(&items);
 
         let n = items.len();
+        // Same separator as the merged entry, so "merge" and "paste one by one"
+        // produce the same text on the target.
+        let separator = crate::core::merge_text::separator(self.settings.merge_separator_mode());
         for (i, item) in items.iter().enumerate() {
-            // --- Newline separator between items (not before first) ---
+            // --- Separator between items (not before first) ---
             if i > 0 {
-                crate::services::clipboard_ops::write_text_to_clipboard("\n");
+                if !separator.is_empty() {
+                    crate::services::clipboard_ops::write_text_to_clipboard(separator);
+                }
                 std::thread::sleep(std::time::Duration::from_millis(20));
                 restore_paste_target();
                 let shortcuts = std::sync::Arc::new(self.settings.paste_shortcuts.clone());
@@ -3039,6 +3232,7 @@ impl AppState {
         }
 
         let now = chrono::Utc::now();
+        let separator_mode = self.settings.merge_separator_mode();
 
         // ── Check whether all items are rich text with HTML ──
         let all_rich = items.iter().all(|item| {
@@ -3057,10 +3251,10 @@ impl AppState {
                     extract_html_body(html)
                 })
                 .collect();
-            let merged_body = bodies.concat();
+            let merged_body = bodies.join(crate::core::merge_text::html_separator(separator_mode));
             let merged_html =
                 format!("<!DOCTYPE html>\n<html>\n<head><meta charset=\"utf-8\"></head>\n<body>\n{merged_body}\n</body>\n</html>");
-            let merged_plain = item_texts_for_merge(&items);
+            let merged_plain = item_texts_for_merge(&items, separator_mode);
 
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             std::hash::Hash::hash(&"merge", &mut hasher);
@@ -3076,8 +3270,8 @@ impl AppState {
 
             (ContentType::RichText, merged_plain, rd.to_json(), hash)
         } else {
-            // ── Plain-text path: concatenate full_text ──
-            let merged = item_texts_for_merge(&items);
+            // ── Plain-text path: join full_text with the configured separator ──
+            let merged = item_texts_for_merge(&items, separator_mode);
 
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             std::hash::Hash::hash(&"merge", &mut hasher);
@@ -3112,6 +3306,7 @@ impl AppState {
             custom_hotkey: String::new(),
             custom_hotkey_format: String::new(),
             existence_observed_at: String::new(),
+            pinned: false,
         };
 
         // Write to DB.
@@ -3446,6 +3641,61 @@ impl AppState {
         self.sync_dirty.store(true, Ordering::SeqCst);
     }
 
+    /// Toggle pin for a single item.
+    ///
+    /// Pinning is a local view preference (`ClipboardItem::pinned`), so it does
+    /// not bump `updated_at`, write sync tombstones, or set the dirty flag. The
+    /// list reloads because the row changes position.
+    pub fn toggle_pinned(&mut self, id: i64) {
+        let item = match self.db.get_by_id(id) {
+            Ok(Some(item)) => item,
+            Ok(None) => {
+                log::warn!("toggle_pinned({id}): item not found");
+                return;
+            }
+            Err(e) => {
+                log::error!("toggle_pinned({id}): {e}");
+                return;
+            }
+        };
+        let next = !item.pinned;
+        if let Err(e) = self.db.set_pinned(id, next) {
+            log::error!("toggle_pinned({id}): {e}");
+            return;
+        }
+        if let Some(item) = self.items.iter_mut().find(|it| it.id == id) {
+            item.pinned = next;
+        }
+        self.reload_items();
+    }
+
+    /// Batch pin/unpin: pins every selected item unless all of them are already
+    /// pinned, in which case it unpins the selection.
+    pub fn batch_toggle_pinned(&mut self) {
+        let ids: Vec<i64> = self.selected_ids.clone();
+        if ids.is_empty() {
+            return;
+        }
+        let all_pinned = ids.iter().all(|id| {
+            self.items
+                .iter()
+                .find(|it| it.id == *id)
+                .is_some_and(|it| it.pinned)
+        });
+        let target = !all_pinned;
+
+        if let Err(e) = self.db.set_pinned_many(&ids, target) {
+            log::error!("batch set_pinned_many: {e}");
+            return;
+        }
+        for id in &ids {
+            if let Some(item) = self.items.iter_mut().find(|it| it.id == *id) {
+                item.pinned = target;
+            }
+        }
+        self.reload_items();
+    }
+
     /// Batch delete all selected items.
     /// Records deletion tombstones only for items in sync scope.
     pub fn batch_delete(&mut self) {
@@ -3706,9 +3956,9 @@ fn extract_html_body(html: &str) -> String {
     html.trim().to_string()
 }
 
-/// Concatenate the `full_text` of all items (no separator).
-fn item_texts_for_merge(items: &[&ClipboardItem]) -> String {
-    items.iter().map(|item| item.full_text.as_str()).collect()
+/// Join the `full_text` of all items with the configured merge separator.
+fn item_texts_for_merge(items: &[&ClipboardItem], mode: &str) -> String {
+    crate::core::merge_text::join_texts(items.iter().map(|item| item.full_text.as_str()), mode)
 }
 
 // --- ── Transfer station methods ── ---
@@ -3990,6 +4240,7 @@ impl AppState {
                         custom_hotkey: String::new(),
                         custom_hotkey_format: String::new(),
                         existence_observed_at: String::new(),
+                        pinned: false,
                     }
                 })
                 .collect()
@@ -4053,6 +4304,7 @@ mod tests {
             custom_hotkey: String::new(),
             custom_hotkey_format: String::new(),
             existence_observed_at: String::new(),
+            pinned: false,
         }
     }
 
@@ -4252,6 +4504,10 @@ mod tests {
             source_app_names: Vec::new(),
             source_app_icons: Default::default(),
             items: Vec::new(),
+            total_item_count: 0,
+            load_error: None,
+            loaded_limit: LIST_PAGE_STEP,
+            list_exhausted: false,
             pending_images: Vec::new(),
             tags: Vec::new(),
             filters: ClipboardFilters::default(),
@@ -6333,6 +6589,49 @@ mod tests {
         assert!(state.quick_items().is_empty());
     }
 
+    /// 增量分页：首屏只取一页，翻页直到结果集见底；见底后不再扩容。
+    #[test]
+    fn loaded_page_grows_until_the_result_set_is_exhausted() {
+        let (mut state, _dirty) = test_state();
+        // 上限 2×max_items，足够容纳下面 1200 条。
+        state.settings.max_items = 10_000;
+        for index in 0..1200i64 {
+            insert_item_at_age(&mut state, index, false, "page", index);
+        }
+        state.reload_items();
+        assert_eq!(state.items.len(), LIST_PAGE_STEP, "first page only");
+        assert!(!state.list_exhausted);
+
+        assert!(state.grow_loaded_page());
+        assert_eq!(state.items.len(), LIST_PAGE_STEP * 2);
+
+        assert!(state.grow_loaded_page());
+        assert_eq!(state.items.len(), 1200, "the rest of the rows");
+        assert!(state.list_exhausted);
+
+        assert!(!state.grow_loaded_page(), "nothing left to grow into");
+        assert_eq!(state.items.len(), 1200);
+    }
+
+    /// 隐藏窗口释放内存时把页宽重置回首屏大小。
+    #[test]
+    fn clear_items_resets_the_loaded_page_width() {
+        let (mut state, _dirty) = test_state();
+        state.settings.max_items = 10_000;
+        for index in 0..700i64 {
+            insert_item_at_age(&mut state, index, false, "page", index);
+        }
+        state.reload_items();
+        assert!(state.grow_loaded_page());
+        assert_eq!(state.items.len(), 700);
+
+        state.clear_items();
+        assert!(state.items.is_empty());
+        state.reload_items();
+        assert_eq!(state.items.len(), 500, "back to the first page");
+        assert!(!state.list_exhausted);
+    }
+
     /// 关闭同步后两者独立：主窗口切换标签不影响快速窗口，反之亦然。
     #[test]
     fn quick_window_filters_stay_separate_when_sync_is_off() {
@@ -7303,15 +7602,42 @@ mod tests {
 
         assert_ne!(merged_id, existing_id);
         let merged = state.db.get_by_id(merged_id).unwrap().unwrap();
-        assert_eq!(merged.full_text, "ab");
+        // Default separator is a newline (see `core::merge_text`).
+        assert_eq!(merged.full_text, "a\nb");
         assert_eq!(
             state
                 .items
                 .iter()
-                .filter(|item| item.full_text == "ab")
+                .filter(|item| item.full_text == "a\nb")
                 .count(),
-            2
+            1
         );
+    }
+
+    #[test]
+    fn merge_uses_the_configured_separator() {
+        let (mut state, _dirty) = test_state();
+        let first = make_item(1, ContentType::PlainText, false, "a");
+        let second = make_item(2, ContentType::PlainText, false, "b");
+        let first_hash = first.content_hash;
+        let second_hash = second.content_hash;
+        state.db.upsert(&first).unwrap();
+        state.db.upsert(&second).unwrap();
+        let first_id = state.db.get_by_hash(first_hash).unwrap().unwrap().id;
+        let second_id = state.db.get_by_hash(second_hash).unwrap().unwrap().id;
+        state.reload_items();
+        state.selected_ids = vec![first_id, second_id];
+
+        state.settings.merge_separator = "comma".to_string();
+        let merged_id = state.merge_selected_items().unwrap();
+        let merged = state.db.get_by_id(merged_id).unwrap().unwrap();
+        assert_eq!(merged.full_text, "a, b");
+
+        state.settings.merge_separator = "none".to_string();
+        state.selected_ids = vec![first_id, second_id];
+        let merged_id = state.merge_selected_items().unwrap();
+        let merged = state.db.get_by_id(merged_id).unwrap().unwrap();
+        assert_eq!(merged.full_text, "ab");
     }
 
     // ── update_note sync_dirty ─────────────────────────────────────

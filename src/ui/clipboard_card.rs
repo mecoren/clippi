@@ -47,10 +47,14 @@ use super::hover_toolbar::{
 use super::rich_preview::{self, StyledHtmlSpan};
 use super::search_highlight;
 
-type CardClickHandler = Rc<dyn Fn(usize, Modifiers, &mut Window, &mut App)>;
+type CardClickHandler = Rc<dyn Fn(usize, Modifiers, Point<Pixels>, &mut Window, &mut App)>;
+/// 按住左键移动：判断是否已成拖出（参数是卡片下标与当前指针位置）。
+type CardDragHandler = Rc<dyn Fn(usize, Point<Pixels>, &mut Window, &mut App)>;
 type CardDoubleClickHandler = Rc<dyn Fn(usize, Modifiers, &mut Window, &mut App)>;
 type CardActionHandler = Rc<dyn Fn(&str, &mut Window, &mut App)>;
-type CardMoreHandler = Rc<dyn Fn(Point<Pixels>, &mut Window, &mut App)>;
+type CardMoreHandler = Rc<dyn Fn(&'static str, Point<Pixels>, &mut Window, &mut App)>;
+/// 中键动作：参数是卡片在列表里的下标。
+type CardMiddleClickHandler = Rc<dyn Fn(usize, &mut Window, &mut App)>;
 type CardWindowHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 type CardFormatHandler = Rc<dyn Fn(HotkeyPasteFormat, &mut Window, &mut App)>;
 
@@ -1132,6 +1136,89 @@ fn rtf_fallback_preview(rich: &RichData, item: &ClipboardItem) -> RichPreview {
     RichPreview::Plain(item.full_text.clone())
 }
 
+/// 纯文本内容预览使用的文本：关闭内容样式还原后卡片上显示的字符串。
+///
+/// HTML 取可见文本（原始标记对用户不可读）；链接与隐私类型沿用设置里的
+/// 遮罩规则，关掉样式不代表把敏感内容明文铺到卡片上；其余类型直接使用
+/// 条目原文。
+fn plain_preview_text(item: &ClipboardItem, privacy_types: &[String]) -> String {
+    match item.display_kind() {
+        DisplayKind::Html => {
+            let rich = RichData::from_json(&item.rich_data);
+            let raw_html = rich.html.unwrap_or_else(|| item.full_text.clone());
+            let normalized = rich_preview::normalize_clipboard_html_for_render(&raw_html);
+            let visible_text = html_text::visible_text(&normalized);
+            if visible_text.is_empty() {
+                item.full_text.clone()
+            } else {
+                visible_text
+            }
+        }
+        DisplayKind::Link => crate::core::secret::sensitive_preview_to_text_with_types(
+            &item.full_text,
+            "link",
+            privacy_types,
+        ),
+        DisplayKind::Email | DisplayKind::Phone | DisplayKind::Secret => {
+            crate::core::secret::sensitive_preview_to_text_with_types(
+                &item.full_text,
+                &item.meta_type,
+                privacy_types,
+            )
+        }
+        _ => item.full_text.clone(),
+    }
+}
+
+#[cfg(test)]
+mod plain_preview_tests {
+    use super::plain_preview_text;
+    use crate::core::settings::default_privacy_types;
+    use crate::core::types::{ClipboardItem, ContentType, RichData};
+
+    fn make_item(text: &str, content_type: ContentType, meta_type: &str) -> ClipboardItem {
+        let mut item = ClipboardItem::new_text(1, text, content_type, None, None);
+        item.meta_type = meta_type.to_string();
+        item
+    }
+
+    #[test]
+    fn html_items_show_visible_text_without_markup() {
+        let rich = RichData {
+            html: Some("<p>Hello <b>world</b></p>".to_string()),
+            ..RichData::default()
+        };
+        let item =
+            ClipboardItem::new_text(1, "Hello world", ContentType::RichText, None, Some(&rich));
+        let text = plain_preview_text(&item, &default_privacy_types());
+        assert!(text.contains("Hello world"), "{text}");
+        assert!(!text.contains('<'), "{text}");
+    }
+
+    #[test]
+    fn plain_text_items_keep_the_raw_text() {
+        let raw = "  line one\n\tline two  ";
+        let item = make_item(raw, ContentType::PlainText, "");
+        assert_eq!(plain_preview_text(&item, &default_privacy_types()), raw);
+    }
+
+    #[test]
+    fn markdown_items_keep_markup_verbatim() {
+        let raw = "# Title\n**bold** and [link](https://example.com)";
+        let item = make_item(raw, ContentType::PlainText, "markdown");
+        assert_eq!(plain_preview_text(&item, &default_privacy_types()), raw);
+    }
+
+    #[test]
+    fn sensitive_items_stay_masked() {
+        let raw = "password: super-secret-value";
+        let item = make_item(raw, ContentType::PlainText, "secret");
+        let text = plain_preview_text(&item, &default_privacy_types());
+        assert_ne!(text, raw);
+        assert!(!text.contains("super-secret-value"), "{text}");
+    }
+}
+
 fn card_content_matches_search(item: &ClipboardItem, terms: &[String]) -> bool {
     if terms.is_empty() {
         return false;
@@ -1263,6 +1350,10 @@ pub struct ClipboardCard {
     /// 三点按钮：交给列表在点击位置弹出备注/标签菜单。
     on_toolbar_more: Option<CardMoreHandler>,
     on_double_click: Option<CardDoubleClickHandler>,
+    /// 中键：交给列表执行配置的动作（无动作时不会挂这个回调）。
+    on_middle_click: Option<CardMiddleClickHandler>,
+    /// 按住左键移动：把指针位置交给列表判断是否开始拖出。
+    on_drag_out: Option<CardDragHandler>,
     /// Whether this card is in note-editing mode (shows inline editor).
     editing: bool,
     /// Shared InputState from ClipboardListView (only Some when editing is true).
@@ -1286,6 +1377,9 @@ pub struct ClipboardCard {
     /// When true and a link item has a cached page title, show the title
     /// instead of the URL path in the card content area.
     show_page_title: bool,
+    /// 纯文本内容预览：内容区不做富文本 / 链接 / 颜色等样式还原，
+    /// 直接显示可读文本（图片、文件、颜色仍保留各自的类型预览）。
+    plain_content_preview: bool,
     /// Whether the source file is queued for or currently being uploaded.
     source_is_uploading: bool,
     image_cache: Option<Entity<RetainAllImageCache>>,
@@ -1308,6 +1402,8 @@ impl ClipboardCard {
             on_toolbar_action: None,
             on_toolbar_more: None,
             on_double_click: None,
+            on_middle_click: None,
+            on_drag_out: None,
             editing: false,
             note_input: None,
             on_commit_note: None,
@@ -1321,6 +1417,7 @@ impl ClipboardCard {
             show_original_on_hover: false,
             privacy_types: crate::core::settings::default_privacy_types(),
             show_page_title: false,
+            plain_content_preview: false,
             source_is_uploading: false,
             image_cache: None,
             search_terms: Vec::new(),
@@ -1374,12 +1471,24 @@ impl ClipboardCard {
         self
     }
 
-    /// 三点按钮被点击：参数是点击位置（窗口坐标）。
+    /// 弹出菜单按钮被点击：参数是按钮名（`more` / `clean`）与点击位置。
     pub fn on_toolbar_more(
         mut self,
-        handler: impl Fn(Point<Pixels>, &mut Window, &mut App) + 'static,
+        handler: impl Fn(&'static str, Point<Pixels>, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_toolbar_more = Some(Rc::new(handler));
+        self
+    }
+
+    /// 中键动作（复制或粘贴）。只在「中键」配置了动作时才由列表挂上。
+    pub fn on_middle_click(mut self, handler: CardMiddleClickHandler) -> Self {
+        self.on_middle_click = Some(handler);
+        self
+    }
+
+    /// 按住左键移动：由列表决定何时真正开始拖出。
+    pub fn on_drag_out(mut self, handler: CardDragHandler) -> Self {
+        self.on_drag_out = Some(handler);
         self
     }
 
@@ -1459,6 +1568,11 @@ impl ClipboardCard {
         self
     }
 
+    pub fn plain_content_preview(mut self, value: bool) -> Self {
+        self.plain_content_preview = value;
+        self
+    }
+
     pub fn source_is_uploading(mut self, value: bool) -> Self {
         self.source_is_uploading = value;
         self
@@ -1491,6 +1605,8 @@ impl RenderOnce for ClipboardCard {
             on_toolbar_action,
             on_toolbar_more,
             on_double_click,
+            on_middle_click,
+            on_drag_out,
             editing,
             note_input,
             on_commit_note,
@@ -1499,6 +1615,7 @@ impl RenderOnce for ClipboardCard {
             show_original_on_hover,
             privacy_types,
             show_page_title,
+            plain_content_preview,
             source_is_uploading,
             image_cache,
             search_terms,
@@ -1536,6 +1653,9 @@ impl RenderOnce for ClipboardCard {
         let highlight_text: Rgba = p.on_highlight().into();
         let time_str = format_card_time(&item.updated_at);
         let is_fav = item.is_favorite;
+        // 置顶是列表里最容易被忽略的状态：卡片上常驻「图钉 + 左侧色条」，
+        // 不能只靠悬停工具条里那颗会变色的按钮表达。
+        let item_pinned = item.pinned;
         let content_type = item.content_type;
         let note = item.note.clone();
         let full_text = &item.full_text; // borrowed — only cloned in the branches that own it
@@ -1686,10 +1806,31 @@ impl RenderOnce for ClipboardCard {
                         }
                     } else {
                         // --- Single click → select ---
-                        handler(index, ev.modifiers, window, cx);
+                        handler(index, ev.modifiers, ev.position, window, cx);
                     }
                 },
             )
+        } else {
+            base
+        };
+
+        // --- 中键动作（不影响选中，也不参与左键手势判定） ---
+        let base = if let Some(middle_handler) = on_middle_click {
+            base.on_mouse_down(MouseButton::Middle, move |_ev, window, cx| {
+                cx.stop_propagation();
+                middle_handler(index, window, cx);
+            })
+        } else {
+            base
+        };
+
+        // --- 按住左键拖出：位置与判定都交给列表，卡片只负责转发 ---
+        let base = if let Some(drag_handler) = on_drag_out {
+            base.on_mouse_move(move |ev, window, cx| {
+                if ev.pressed_button == Some(MouseButton::Left) {
+                    drag_handler(index, ev.position, window, cx);
+                }
+            })
         } else {
             base
         };
@@ -1922,9 +2063,39 @@ impl RenderOnce for ClipboardCard {
             // In auto mode, cards with notes are clamped to 68px by
             // estimate_card_height. The base div clips oversized content.
             let content_kind = item.display_kind();
+            // 纯文本内容预览：内容区不做富文本 / 链接 / 颜色等样式还原，
+            // 只显示可读文本。图片、文件、颜色属于类型预览而非文本样式，
+            // 保持各自的原样渲染。
+            let plain_preview_active = plain_content_preview
+                && !matches!(
+                    content_kind,
+                    DisplayKind::Image | DisplayKind::File | DisplayKind::Color
+                );
             // Link and Path rendering (now sub-types of PlainText via meta_type)
             // must be checked before the catch-all PlainText arm below.
-            if let Some((name, path)) = remote_path_preview.clone() {
+            if plain_preview_active {
+                let text = plain_preview_text(&item, &privacy_types);
+                let content_box = div()
+                    .flex_1()
+                    .w_full()
+                    .text_size(sc(12.))
+                    .text_color(text_1)
+                    .line_height(sc(18.))
+                    .overflow_hidden();
+                if search_terms.is_empty() {
+                    content_box.child(text.chars().take(300).collect::<String>())
+                } else {
+                    content_box.child(search_highlight::render_highlighted_block(
+                        text,
+                        &search_terms,
+                        text_1,
+                        highlight_bg,
+                        highlight_text,
+                        12.0,
+                        18.0,
+                    ))
+                }
+            } else if let Some((name, path)) = remote_path_preview.clone() {
                 render_path_like_preview(
                     name,
                     path,
@@ -2947,15 +3118,28 @@ impl RenderOnce for ClipboardCard {
             .child(
                 div()
                     .flex_shrink_0()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(sc(4.))
                     // 时间让出滑出的操作条：位移与滑出进度同一个值。
                     .when(slide > 0.0, |el| el.mr(sc(slide)))
-                    .text_size(sc(10.))
-                    .text_color(time_pill_color)
-                    .child(time_str),
+                    // 置顶标记：常驻，不随悬停出现或消失；用主题色，避免再引入
+                    // 一个只在这处出现的紫色。
+                    .when(item_pinned, |el| {
+                        el.child(widgets::icon("PinIcon", sc(10.), Hsla::from(accent)))
+                    })
+                    .child(
+                        div()
+                            .text_size(sc(10.))
+                            .text_color(time_pill_color)
+                            .child(time_str),
+                    ),
             );
         if let Some((toolbar_props, buttons, exposed_width)) = toolbar {
             // 菜单锚定在「更多」按钮左下方：按钮这一帧的几何由工具条自己回报。
             let more_index = buttons.iter().position(|button| button.action() == "more");
+            let clean_index = buttons.iter().position(|button| button.action() == "clean");
             let anchor_tracker = toolbar_bounds.clone();
             header = header.child(
                 div()
@@ -2969,12 +3153,20 @@ impl RenderOnce for ClipboardCard {
                         div().absolute().right(sc(0.)).top(sc(0.)).child(
                             HoverToolbar::new(toolbar_props)
                                 .buttons(buttons)
+                                // 本卡的弹出菜单开着时（`toolbar_pinned` 正是这个
+                                // 状态）不要再显示按钮 tooltip：它从按钮下方弹出，
+                                // 会正好压住菜单第一项。
+                                .suppress_tooltip(toolbar_pinned)
                                 .when_some(toolbar_bounds, |toolbar, tracker| {
                                     toolbar.track_bounds(item.id, tracker)
                                 })
-                                .on_more(move |position, window, cx| {
+                                .on_more(move |kind, position, window, cx| {
+                                    let index = match kind {
+                                        "clean" => clean_index,
+                                        _ => more_index,
+                                    };
                                     let anchor = match (
-                                        more_index,
+                                        index,
                                         anchor_tracker.as_ref().and_then(|tracker| tracker.get()),
                                     ) {
                                         (Some(index), Some((_, bounds))) => {
@@ -2983,7 +3175,7 @@ impl RenderOnce for ClipboardCard {
                                         _ => position,
                                     };
                                     if let Some(ref handler) = on_toolbar_more {
-                                        handler(anchor, window, cx);
+                                        handler(kind, anchor, window, cx);
                                     }
                                 })
                                 .on_action(move |action, window, cx| {
@@ -3005,30 +3197,26 @@ impl RenderOnce for ClipboardCard {
             card
         };
 
-        // --- Pinned indicator bar (left edge, blue, scales with card height) ---
-        // --- Fav indicator bar (left edge, 3px, fav-color, scales with card height) ---
-        let card = if is_pinned {
-            card.child(
-                div()
-                    .absolute()
-                    .left(sc(0.))
-                    .top(sc(4.))
-                    .bottom(sc(4.))
-                    .w(sc(3.))
-                    .rounded(Radius::Pill.scaled())
-                    .bg(p.pin),
-            )
+        // --- 左边缘状态条（3px，随卡片高度缩放） ---
+        // 置顶优先于收藏：两者同时存在时，左条只表达「在最前面」这个更强的事实。
+        // 剪贴板条目的置顶用主题色（与卡片选中、图钉按钮同一色）；中转站的
+        // 「永久保留」仍是它自己的紫色，属于另一套语义。
+        let edge_bar = |color: Rgba| {
+            div()
+                .absolute()
+                .left(sc(0.))
+                .top(sc(4.))
+                .bottom(sc(4.))
+                .w(sc(3.))
+                .rounded(Radius::Pill.scaled())
+                .bg(color)
+        };
+        let card = if item_pinned {
+            card.child(edge_bar(accent))
+        } else if is_pinned {
+            card.child(edge_bar(p.pin.into()))
         } else if is_fav {
-            card.child(
-                div()
-                    .absolute()
-                    .left(sc(0.))
-                    .top(sc(4.))
-                    .bottom(sc(4.))
-                    .w(sc(3.))
-                    .rounded(Radius::Pill.scaled())
-                    .bg(fav_color),
-            )
+            card.child(edge_bar(fav_color))
         } else {
             card
         };

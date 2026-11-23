@@ -18,7 +18,10 @@ use gpui::*;
 
 use super::widgets;
 
+use super::hover_toolbar::{single_open_action, HoverToolbarProps};
+
 use crate::core::i18n_keys::I18nKey;
+use crate::core::types::{ClipboardItem, ContentType};
 
 type MenuActionHandler = Rc<dyn Fn(&str, &mut Window, &mut App)>;
 type MenuDismissHandler = Rc<dyn Fn(&mut Window, &mut App)>;
@@ -33,6 +36,8 @@ pub struct MenuItemContext {
     /// true = current format is HEX → show "Paste as RGB"
     pub is_hex: bool,
     pub is_favorite: bool,
+    /// 置顶状态（剪贴板条目的本地视图偏好）。
+    pub is_pinned: bool,
     pub is_link: bool,
     pub is_path: bool,
     /// Text entry (plain or rich) that has no dedicated open action of its own —
@@ -67,6 +72,7 @@ impl MenuItemContext {
             is_rich_text,
             is_hex,
             is_favorite: item.is_favorite,
+            is_pinned: item.pinned,
             is_link: item.meta_type == "link",
             is_path: item.meta_type == "path"
                 && crate::core::types::path_is_native(&item.full_text)
@@ -407,6 +413,23 @@ impl ContextMenu {
             shortcut: None,
         });
 
+        // --- Pin (local view preference; transfer entries have their own menu) ---
+        if !ctx.is_transfer {
+            items.push(RawMenuItem {
+                label: if ctx.is_pinned {
+                    I18nKey::CtxUnpin.text()
+                } else {
+                    I18nKey::CtxPin.text()
+                }
+                .into(),
+                action: "toggle_pin".into(),
+                icon: "PinIcon".into(),
+                danger: false,
+                fav: false,
+                shortcut: None,
+            });
+        }
+
         // --- Favorite ---
         let (fav_label, fav_icon) = if ctx.is_favorite {
             (I18nKey::CtxUnfav.text(), "StarIcon")
@@ -478,6 +501,14 @@ impl ContextMenu {
                 label: SEPARATOR_LABEL.into(),
                 action: String::new(),
                 icon: String::new(),
+                danger: false,
+                fav: false,
+                shortcut: None,
+            },
+            RawMenuItem {
+                label: I18nKey::CtxBatchPin.text().into(),
+                action: "batch_pin".into(),
+                icon: "PinIcon".into(),
                 danger: false,
                 fav: false,
                 shortcut: None,
@@ -571,28 +602,100 @@ impl ContextMenu {
         Self::new().items(items)
     }
 
-    /// 「更多操作」菜单：卡片头部的三点按钮弹出，只放低频动作
-    /// （备注、标签），常用动作仍留在悬浮工具条上。
-    pub fn for_card_more() -> Self {
-        // 只有两条短文案，按最窄一档显示，避免在卡片右侧留一大片空白。
-        Self::new().width(MENU_WIDTH_COMPACT).items(vec![
-            RawMenuItem {
-                label: I18nKey::EditNote.text().into(),
-                action: "edit_note".into(),
-                icon: "NoteIcon".into(),
+    /// 「更多操作」菜单：卡片头部的三点按钮弹出，放低频动作
+    /// （预览、打开、备注、标签），常用动作仍留在悬浮工具条上。
+    ///
+    /// `item` 决定这一条能做什么：「打开」按条目类型互斥（链接进浏览器、
+    /// 路径与文件进文件管理器、文本进系统编辑器，规则见
+    /// `hover_toolbar::single_open_action`），图片则换成「粘贴为位图」
+    /// 与「查看图片」。
+    pub fn for_card_more(item: Option<&ClipboardItem>) -> Self {
+        // 只有几条短文案，按最窄一档显示，避免在卡片右侧留一大片空白。
+        let mut items = Vec::new();
+        if let Some(item) = item {
+            items.push(RawMenuItem {
+                label: I18nKey::CtxPreview.text().into(),
+                action: "preview".into(),
+                icon: "PreviewIcon".into(),
                 danger: false,
                 fav: false,
-                shortcut: sc("F2"),
-            },
-            RawMenuItem {
-                label: I18nKey::CtxTag.text().into(),
-                action: "show_tag_picker".into(),
-                icon: "TagIcon".into(),
+                shortcut: ctrl_shortcut("P"),
+            });
+            if let Some(action) = single_open_action(&HoverToolbarProps::from_item(item, 1, false))
+            {
+                let (label, icon) = match action {
+                    "open_location" if item.meta_type == "link" => {
+                        (I18nKey::CtxOpenLink, "LinkIcon")
+                    }
+                    "open_location" => (I18nKey::CtxOpenFolder, "OpenIcon"),
+                    _ => (I18nKey::CtxOpenText, "OpenIcon"),
+                };
+                items.push(RawMenuItem {
+                    label: label.text().into(),
+                    action: action.into(),
+                    icon: icon.into(),
+                    danger: false,
+                    fav: false,
+                    shortcut: None,
+                });
+            }
+            if item.content_type == ContentType::Image {
+                // 图片专属的低频动作：工具条上不再各占一个按钮。
+                items.push(RawMenuItem {
+                    label: I18nKey::CtxPasteImageBitmap.text().into(),
+                    action: "paste_image_bitmap".into(),
+                    icon: "ImageIcon".into(),
+                    danger: false,
+                    fav: false,
+                    shortcut: None,
+                });
+                items.push(RawMenuItem {
+                    label: I18nKey::CtxOpenImage.text().into(),
+                    action: "open_image".into(),
+                    icon: "OpenIcon".into(),
+                    danger: false,
+                    fav: false,
+                    shortcut: None,
+                });
+            }
+        }
+        items.push(RawMenuItem {
+            label: I18nKey::EditNote.text().into(),
+            action: "edit_note".into(),
+            icon: "NoteIcon".into(),
+            danger: false,
+            fav: false,
+            shortcut: sc("F2"),
+        });
+        items.push(RawMenuItem {
+            label: I18nKey::CtxTag.text().into(),
+            action: "show_tag_picker".into(),
+            icon: "TagIcon".into(),
+            danger: false,
+            fav: false,
+            shortcut: ctrl_shortcut("T"),
+        });
+        Self::new().width(MENU_WIDTH_COMPACT).items(items)
+    }
+
+    /// 「清理后粘贴」菜单：卡片工具条的清理按钮弹出，一条一个变换。
+    ///
+    /// 动作名带 `clean_paste:` 前缀，分发处按前缀取变换 id，避免为五种
+    /// 变换各写一个 `match` 分支。
+    pub fn for_clean_paste() -> Self {
+        use crate::core::i18n_keys::text_transform_label;
+        let items = crate::core::text_transform::TextTransform::ALL
+            .into_iter()
+            .map(|transform| RawMenuItem {
+                label: text_transform_label(transform).into(),
+                action: format!("clean_paste:{}", transform.id()),
+                icon: "TextIcon".into(),
                 danger: false,
                 fav: false,
-                shortcut: ctrl_shortcut("T"),
-            },
-        ])
+                shortcut: None,
+            })
+            .collect();
+        Self::new().items(items)
     }
 
     fn items(mut self, items: Vec<RawMenuItem>) -> Self {

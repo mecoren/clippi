@@ -8,8 +8,10 @@ use crate::ui::font::sc;
 pub type ToolbarBounds = Rc<Cell<Option<(i64, Bounds<Pixels>)>>>;
 
 type ToolbarActionHandler = Rc<dyn Fn(&str, &mut gpui::Window, &mut gpui::App)>;
-/// 「更多」按钮：把点击位置交给调用方，由它弹出备注/标签菜单。
-pub type ToolbarMoreHandler = Rc<dyn Fn(Point<Pixels>, &mut gpui::Window, &mut gpui::App)>;
+/// 走弹出菜单的按钮（`more` = 备注/标签，`clean` = 清理后粘贴）：
+/// 把按钮名与点击位置交给调用方，由它决定弹哪张菜单。
+pub type ToolbarMoreHandler =
+    Rc<dyn Fn(&'static str, Point<Pixels>, &mut gpui::Window, &mut gpui::App)>;
 
 type ToolbarColorFn = Box<dyn Fn(bool) -> Rgba>;
 
@@ -68,6 +70,8 @@ pub struct HoverToolbarProps {
     pub has_qr_code: bool,
     pub has_links: bool,
     pub is_favorite: bool,
+    /// 置顶状态（本地偏好；中转站条目的置顶走 `transfer_pinned`）。
+    pub is_pinned: bool,
     pub selected_count: usize,
     pub is_selected: bool,
     pub can_merge_selection: bool,
@@ -119,6 +123,7 @@ impl HoverToolbarProps {
             },
             has_links: item_has_extractable_links(item),
             is_favorite: item.is_favorite,
+            is_pinned: item.pinned,
             selected_count,
             is_selected,
             can_merge_selection: false,
@@ -135,8 +140,9 @@ impl HoverToolbarProps {
 ///
 /// Links open in the browser, paths and files reveal in the file manager, and
 /// text (including markdown/HTML/color entries) opens in the system's default
-/// text editor.
-fn single_open_action(props: &HoverToolbarProps) -> Option<&'static str> {
+/// text editor. The card's three-dot menu renders the button
+/// (`ContextMenu::for_card_more`), so the rule lives next to the props it reads.
+pub(crate) fn single_open_action(props: &HoverToolbarProps) -> Option<&'static str> {
     if props.meta_type == "link" {
         return Some("open_location");
     }
@@ -148,7 +154,8 @@ fn single_open_action(props: &HoverToolbarProps) -> Option<&'static str> {
     }
     match props.content_type {
         ContentType::File => Some("open_location"),
-        ContentType::Image => Some("open_image"),
+        // 图片的「查看图片」在三点菜单里，工具条不再放一个只有图片才有的按钮。
+        ContentType::Image => None,
         ContentType::PlainText | ContentType::RichText => {
             // Secrets are masked in the UI on purpose — never spill one into a
             // plain-text file on disk.
@@ -165,6 +172,10 @@ pub struct HoverToolbar {
     on_action: Option<ToolbarActionHandler>,
     on_more: Option<ToolbarMoreHandler>,
     bounds_tracker: Option<(i64, ToolbarBounds)>,
+    /// 本卡片的弹出菜单正开着：菜单从按钮下方展开，而按钮此刻仍被悬停，
+    /// 不下掉 tooltip 就会压住菜单第一项（实测「更多操作」挡住了「预览」）。
+    /// 关掉 tooltip 后 gpui 会在下一帧撤掉已显示的那一个。
+    suppress_tooltip: bool,
 }
 
 impl HoverToolbar {
@@ -175,7 +186,14 @@ impl HoverToolbar {
             on_action: None,
             on_more: None,
             bounds_tracker: None,
+            suppress_tooltip: false,
         }
+    }
+
+    /// 菜单打开期间不再显示按钮 tooltip，避免它盖住菜单内容。
+    pub fn suppress_tooltip(mut self, value: bool) -> Self {
+        self.suppress_tooltip = value;
+        self
     }
 
     pub fn buttons(mut self, buttons: Vec<ToolbarButton>) -> Self {
@@ -193,10 +211,10 @@ impl HoverToolbar {
         self
     }
 
-    /// 「更多」按钮的点击回调，参数是点击位置（窗口坐标）。
+    /// 弹出菜单按钮（`more` / `clean`）的点击回调，参数是按钮名与点击位置。
     pub fn on_more(
         mut self,
-        handler: impl Fn(Point<Pixels>, &mut Window, &mut App) + 'static,
+        handler: impl Fn(&'static str, Point<Pixels>, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_more = Some(Rc::new(handler));
         self
@@ -216,6 +234,7 @@ pub fn buttons_for(props: &HoverToolbarProps, p: &Palette) -> Vec<ToolbarButton>
     };
     let danger: Rgba = p.danger.into();
     let fav_color: Rgba = p.fav.into();
+    let pin_color: Rgba = p.pin.into();
 
     let is_single = props.selected_count <= 1;
     let is_batch = props.selected_count > 1 && props.is_selected;
@@ -244,7 +263,6 @@ pub fn buttons_for(props: &HoverToolbarProps, p: &Palette) -> Vec<ToolbarButton>
     }
     if is_single && props.is_transfer {
         let transfer_pinned = props.transfer_pinned;
-        let pin_color: Rgba = p.pin.into();
         if props.transfer_is_local {
             push(
                 "OpenIcon",
@@ -283,12 +301,20 @@ pub fn buttons_for(props: &HoverToolbarProps, p: &Palette) -> Vec<ToolbarButton>
             Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
         );
 
-        // --- Preview (single item) ---
-        push(
-            "PreviewIcon",
-            "preview",
-            Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
-        );
+        // 「预览」与「打开」是低频动作，收进三点菜单，见
+        // `ContextMenu::for_card_more`；工具条只留每天都点的按钮。
+
+        // --- Clean paste: 5 text transforms in a small popup menu ---
+        if matches!(
+            props.content_type,
+            ContentType::PlainText | ContentType::RichText
+        ) {
+            push(
+                "TrimIcon",
+                "clean",
+                Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
+            );
+        }
 
         // --- Paste Plain Text (only when item has actual rich formatting) ---
         if props.has_rich_content {
@@ -299,14 +325,8 @@ pub fn buttons_for(props: &HoverToolbarProps, p: &Palette) -> Vec<ToolbarButton>
             );
         }
 
-        // --- Paste as bitmap (image only) ---
-        if props.content_type == ContentType::Image {
-            push(
-                "ImageIcon",
-                "paste_image_bitmap",
-                Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
-            );
-        }
+        // 「粘贴为位图」与「查看图片」是图片专属的低频动作，收进三点菜单，
+        // 见 `ContextMenu::for_card_more`；工具条只留每天都点的按钮。
 
         // --- QR code (image with QR code) ---
         if props.content_type == ContentType::Image && props.has_qr_code {
@@ -326,14 +346,22 @@ pub fn buttons_for(props: &HoverToolbarProps, p: &Palette) -> Vec<ToolbarButton>
             );
         }
 
-        // --- Open (one button for the whole family) ---
-        if let Some(open_action) = single_open_action(props) {
-            push(
-                "OpenIcon",
-                open_action,
-                Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
-            );
-        }
+        // 「打开」（链接 / 路径 / 文本）同样收进三点菜单。
+
+        // --- Pin (local view preference, sits next to favorite) ---
+        // 置顶状态用主题色：与卡片左条、头部图钉同色，不再是独立的紫色。
+        let is_pinned = props.is_pinned;
+        push(
+            "PinIcon",
+            "toggle_pin",
+            Box::new(move |hovered: bool| {
+                if hovered || is_pinned {
+                    accent
+                } else {
+                    icon_color
+                }
+            }),
+        );
 
         // --- Favorite (icon changes based on state) ---
         let fav_icon = if props.is_favorite {
@@ -387,6 +415,20 @@ pub fn buttons_for(props: &HoverToolbarProps, p: &Palette) -> Vec<ToolbarButton>
             "batch_tag",
             Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
         );
+        // --- Batch pin ---
+        push(
+            "PinIcon",
+            "batch_pin",
+            Box::new(
+                move |hovered: bool| {
+                    if hovered {
+                        accent
+                    } else {
+                        icon_color
+                    }
+                },
+            ),
+        );
         // --- Batch favorite ---
         push(
             "StarIcon",
@@ -412,6 +454,7 @@ impl RenderOnce for HoverToolbar {
             on_action,
             on_more,
             bounds_tracker,
+            suppress_tooltip,
         } = self;
 
         let p = Palette::current(cx);
@@ -425,7 +468,6 @@ impl RenderOnce for HoverToolbar {
 
         let is_favorite = props.is_favorite;
         let selected_count = props.selected_count;
-        let meta_type = props.meta_type.clone();
 
         // Include the gaps in one hit area: the row underneath should not
         // receive clicks meant for a tab.
@@ -480,27 +522,24 @@ impl RenderOnce for HoverToolbar {
                 let on_more = on_more.clone();
                 let tooltip = match action {
                     "more" => I18nKey::CardMoreActions.text().to_string(),
+                    "clean" => I18nKey::CtxCleanPaste.text().to_string(),
                     "copy" => I18nKey::CtxCopy.text().to_string(),
-                    "preview" => I18nKey::CtxPreview.text().to_string(),
                     "extract_links" => I18nKey::ExtractLinks.text().to_string(),
                     "paste_plain" => I18nKey::CtxPastePlain.text().to_string(),
                     "paste_image_bitmap" => I18nKey::CtxPasteImageBitmap.text().to_string(),
-                    "open_image" => I18nKey::CtxOpenImage.text().to_string(),
-                    "open_text" => I18nKey::CtxOpenText.text().to_string(),
                     "qr_action" => I18nKey::CtxDetectQr.text().to_string(),
-                    "open_location" if meta_type == "link" => {
-                        I18nKey::CtxOpenLink.text().to_string()
-                    }
-                    "open_location" => I18nKey::CtxOpenFolder.text().to_string(),
                     "edit" => I18nKey::CtxEdit.text().to_string(),
                     "edit_note" => I18nKey::EditNote.text().to_string(),
                     "show_tag_picker" => I18nKey::CtxTag.text().to_string(),
                     "toggle_favorite" if is_favorite => I18nKey::CtxUnfav.text().to_string(),
                     "toggle_favorite" => I18nKey::CtxFav.text().to_string(),
+                    "toggle_pin" if props.is_pinned => I18nKey::CtxUnpin.text().to_string(),
+                    "toggle_pin" => I18nKey::CtxPin.text().to_string(),
                     "delete" => I18nKey::CtxDelete.text().to_string(),
                     "batch_paste" => I18nKey::CtxBatchPasteN.fmt(&[&selected_count.to_string()]),
                     "merge_selected" => I18nKey::CtxMergeSelected.text().to_string(),
                     "batch_tag" => I18nKey::CtxBatchTag.text().to_string(),
+                    "batch_pin" => I18nKey::CtxBatchPin.text().to_string(),
                     "batch_favorite" => I18nKey::CtxBatchFav.text().to_string(),
                     "batch_delete" => I18nKey::CtxBatchDelete.text().to_string(),
                     "open_transfer_location" => I18nKey::CtxOpenFolder.text().to_string(),
@@ -552,7 +591,12 @@ impl RenderOnce for HoverToolbar {
                             cx.notify();
                         });
                     })
-                    .tooltip(move |window, cx| widgets::tooltip(tooltip.clone(), window, cx))
+                    .when(!suppress_tooltip, |button| {
+                        let tooltip = tooltip.clone();
+                        button.tooltip(move |window, cx| {
+                            widgets::tooltip(tooltip.clone(), window, cx)
+                        })
+                    })
                     .child({
                         let icon = icon.clone();
                         let color = if is_delete {
@@ -566,12 +610,16 @@ impl RenderOnce for HoverToolbar {
                     })
                     .on_mouse_down(MouseButton::Left, {
                         let action = action.clone();
-                        let is_more = action_id == "more";
+                        let menu_kind = match action_id {
+                            "more" => Some("more"),
+                            "clean" => Some("clean"),
+                            _ => None,
+                        };
                         move |ev, _window, cx| {
                             cx.stop_propagation();
-                            if is_more {
+                            if let Some(kind) = menu_kind {
                                 if let Some(ref handler) = on_more {
-                                    handler(ev.position, _window, cx);
+                                    handler(kind, ev.position, _window, cx);
                                 }
                                 return;
                             }
@@ -633,8 +681,9 @@ mod open_action_tests {
         file.content_type = ContentType::File;
         assert_eq!(single_open_action(&props_for(&file)), Some("open_location"));
 
+        // 图片的「查看图片」收在三点菜单里，工具条不再有专属的打开按钮。
         let image = ClipboardItem::new_image(3, "", 0, 4, 4, None);
-        assert_eq!(single_open_action(&props_for(&image)), Some("open_image"));
+        assert_eq!(single_open_action(&props_for(&image)), None);
 
         let plain = text_item(4, "");
         assert_eq!(single_open_action(&props_for(&plain)), Some("open_text"));
