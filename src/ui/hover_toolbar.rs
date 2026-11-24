@@ -233,7 +233,6 @@ pub fn buttons_for(props: &HoverToolbarProps, p: &Palette) -> Vec<ToolbarButton>
         motion::mix(p.ink, p.ink_2, 0.5).into()
     };
     let danger: Rgba = p.danger.into();
-    let fav_color: Rgba = p.fav.into();
     let pin_color: Rgba = p.pin.into();
 
     let is_single = props.selected_count <= 1;
@@ -363,16 +362,20 @@ pub fn buttons_for(props: &HoverToolbarProps, p: &Palette) -> Vec<ToolbarButton>
             }),
         );
 
-        // --- Favorite (icon changes based on state) ---
-        let fav_icon = if props.is_favorite {
-            "StarIcon"
-        } else {
-            "StarFilledIcon"
-        };
+        // --- Favorite：未收藏保持空心常规色（与相邻按钮一致），收藏后常亮主题色 ---
+        let is_favorite = props.is_favorite;
         push(
-            fav_icon,
+            "StarIcon",
             "toggle_favorite",
-            Box::new(move |_hovered: bool| fav_color),
+            Box::new(
+                move |_hovered: bool| {
+                    if is_favorite {
+                        accent
+                    } else {
+                        icon_color
+                    }
+                },
+            ),
         );
 
         // --- More: 备注、标签等低频操作收进三点菜单 ---
@@ -429,11 +432,11 @@ pub fn buttons_for(props: &HoverToolbarProps, p: &Palette) -> Vec<ToolbarButton>
                 },
             ),
         );
-        // --- Batch favorite ---
+        // --- Batch favorite：与相邻批量按钮同色，不常亮 ---
         push(
             "StarIcon",
             "batch_favorite",
-            Box::new(move |_hovered: bool| fav_color),
+            Box::new(move |hovered: bool| if hovered { accent } else { icon_color }),
         );
         // --- Batch delete ---
         push(
