@@ -426,7 +426,11 @@ impl GpuiTransferService {
             if let Some((active_hashes, active_sizes)) = marker_scan {
                 if !marker_scan_running.swap(true, Ordering::AcqRel) {
                     let changed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        let db = Database::open(&db_path.to_string_lossy()).ok()?;
+                        // Periodic marker reconciliation: the main window already
+                        // opened/migrated this database, so a plain job
+                        // connection avoids re-running the migration pass and
+                        // the startup icon-prune UPDATE every refresh cycle.
+                        let db = Database::open_for_job(&db_path.to_string_lossy()).ok()?;
                         reconcile_original_file_markers(&db, &active_hashes, &active_sizes).ok()
                     }))
                     .ok()
@@ -519,7 +523,10 @@ fn run_command(
     device_name: &str,
     retention_days: u32,
 ) -> Result<(TransferAction, ResolvedManifest), String> {
-    let db = Database::open(&db_path.to_string_lossy())
+    // Runs on every transfer-view refresh (a couple of seconds apart): open a
+    // job connection instead of `Database::open`, which would repeat the
+    // migration pass and the startup full-table icon prune each time.
+    let db = Database::open_for_job(&db_path.to_string_lossy())
         .map_err(|error| format!("open transfer database: {error}"))?;
     let action = match command {
         TransferCommand::Refresh => TransferAction::Refresh,
