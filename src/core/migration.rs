@@ -133,6 +133,12 @@ const DB_MIGRATIONS: &[DbMigration] = &[
         // path can guarantee them on every open, not just on the upgrade.
         sql: "",
     },
+    DbMigration {
+        version: 13,
+        description: "Add the precomputed list preview and its source-length stamp",
+        // Also kept in [`ensure_list_preview_columns`] for the repair path.
+        sql: "",
+    },
 ];
 
 /// Run all pending database migrations, updating `PRAGMA user_version`.
@@ -178,6 +184,9 @@ pub fn run_db_migrations(conn: &Connection) -> rusqlite::Result<()> {
             if migration.version == 12 {
                 ensure_perf_indexes(conn)?;
             }
+            if migration.version == 13 {
+                ensure_list_preview_columns(conn)?;
+            }
             conn.pragma_update(None, "user_version", migration.version)?;
         }
     }
@@ -200,6 +209,31 @@ fn repair_db_schema(conn: &Connection) -> rusqlite::Result<()> {
         backfill_sync_pending(conn, &images_prefix())?;
     }
     ensure_perf_indexes(conn)?;
+    ensure_list_preview_columns(conn)?;
+    Ok(())
+}
+
+/// The bounded rich preview the list renders (`list_preview`) plus the byte
+/// length of the payload it was derived from (`list_preview_len`).
+///
+/// The length is a freshness stamp: the list projection only trusts the preview
+/// while it still equals `length(cast(rich_data AS BLOB))`. Both columns default
+/// to "no preview", which the projection reads as "not computed yet" and serves
+/// from the SQL expression — so the upgrade needs no startup backfill, and a
+/// write path that forgets to refresh the preview degrades instead of lying.
+fn ensure_list_preview_columns(conn: &Connection) -> rusqlite::Result<()> {
+    if !column_exists(conn, "clipboard_items", "list_preview")? {
+        conn.execute(
+            "ALTER TABLE clipboard_items ADD COLUMN list_preview TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
+    }
+    if !column_exists(conn, "clipboard_items", "list_preview_len")? {
+        conn.execute(
+            "ALTER TABLE clipboard_items ADD COLUMN list_preview_len INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
     Ok(())
 }
 

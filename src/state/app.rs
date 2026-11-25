@@ -43,8 +43,6 @@ const KEYWORD_SEARCH_SLOW_LOG: std::time::Duration = std::time::Duration::from_m
 /// [`AppState::grow_loaded_page`] 翻倍页宽，上限仍是 `query_limit()`。
 const LIST_PAGE_STEP: usize = 500;
 const LIST_FULL_TEXT_LIMIT: usize = 8192;
-const LIST_RICH_HTML_LIMIT: usize = 4096;
-const LIST_RICH_AUX_LIMIT: usize = 2048;
 const LIST_NOTE_LIMIT: usize = 2048;
 
 /// `editing_item_id` value while the editor is composing an entry that does
@@ -441,12 +439,6 @@ fn truncate_chars(text: &mut String, limit: usize) {
     }
 }
 
-fn truncated_owned(text: String, limit: usize) -> String {
-    let mut text = text;
-    truncate_chars(&mut text, limit);
-    text
-}
-
 fn item_can_be_merged(item: &ClipboardItem) -> bool {
     matches!(
         item.content_type,
@@ -462,39 +454,8 @@ fn shrink_item_for_list(item: &mut ClipboardItem) {
         return;
     }
 
-    let rich = RichData::from_json(&item.rich_data);
-    let preview = RichData {
-        has_links: rich.has_links,
-        html: rich
-            .html
-            .filter(|text| !text.is_empty())
-            .map(|text| html_text::preview_html(&text, LIST_RICH_HTML_LIMIT)),
-        rtf: rich
-            .rtf
-            .filter(|text| !text.is_empty())
-            .map(|text| truncated_owned(text, LIST_RICH_HTML_LIMIT)),
-        ocr_text: rich
-            .ocr_text
-            .filter(|text| !text.is_empty())
-            .map(|text| truncated_owned(text, LIST_RICH_AUX_LIMIT)),
-        qr_text: rich
-            .qr_text
-            .filter(|text| !text.is_empty())
-            .map(|text| truncated_owned(text, LIST_RICH_AUX_LIMIT)),
-        page_title: rich
-            .page_title
-            .filter(|text| !text.is_empty())
-            .map(|text| truncated_owned(text, LIST_RICH_AUX_LIMIT)),
-        drive_label: rich
-            .drive_label
-            .filter(|text| !text.is_empty())
-            .map(|text| truncated_owned(text, LIST_RICH_AUX_LIMIT)),
-        remote_host: rich
-            .remote_host
-            .filter(|text| !text.is_empty())
-            .map(|text| truncated_owned(text, LIST_RICH_AUX_LIMIT)),
-    };
-    item.rich_data = preview.to_json();
+    // 与写路径的 `list_preview` 列、SQL 兜底投影共用同一套截断规则。
+    item.rich_data = RichData::from_json(&item.rich_data).list_preview_json();
 }
 
 /// Keep database order for new tags, appended after explicitly ordered tags.
@@ -4276,7 +4237,9 @@ mod tests {
     use crate::core::db::Database;
     use crate::core::filters::ClipboardFilters;
     use crate::core::settings::AppSettings;
-    use crate::core::types::{ClipboardItem, ContentType, RichData};
+    use crate::core::types::{
+        ClipboardItem, ContentType, RichData, LIST_RICH_AUX_LIMIT, LIST_RICH_HTML_LIMIT,
+    };
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
 

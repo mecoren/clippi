@@ -6,7 +6,9 @@ use crate::core::cache_cleanup::{
 };
 use crate::core::filters::ClipboardFilters;
 use crate::core::html_text::FRAGMENT_MARKER;
-use crate::core::types::{ClipboardItem, ContentType, FileData, TagInfo};
+use crate::core::types::{
+    ClipboardItem, ContentType, FileData, TagInfo, LIST_RICH_AUX_LIMIT, LIST_RICH_HTML_LIMIT,
+};
 use rusqlite::{params, Connection, OptionalExtension, Result as SqlResult};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -85,8 +87,6 @@ const SOURCE_APP_ICON_INLINE_LIMIT: usize = 256 * 1024;
 const TAG_QUERY_BATCH: usize = 8_000;
 
 const LIST_FULL_TEXT_LIMIT: usize = 8192;
-const LIST_RICH_HTML_LIMIT: usize = 4096;
-const LIST_RICH_AUX_LIMIT: usize = 2048;
 const LIST_NOTE_LIMIT: usize = 2048;
 
 /// Upper bound for a sane consecutive-missing observation count. Values
@@ -248,6 +248,7 @@ fn list_item_select_columns() -> String {
     format!(
         "id, content_type, substr(full_text, 1, {LIST_FULL_TEXT_LIMIT}), content_hash, created_at, updated_at, image_path,
          CASE
+             WHEN list_preview_len = length(cast(rich_data AS BLOB)) THEN list_preview
              WHEN rich_data = '' OR NOT json_valid(rich_data) THEN ''
              ELSE json_object(
                  'has_links', json(CASE json_extract(rich_data, '$.has_links') WHEN 1 THEN 'true' WHEN 0 THEN 'false' ELSE 'null' END),
@@ -281,6 +282,29 @@ fn apply_connection_pragmas(conn: &Connection) -> SqlResult<()> {
          PRAGMA cache_size = -2000;
          PRAGMA mmap_size = 268435456;",
     )
+}
+
+/// The bounded list preview stored next to `rich_data`, plus the byte length of
+/// the payload it was derived from.
+///
+/// That length is the freshness stamp: the list projection only trusts
+/// `list_preview` while it still equals `length(cast(rich_data AS BLOB))`. A
+/// write path that forgets to refresh the preview (a future one, or a partial
+/// one such as a merge) therefore degrades to the SQL projection instead of
+/// rendering a stale card. Reading the payload just to measure it costs far
+/// less than parsing it eleven times (see `list_item_select_columns`).
+fn list_preview_columns(rich_data: &str) -> (String, i64) {
+    let preview = if rich_data.is_empty() {
+        String::new()
+    } else {
+        // Invalid JSON keeps the SQL guard's `''` behaviour; such rows are only
+        // produced by legacy builds, never by a `RichData` write.
+        match serde_json::from_str::<crate::core::types::RichData>(rich_data) {
+            Ok(rich) => rich.list_preview_json(),
+            Err(_) => String::new(),
+        }
+    };
+    (preview, rich_data.len() as i64)
 }
 
 impl Database {
@@ -514,14 +538,15 @@ impl Database {
         // A local clipboard capture always ends any sync-pending state: the
         // item now exists locally with a real captured path. (Sync merge uses
         // insert_sync_item_raw / update_sync_item instead and is unaffected.)
+        let (list_preview, list_preview_len) = list_preview_columns(&item.rich_data);
         let changed = self.conn.execute(
-            "UPDATE clipboard_items SET updated_at = ?1, content_type = ?3, image_path = ?4, rich_data = ?5, file_data = ?6, image_width = ?7, image_height = ?8, size = ?9, meta_type = ?10, existence_observed_at = CASE WHEN ?11 = '' THEN existence_observed_at ELSE ?11 END, sync_pending = 0 WHERE content_hash = ?2",
-            params![item.updated_at.to_rfc3339(), item.content_hash as i64, item.content_type.as_str(), item.image_path, item.rich_data, item.file_data, item.image_width as i64, item.image_height as i64, item.size, item.meta_type, item.existence_observed_at],
+            "UPDATE clipboard_items SET updated_at = ?1, content_type = ?3, image_path = ?4, rich_data = ?5, file_data = ?6, image_width = ?7, image_height = ?8, size = ?9, meta_type = ?10, existence_observed_at = CASE WHEN ?11 = '' THEN existence_observed_at ELSE ?11 END, sync_pending = 0, list_preview = ?12, list_preview_len = ?13 WHERE content_hash = ?2",
+            params![item.updated_at.to_rfc3339(), item.content_hash as i64, item.content_type.as_str(), item.image_path, item.rich_data, item.file_data, item.image_width as i64, item.image_height as i64, item.size, item.meta_type, item.existence_observed_at, list_preview, list_preview_len],
         )?;
         if changed == 0 {
             self.conn.execute(
-                "INSERT INTO clipboard_items (content_type, full_text, content_hash, created_at, updated_at, image_path, rich_data, file_data, source_app_name, source_app_icon, image_width, image_height, size, meta_type, existence_observed_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                "INSERT INTO clipboard_items (content_type, full_text, content_hash, created_at, updated_at, image_path, rich_data, file_data, source_app_name, source_app_icon, image_width, image_height, size, meta_type, existence_observed_at, list_preview, list_preview_len)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
                 params![
                     item.content_type.as_str(),
                     item.full_text,
@@ -538,6 +563,8 @@ impl Database {
                     item.size,
                     item.meta_type,
                     item.existence_observed_at,
+                    list_preview,
+                    list_preview_len,
                 ],
             )?;
         }
@@ -545,18 +572,50 @@ impl Database {
     }
 
     pub fn update_link_detection(&self, item: &ClipboardItem, has_links: bool) -> SqlResult<()> {
-        self.conn.execute(
+        // The optimistic `rich_data = ?` guard stays: it proves the row is the
+        // exact payload the analysis ran on. `json_set` (not a Rust
+        // round-trip) is kept so fields this build does not know about survive.
+        let changed = self.conn.execute(
             "UPDATE clipboard_items SET rich_data = json_set(CASE WHEN json_valid(rich_data) THEN rich_data ELSE '{}' END, '$.has_links', json(?1)) WHERE id = ?2 AND content_hash = ?3 AND full_text = ?4 AND rich_data = ?5",
             params![if has_links { "true" } else { "false" }, item.id, item.content_hash as i64, item.full_text, item.rich_data],
+        )?;
+        if changed > 0 {
+            // Refresh the preview from the payload JSON just wrote. The stamp is
+            // recomputed from that payload, so a concurrent write between the
+            // two statements leaves a mismatch and the projection falls back to
+            // the SQL expression instead of trusting a stale preview.
+            self.refresh_list_preview(item.id)?;
+        }
+        Ok(())
+    }
+
+    /// Recompute `list_preview` / `list_preview_len` from the stored payload.
+    fn refresh_list_preview(&self, id: i64) -> SqlResult<()> {
+        let rich_data: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT rich_data FROM clipboard_items WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(rich_data) = rich_data else {
+            return Ok(());
+        };
+        let (list_preview, list_preview_len) = list_preview_columns(&rich_data);
+        self.conn.execute(
+            "UPDATE clipboard_items SET list_preview = ?1, list_preview_len = ?2 WHERE id = ?3",
+            params![list_preview, list_preview_len, id],
         )?;
         Ok(())
     }
 
     /// Update only the rich_data column for a given item.
     pub fn update_rich_data(&self, id: i64, rich_data: &str) -> SqlResult<()> {
+        let (list_preview, list_preview_len) = list_preview_columns(rich_data);
         self.conn.execute(
-            "UPDATE clipboard_items SET rich_data = ?1, updated_at = ?2 WHERE id = ?3",
-            params![rich_data, chrono::Utc::now().to_rfc3339(), id],
+            "UPDATE clipboard_items SET rich_data = ?1, updated_at = ?2, list_preview = ?3, list_preview_len = ?4 WHERE id = ?5",
+            params![rich_data, chrono::Utc::now().to_rfc3339(), list_preview, list_preview_len, id],
         )?;
         Ok(())
     }
@@ -3023,6 +3082,7 @@ fn row_to_item(row: &rusqlite::Row<'_>) -> SqlResult<ClipboardItem> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::types::RichData;
 
     #[test]
     fn source_choices_reuse_cached_metadata_until_database_changes() {
@@ -4107,6 +4167,197 @@ mod tests {
                 "{name} must be served by one of {expected_indexes:?}: {plan:?}"
             );
         }
+    }
+
+    /// 列表预览在写入时算好；预览里的每个字段都被截到与 SQL 投影相同的上限，
+    /// 戳是「源 payload 的字节长度」。
+    #[test]
+    fn upsert_writes_the_list_preview_and_its_stamp() {
+        let (_path, db) = temp_db("list-preview-write");
+        let rich = RichData {
+            html: Some(format!(
+                "<html><body><!--StartFragment-->{}</body></html>",
+                "字".repeat(5_000)
+            )),
+            rtf: Some("r".repeat(5_000)),
+            ocr_text: Some("o".repeat(3_000)),
+            ..Default::default()
+        };
+        let item = ClipboardItem::new_text(1, "text", ContentType::RichText, None, Some(&rich));
+        db.upsert(&item).unwrap();
+
+        let (preview, stamp): (String, i64) = db
+            .conn
+            .query_row(
+                "SELECT list_preview, list_preview_len FROM clipboard_items WHERE content_hash = ?1",
+                params![item.content_hash as i64],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            stamp,
+            item.rich_data.len() as i64,
+            "stamp is the payload length"
+        );
+        let parsed: RichData = serde_json::from_str(&preview).unwrap();
+        assert_eq!(
+            parsed.html.as_deref().unwrap().chars().count(),
+            LIST_RICH_HTML_LIMIT
+        );
+        assert_eq!(
+            parsed.rtf.as_deref().unwrap().chars().count(),
+            LIST_RICH_HTML_LIMIT
+        );
+        assert_eq!(
+            parsed.ocr_text.as_deref().unwrap().chars().count(),
+            LIST_RICH_AUX_LIMIT
+        );
+    }
+
+    /// 快路径（写时预览）与慢路径（SQL 投影）必须给出同一份预览；行里没有戳
+    /// 的旧数据仍然能正常显示。
+    #[test]
+    fn list_projection_matches_the_sql_preview_for_both_paths() {
+        let (_path, db) = temp_db("list-preview-parity");
+        let rich = RichData {
+            has_links: Some(true),
+            html: Some(format!(
+                "<html><head><style>p{{}}</style></head><body><!--StartFragment-->{}</body></html>",
+                "文".repeat(6_000)
+            )),
+            rtf: Some("{\\rtf1 ".to_string() + &"x".repeat(5_000)),
+            page_title: Some("标题".into()),
+            ..Default::default()
+        };
+        let mut fast = ClipboardItem::new_text(1, "one", ContentType::RichText, None, Some(&rich));
+        fast.updated_at = chrono::Utc::now();
+        db.upsert(&fast).unwrap();
+
+        // 同 payload 的旧行：没有写时预览，只能走 SQL 兜底。
+        let mut slow = ClipboardItem::new_text(2, "two", ContentType::RichText, None, Some(&rich));
+        slow.updated_at = fast.updated_at - chrono::Duration::seconds(1);
+        db.conn
+            .execute(
+                "INSERT INTO clipboard_items \
+                 (content_type, full_text, content_hash, created_at, updated_at, rich_data, meta_type) \
+                 VALUES ('rich_text', 'two', ?1, ?2, ?2, ?3, '')",
+                params![
+                    slow.content_hash as i64,
+                    slow.updated_at.to_rfc3339(),
+                    slow.rich_data
+                ],
+            )
+            .unwrap();
+
+        let page = db
+            .load_filtered_list(&ClipboardFilters::default(), 10, "updated_at")
+            .unwrap();
+        let by_hash = |hash: u64| {
+            page.iter()
+                .find(|item| item.content_hash == hash)
+                .expect("both rows are on the page")
+        };
+        assert_eq!(
+            normalized_json(&by_hash(fast.content_hash).rich_data),
+            normalized_json(&by_hash(slow.content_hash).rich_data),
+            "write-time preview and SQL fallback must describe the same payload"
+        );
+    }
+
+    /// 戳对不上时（写路径漏更新、旧数据、并发写），列表必须回到 SQL 投影，
+    /// 而不是把过期预览显示出来。
+    #[test]
+    fn a_stale_preview_falls_back_to_the_payload() {
+        let (_path, db) = temp_db("list-preview-stale");
+        let old = RichData {
+            html: Some("<p>old preview</p>".into()),
+            ..Default::default()
+        };
+        let mut item = ClipboardItem::new_text(1, "text", ContentType::RichText, None, Some(&old));
+        item.updated_at = chrono::Utc::now();
+        db.upsert(&item).unwrap();
+
+        // 绕过写路径直接改 payload（等价于「某个未来路径忘了刷新预览」）。
+        let new = RichData {
+            html: Some("<p>fresh payload that is longer</p>".into()),
+            ..Default::default()
+        }
+        .to_json();
+        db.conn
+            .execute(
+                "UPDATE clipboard_items SET rich_data = ?1 WHERE content_hash = ?2",
+                params![new, item.content_hash as i64],
+            )
+            .unwrap();
+
+        let page = db
+            .load_filtered_list(&ClipboardFilters::default(), 10, "updated_at")
+            .unwrap();
+        let shown = &page[0].rich_data;
+        let parsed: RichData = serde_json::from_str(shown).unwrap();
+        assert_eq!(
+            parsed.html.as_deref(),
+            Some("<p>fresh payload that is longer</p>"),
+            "the stale preview must not win over the stored payload"
+        );
+    }
+
+    /// 链接检测与 `update_rich_data` 都会改 payload，两者都必须刷新预览和戳。
+    #[test]
+    fn later_rich_data_writes_refresh_the_preview() {
+        let (_path, db) = temp_db("list-preview-refresh");
+        let mut rich = RichData {
+            html: Some("<p>has a link</p>".into()),
+            ..Default::default()
+        };
+        let mut item = ClipboardItem::new_text(1, "text", ContentType::RichText, None, Some(&rich));
+        item.updated_at = chrono::Utc::now();
+        db.upsert(&item).unwrap();
+        let id = item_id(&db, item.content_hash);
+
+        db.update_link_detection(&item, true).unwrap();
+        let (preview, stamp, payload_len): (String, i64, i64) = db
+            .conn
+            .query_row(
+                "SELECT list_preview, list_preview_len, length(cast(rich_data AS BLOB)) \
+                 FROM clipboard_items WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        let parsed: RichData = serde_json::from_str(&preview).unwrap();
+        assert_eq!(parsed.has_links, Some(true));
+        assert_eq!(
+            stamp, payload_len,
+            "link detection must restamp the preview"
+        );
+
+        rich.page_title = Some("页面标题".into());
+        db.update_rich_data(id, &rich.to_json()).unwrap();
+        let (preview, stamp, payload_len): (String, i64, i64) = db
+            .conn
+            .query_row(
+                "SELECT list_preview, list_preview_len, length(cast(rich_data AS BLOB)) \
+                 FROM clipboard_items WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        let parsed: RichData = serde_json::from_str(&preview).unwrap();
+        assert_eq!(parsed.page_title.as_deref(), Some("页面标题"));
+        assert_eq!(
+            stamp, payload_len,
+            "update_rich_data must restamp the preview"
+        );
+    }
+
+    /// 比较两份预览 JSON 的语义：读侧走 `from_json`，缺键与 null 等价。
+    fn normalized_json(json: &str) -> serde_json::Value {
+        let mut value: serde_json::Value = serde_json::from_str(json).unwrap_or_default();
+        if let Some(map) = value.as_object_mut() {
+            map.retain(|_, entry| !entry.is_null());
+        }
+        value
     }
 
     #[test]

@@ -183,11 +183,11 @@ LIMIT 1 OFFSET ?max_items
 
 **修法（低风险，先做这个）**：列表查询把该列置 `''`（`item_scan_columns()` 已有现成写法），卡片按 `source_app_name` 从状态取路径；`fill_source_app_icons` 只给没有路径的兜底。实测 **列表页 5.09 ms → 3.42 ms**（合成库）；真实库约 −3.9 ms。
 
-### 3.3 根本修法：把预览算一次，而不是每次查询算十几次
+### 3.3 已实施：把预览算一次，而不是每次查询算十几次
 
-列表只需要「html 前 4 KB + rtf/ocr/qr/title/... 各 2 KB」，而库里存的是完整 html（平均 17 KB、最大 1.88 MB）。每次刷新都在为「截断」付全额解析费。
+`list_preview TEXT` + `list_preview_len INTEGER`（v13 迁移）在写入时算好截断后的预览，长度戳是源 payload 的字节长度；列表投影只在 `list_preview_len = length(cast(rich_data AS BLOB))` 时直接读它，否则退回下面的 SQL 表达式。实测本机真实库 200 行页 **31.5 ms → 8.0 ms**（无 `ANALYZE` 条件下 19.6 → 6.1 ms）；旧行不需要回填，新捕获逐步覆盖，写路径漏更新只会退回慢路径而不会显示过期预览。
 
-两个方向，按改动面排序：
+实现前的两个备选方案（保留在此供参考）：
 
 1. **写入时预计算一列** `list_preview TEXT`（截断后的同一份 JSON，写入/更新 `rich_data` 的路径一起写）。列表查询退化成「读一个小列」，实测等价成本接近 `substr(full_text)`（< 1 ms/页），且 `AppState.items` 内存也会从 2.6 MB/200 条降到 ~1 MB。代价：一次 schema 迁移 + 所有写 `rich_data` 的地方（`upsert`、`update_rich_data`、`update_link_detection`、sync/merge）同步维护。
 2. **减少解析次数**：SQL 改成一次 `json_extract(rich_data, '$.html','$.rtf', ...)` 多路径取值，在 Rust 里组装。实测（无效 JSON 被过滤后）8 次单独 extract 10.5 ms → 单次多路径 8.4 ms；收益有限，但改动只有 SQL + `row_to_item`。
@@ -414,7 +414,7 @@ ORDER BY pinned DESC, updated_at DESC LIMIT 128 OFFSET ?;
 | 裁剪全表 COUNT | 47–110 ms | **10.6 ms**（窄索引 + mmap） |
 | 收藏筛选页 | 15–113 ms | **3.3 ms**（部分排序索引） |
 | 关键字扫描 1 600 行 | 65–112 ms | **18 ms**（mmap） |
-| 列表页 200 行 | 13–16 ms | 13–16 ms（载荷未变，见第 11 节 P1） |
+| 列表页 200 行 | 13–16 ms | **8.0 ms**（真实库 31.5 → 8.0 ms；写时预览 + 长度戳） |
 
 ---
 
@@ -438,16 +438,17 @@ ORDER BY pinned DESC, updated_at DESC LIMIT 128 OFFSET ?;
 | 5 收藏筛选排序 | `idx_fav_sort (pinned DESC, updated_at DESC) WHERE is_favorite = 1`，2 万条 113 ms → 3.3 ms | `0885cde` |
 | 7 后台连接 | `Database::open_for_job`：OCR/QR/链接/网页标题/同步/中转站刷新不再重跑迁移链与启动全表图标清理（写锁） | `0885cde` + 本次 |
 | 8 读路径 | `PRAGMA mmap_size = 256MB`：关键字扫描 65–112 ms → 18 ms，不增加 SQLite 页缓存堆 | `0885cde` |
-| 防止回退 | 新增执行计划测试：三个聚合必须走索引，否则测试失败 | `0885cde` |
+| 3 列表页载荷 | v13 新增 `list_preview` / `list_preview_len`（写时预览 + 字节长度戳）：列表页 31.5 ms → 8.0 ms；旧行自动回退、无启动回填 | 本次 |
+| 防止回退 | 新增执行计划测试（聚合必须走索引）+ 预览一致性/过期回退/写路径刷新测试 | `0885cde` + 本次 |
 
 按本次实测，2 万条历史下「每次复制」的主线程成本从 **120–220 ms 降到约 10–20 ms**，「每次唤出」从 70–90 ms 降到约 20–30 ms（其中 13–16 ms 仍是列表页载荷，见下）。
 
 尚未实施（按性价比排序，均需单独评估）：
 
-1. **P1 列表页载荷（13–16 ms/次，真实富文本库 17–29 ms）**：`rich_data` 在 SQL 里被解析 11–12 遍只为截出 4 KB 预览。彻底解法是写路径预计算一列 `list_preview`（约 1 KB/行）并让列表查询直接读它，内存也会减半。**这是一次 schema 变更**（加列 + 保持所有写 `rich_data` 的路径同步），按 AGENTS.md 第 9 节需要先确认；且必须解决「写路径漏更新会导致卡片预览过期」的正确性问题（建议用 `更新戳 == updated_at` 的校验条件兜底）。
-2. **P2 快速窗口**：弹窗的独立搜索/筛选每字符走一次 `load_keyword_filtered_items`（最多 1 600 行整行扫描，`max_items` 越大越差），且没有防抖。**注意**：不能照搬主窗口的 150 ms 防抖——`set_query` 的注释说明「一次轮询可能整批处理连续字符 + 回车」，延迟重建会让回车粘到旧列表上。正确解法是把扫描移出 UI 线程（需要第二连接与请求代际），改动较大。
-3. **P3 每帧渲染**：卡片每帧 2–4 次 serde 解析、5 次 `String` clone、字体整形、`stat`/`open`（第 6 节）。既有帧追踪显示当前没有突破 vsync 预算，属于 CPU 浪费与低端机风险；改动集中在 `clipboard_card.rs` / `clipboard_list.rs`，需要 UI 冒烟验证。
-4. **`synchronous = NORMAL`**：能把每次复制的 2–3 次提交从 `FULL` 降到 `NORMAL`，但这是耐久性语义变更（掉电可能丢最后一个事务），未在未经确认的情况下改动。
-5. **`ANALYZE` / 冗余 tombstone 索引**：实测 `ANALYZE` 会让聚合退回全表扫描，明确不做；`idx_item_tags_tag`、`idx_del_items_hash`、`idx_uf_items_hash`、`idx_del_tags_name` 属冗余，收益仅常数级，暂不迁移。
+1. **P2 快速窗口**：弹窗的独立搜索/筛选每字符走一次 `load_keyword_filtered_items`（最多 1 600 行整行扫描，`max_items` 越大越差），且没有防抖。**注意**：不能照搬主窗口的 150 ms 防抖——`set_query` 的注释说明「一次轮询可能整批处理连续字符 + 回车」，延迟重建会让回车粘到旧列表上。正确解法是把扫描移出 UI 线程（需要第二连接与请求代际），改动较大。默认设置下弹窗与主列表共用同一页，只有开启「独立筛选」或输入搜索词时才走这条路径。
+2. **P3 每帧渲染**：卡片每帧 2–4 次 serde 解析、5 次 `String` clone、字体整形、`stat`/`open`（第 6 节）。既有帧追踪显示当前没有突破 vsync 预算，属于 CPU 浪费与低端机风险；改动集中在 `clipboard_card.rs` / `clipboard_list.rs`，需要 UI 冒烟验证。
+3. **`synchronous = NORMAL`**：能把每次复制的 2–3 次提交从 `FULL` 降到 `NORMAL`，但这是耐久性语义变更（掉电可能丢最后一个事务），未在未经确认的情况下改动。
+4. **`ANALYZE` / 冗余 tombstone 索引**：实测 `ANALYZE` 会让聚合退回全表扫描，明确不做；`idx_item_tags_tag`、`idx_del_items_hash`、`idx_uf_items_hash`、`idx_del_tags_name` 属冗余，收益仅常数级，暂不迁移。
+5. **同步/合并路径的预览**：`insert_sync_item_raw` / `update_sync_item` / `merge_from` 仍写原始 `rich_data` 而不写 `list_preview`，这些行按设计走 SQL 兜底（正确但慢）；若要同步历史也享受快路径，需要在这三处补算预览。
 
 维护提示：改动第 2 节涉及的查询或索引名时，`capture_aggregates_are_index_served` 会拦截「退回全表扫描」；改动 `list_item_select_columns()` 时，附录 B 的列表页数字与第 11 节 P1 的结论需要重新测量。

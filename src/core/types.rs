@@ -281,6 +281,23 @@ pub enum PathStatusReason {
     UnknownPlatform,
 }
 
+/// Character budgets for the bounded rich preview a list card renders.
+///
+/// Shared by the write-time preview (`Database` stores it in `list_preview`),
+/// the keyword-page shrinker ([`crate::state::app::shrink_item_for_list`]) and
+/// the SQL fallback projection in [`crate::core::db`], so the three stay in
+/// lockstep.
+pub const LIST_RICH_HTML_LIMIT: usize = 4096;
+pub const LIST_RICH_AUX_LIMIT: usize = 2048;
+
+/// Truncate `text` to at most `limit` characters (never inside a code point).
+fn truncate_to_chars(text: &str, limit: usize) -> String {
+    match text.char_indices().nth(limit) {
+        Some((byte_index, _)) => text[..byte_index].to_string(),
+        None => text.to_string(),
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Default, Clone)]
 pub struct RichData {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -319,6 +336,37 @@ impl RichData {
             log::warn!("Failed to deserialize RichData: {e}");
             Self::default()
         })
+    }
+
+    /// The bounded rich preview the list cards render.
+    ///
+    /// One source of truth for the three consumers: the write-time
+    /// `list_preview` column, the keyword-page shrinker, and (by an identical
+    /// SQL expression) the fallback projection for rows whose preview has not
+    /// been written yet. Empty payloads are dropped instead of stored, which
+    /// matches the SQL `NULLIF(..., '')` rule; key omission is equivalent
+    /// because every reader goes through `from_json` where a missing key is
+    /// `None`.
+    pub fn list_preview_json(&self) -> String {
+        fn clipped(value: &Option<String>, limit: usize) -> Option<String> {
+            let text = value.as_deref()?;
+            (!text.is_empty()).then(|| truncate_to_chars(text, limit))
+        }
+        RichData {
+            has_links: self.has_links,
+            html: self
+                .html
+                .as_deref()
+                .filter(|html| !html.is_empty())
+                .map(|html| crate::core::html_text::preview_html(html, LIST_RICH_HTML_LIMIT)),
+            rtf: clipped(&self.rtf, LIST_RICH_HTML_LIMIT),
+            ocr_text: clipped(&self.ocr_text, LIST_RICH_AUX_LIMIT),
+            qr_text: clipped(&self.qr_text, LIST_RICH_AUX_LIMIT),
+            page_title: clipped(&self.page_title, LIST_RICH_AUX_LIMIT),
+            drive_label: clipped(&self.drive_label, LIST_RICH_AUX_LIMIT),
+            remote_host: clipped(&self.remote_host, LIST_RICH_AUX_LIMIT),
+        }
+        .to_json()
     }
 }
 
