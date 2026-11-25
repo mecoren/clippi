@@ -162,9 +162,15 @@ impl PreviewPanelView {
         &mut self,
         item: &crate::core::types::ClipboardItem,
         privacy_types: &[String],
+        plain_content_preview: bool,
         cx: &mut Context<Self>,
     ) -> Size<Pixels> {
         let model = PreviewModel::from_item(item, privacy_types);
+        let model = if plain_content_preview {
+            model.plain_text_only()
+        } else {
+            model
+        };
         // Compute the excerpt once; render, sizing and promotion all reuse it.
         let (lines, truncated) = content::excerpt(&model.text, MAX_TEXT_LINES, MAX_TEXT_CHARS);
         let size = panel_size(&model, lines.len());

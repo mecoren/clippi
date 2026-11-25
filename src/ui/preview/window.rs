@@ -92,8 +92,7 @@ impl PreviewWindowView {
         cx: &mut Context<Self>,
     ) -> Self {
         let embedded = window.is_none();
-        let privacy = state.read(cx).settings.privacy_protection_types.clone();
-        let model = PreviewModel::from_item(&item, &privacy);
+        let model = build_model(&state, &item, cx);
         let image_exists = model.image_exists;
         let focus_handle = cx.focus_handle();
         let view = Self {
@@ -128,13 +127,7 @@ impl PreviewWindowView {
     }
 
     pub fn set_item(&mut self, item: ClipboardItem, cx: &mut Context<Self>) {
-        let privacy = self
-            .state
-            .read(cx)
-            .settings
-            .privacy_protection_types
-            .clone();
-        let model = PreviewModel::from_item(&item, &privacy);
+        let model = build_model(&self.state, &item, cx);
         self.image_exists = model.image_exists;
         self.model = Some(Rc::new(model));
         self.file_rows.clear();
@@ -850,6 +843,19 @@ impl Render for PreviewWindowView {
             .child(header)
             .child(body)
             .into_any_element()
+    }
+}
+
+/// Build the preview model for one item with the user's settings applied.
+/// The standalone window and the embedded flyout both come through here, so
+/// the 「纯文本内容预览」preference cannot drift between the two surfaces.
+fn build_model(state: &Entity<AppState>, item: &ClipboardItem, cx: &App) -> PreviewModel {
+    let settings = &state.read(cx).settings;
+    let model = PreviewModel::from_item(item, &settings.privacy_protection_types);
+    if settings.plain_content_preview {
+        model.plain_text_only()
+    } else {
+        model
     }
 }
 

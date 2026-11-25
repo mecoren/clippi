@@ -179,6 +179,27 @@ impl PreviewModel {
         model
     }
 
+    /// Collapse a rich preview to its plain-text projection, matching the
+    /// 「纯文本内容预览」card setting: HTML drops the styled document and keeps
+    /// the same visible text the card shows, Markdown keeps its raw source
+    /// instead of offering the rendered tab. Images and file lists are type
+    /// previews rather than text styling, so they stay as they are.
+    pub fn plain_text_only(mut self) -> Self {
+        match self.kind {
+            PreviewKind::Html => {
+                // `text` already holds the visible projection (or the plain
+                // fallback when the markup had none); only the rich document
+                // and its degraded banner are dropped.
+                self.kind = PreviewKind::Text;
+                self.html = None;
+                self.html_degraded = false;
+            }
+            PreviewKind::Markdown => self.kind = PreviewKind::Text,
+            PreviewKind::Text | PreviewKind::Rtf | PreviewKind::Image | PreviewKind::Files => {}
+        }
+        self
+    }
+
     pub fn is_image(&self) -> bool {
         self.kind == PreviewKind::Image
     }
@@ -431,6 +452,49 @@ mod tests {
         assert!(model.html_degraded);
         assert!(model.html.is_none());
         assert_eq!(model.text, "plain projection");
+    }
+
+    #[test]
+    fn plain_preview_drops_the_rich_html_document() {
+        let item = html_item("<p>Hello <b>world</b></p>");
+        let model = PreviewModel::from_item(&item, &[]).plain_text_only();
+        assert_eq!(model.kind, PreviewKind::Text);
+        assert!(model.html.is_none());
+        assert!(!model.html_degraded);
+        assert!(model.text.contains("Hello world"), "{}", model.text);
+        assert!(!model.text.contains('<'), "{}", model.text);
+    }
+
+    #[test]
+    fn plain_preview_keeps_the_markdown_source_instead_of_the_rich_tab() {
+        let item = text_item("# title", "markdown");
+        let model = PreviewModel::from_item(&item, &[]).plain_text_only();
+        assert_eq!(model.kind, PreviewKind::Text);
+        assert_eq!(model.text, "# title");
+    }
+
+    #[test]
+    fn plain_preview_leaves_type_previews_alone() {
+        let files = file_item(&[("C:/tmp/a.txt", false)]);
+        assert_eq!(
+            PreviewModel::from_item(&files, &[]).plain_text_only().kind,
+            PreviewKind::Files
+        );
+
+        let image = ClipboardItem::new_text(5, "", ContentType::Image, None, None);
+        assert_eq!(
+            PreviewModel::from_item(&image, &[]).plain_text_only().kind,
+            PreviewKind::Image
+        );
+
+        let rtf = RichData {
+            rtf: Some(r"{\rtf1\ansi hello}".to_string()),
+            ..Default::default()
+        };
+        let item = ClipboardItem::new_text(6, "fallback", ContentType::RichText, None, Some(&rtf));
+        let model = PreviewModel::from_item(&item, &[]).plain_text_only();
+        assert_eq!(model.kind, PreviewKind::Rtf);
+        assert_eq!(model.text, "hello");
     }
 
     #[test]

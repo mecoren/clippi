@@ -2038,8 +2038,10 @@ impl ClipboardListView {
                 .settings
                 .privacy_protection_types
                 .clone();
-            self.preview_panel
-                .update(cx, |panel, cx| panel.show_native(&item, &privacy, cx))
+            let plain_content_preview = self.state.read(cx).settings.plain_content_preview;
+            self.preview_panel.update(cx, |panel, cx| {
+                panel.show_native(&item, &privacy, plain_content_preview, cx)
+            })
         };
         let target = self.flyout_target(card, pointer, size);
         if collapse {

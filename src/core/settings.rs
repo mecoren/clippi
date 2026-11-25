@@ -115,8 +115,9 @@ pub struct AppSettings {
     pub saved_window_x: i32,
     pub saved_window_y: i32,
     pub card_height_mode: String, // "low" | "medium" | "high" | "auto"
-    /// 纯文本内容预览：卡片内容区只显示原始文本，不做富文本 / 链接 / 颜色等
-    /// 样式还原（EcoPaste 式扁平预览）。默认关闭，保持既有的样式化预览。
+    /// 纯文本内容预览：卡片内容区、悬停预览与独立预览窗口只显示原始文本，
+    /// 不做富文本 / 链接 / 颜色等样式还原（EcoPaste 式扁平预览）。默认关闭，
+    /// 保持既有的样式化预览。
     #[serde(default)]
     pub plain_content_preview: bool,
     /// Single font-size entry: one multiplier (see `ui::font`) applied to every
