@@ -624,11 +624,14 @@ impl AppState {
             crate::core::db::TitlebarStats::default()
         });
 
-        // 标题栏的条目总数：先算好再进结构体，`db` 一旦 move 进去就不能再借用。
-        let total_item_count = db.count_clipboard_items().unwrap_or_else(|error| {
-            log::error!("Failed to count clipboard items: {error}");
-            items.len() as u32
-        });
+        // 标题栏的条目总数与「可清理条数」是同一个数（都不含中转站行），
+        // 直接复用 titlebar 统计里已经算好并缓存的值。单独再查一次
+        // `COUNT(*)` 会让每次唤出 / 每次防抖按键 / 每次复制多付一遍全表
+        // 聚合，而结果完全相同。
+        //
+        // `max(items.len())` 只是统计读取失败时的兜底：列表页永远是总数的
+        // 子集，正常情况下取不到更大值，失败时才不至于把标题栏显示成 0。
+        let total_item_count = stats.clearable_history_count.max(items.len() as u32);
         Self {
             source_app_icons: if settings.show_source_app_filter() {
                 db.source_app_icon_paths().unwrap_or_else(|error| {
@@ -733,6 +736,8 @@ impl AppState {
                 self.has_hotkey_items = stats.has_hotkey_items;
                 self.has_favorite_items = stats.has_favorite_items;
                 self.clearable_history_count = stats.clearable_history_count;
+                // 同一个数：标题栏「一共 N 条」显示的就是这个值，不再单独查。
+                self.total_item_count = stats.clearable_history_count;
             }
             Err(e) => log::error!("Failed to refresh titlebar stats: {e}"),
         }
@@ -812,11 +817,10 @@ impl AppState {
                 self.load_error = Some(e);
             }
         }
-        // 标题栏的计数是「库里一共多少条」，与当前筛选和分页无关。
-        match self.db.count_clipboard_items() {
-            Ok(count) => self.total_item_count = count,
-            Err(e) => log::error!("Failed to count clipboard items: {e}"),
-        }
+        // 标题栏的计数是「库里一共多少条」，与当前筛选和分页无关。它与
+        // titlebar 统计里的 `clearable_history_count` 是同一个值，由
+        // `refresh_titlebar_filter_availability` 一起回填——不再单独发一条
+        // 全表 `COUNT`。
         let titlebar_started = Instant::now();
         self.refresh_titlebar_filter_availability();
         let titlebar = titlebar_started.elapsed();
@@ -4723,6 +4727,36 @@ mod tests {
         let hash = item.content_hash;
         state.db.upsert(&item).unwrap();
         state.db.get_by_hash(hash).unwrap().unwrap().id
+    }
+
+    /// 标题栏的「一共 N 条」与「可清理条数」是同一个值：刷新时只查一次，
+    /// 不再单独发一条 `COUNT(*)`。
+    #[test]
+    fn reload_fills_the_clipboard_total_from_the_titlebar_stats() {
+        let (mut state, _dirty) = test_state();
+        insert_item_at_age(&mut state, 1, false, "one", 10);
+        insert_item_at_age(&mut state, 2, false, "two", 20);
+
+        state.reload_items();
+        assert_eq!(state.total_item_count, 2);
+        assert_eq!(state.total_item_count, state.clearable_history_count);
+
+        // 中转站行是内部回填记录，不属于剪贴历史。
+        let mut transfer = make_item(3, ContentType::PlainText, false, "transfer row");
+        transfer.meta_type = "transfer".to_string();
+        state.db.upsert(&transfer).unwrap();
+        state.reload_items();
+        assert_eq!(state.total_item_count, 2);
+
+        let victim = state
+            .items
+            .iter()
+            .find(|item| item.full_text == "one")
+            .expect("seeded item is on the page")
+            .id;
+        state.db.delete_item(victim).unwrap();
+        state.reload_items();
+        assert_eq!(state.total_item_count, 1);
     }
 
     #[test]

@@ -17,8 +17,10 @@ pub fn fetch_and_store_title(url: &str, content_hash: u64, db_path: &str) -> boo
     };
 
     // ── Store in DB ──────────────────────────────────────────────
+    // Background job against the schema the main window already opened: no
+    // migration pass and no startup maintenance (see `open_for_job`).
     let resolved = crate::core::paths::resolve_db_path(db_path);
-    let db = match crate::core::db::Database::open(&resolved.to_string_lossy()) {
+    let db = match crate::core::db::Database::open_for_job(&resolved.to_string_lossy()) {
         Ok(db) => db,
         Err(_) => return false,
     };

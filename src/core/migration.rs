@@ -126,6 +126,13 @@ const DB_MIGRATIONS: &[DbMigration] = &[
             "CREATE INDEX IF NOT EXISTS idx_pinned_created ON clipboard_items(pinned DESC, created_at DESC);",
         ),
     },
+    DbMigration {
+        version: 12,
+        description: "Add the indexes that keep capture/refresh aggregates off full table scans",
+        // The statements live in [`ensure_perf_indexes`] so the schema repair
+        // path can guarantee them on every open, not just on the upgrade.
+        sql: "",
+    },
 ];
 
 /// Run all pending database migrations, updating `PRAGMA user_version`.
@@ -168,6 +175,9 @@ pub fn run_db_migrations(conn: &Connection) -> rusqlite::Result<()> {
             if migration.version == 10 {
                 migrate_pinned(conn)?;
             }
+            if migration.version == 12 {
+                ensure_perf_indexes(conn)?;
+            }
             conn.pragma_update(None, "user_version", migration.version)?;
         }
     }
@@ -189,7 +199,73 @@ fn repair_db_schema(conn: &Connection) -> rusqlite::Result<()> {
     if ensure_sync_pending_column(conn)? {
         backfill_sync_pending(conn, &images_prefix())?;
     }
+    ensure_perf_indexes(conn)?;
     Ok(())
+}
+
+/// Indexes that keep the capture/refresh aggregates off full table scans.
+///
+/// Every one of these replaces a scan of the wide item rows (text, rich data,
+/// inline source icons) that used to run on every capture or every keystroke:
+///
+/// - `idx_non_transfer` serves `COUNT(*) … WHERE meta_type != 'transfer'`
+///   (the titlebar total, the clearable count and their reuse) as a covering
+///   index scan. It is deliberately not partial: `(meta_type, id)` is a plain
+///   range scan over a narrow index, which SQLite picks without a hint.
+/// - `idx_hotkey` turns `EXISTS(… custom_hotkey <> '')` into a check of a tiny
+///   partial index. Without it the planner scans the table whenever no row has
+///   a hotkey — the common case, and therefore the worst case.
+/// - `idx_fav_sort` serves the same EXISTS and the "favorites only" list filter
+///   with its `ORDER BY pinned DESC, updated_at DESC`, which otherwise sorted
+///   every favorite through a temporary B-tree on each page.
+/// - `idx_deletable` matches the row filter of `MAINTENANCE_DELETABLE_PREDICATE`
+///   (the tag subquery cannot go into a partial index), so both the history
+///   limit `COUNT` and the "oldest deletable" scan stay on a narrow index.
+///
+/// Kept idempotent: the v12 migration and the schema repair both call it, so a
+/// repaired or manually aged schema ends up with the same indexes.
+pub(crate) fn ensure_perf_indexes(conn: &Connection) -> rusqlite::Result<()> {
+    // A legacy/partially migrated table can still be missing the columns these
+    // predicates reference (`custom_hotkey` v7, `pinned` v10, …). v12 runs
+    // before the repair pass that adds them, so skip instead of failing the
+    // upgrade; the repair call at the end of the same open creates the indexes
+    // once the columns exist.
+    if !perf_index_columns_present(conn)? {
+        return Ok(());
+    }
+    conn.execute_batch(
+        // Superseded by `idx_fav_sort`: a single-column index on a boolean
+        // (≈90% of rows share `0`) never narrowed a scan, and it only cost an
+        // extra B-tree write per capture. The favorites list and its EXISTS
+        // probe are both served by the partial sorted index below.
+        "DROP INDEX IF EXISTS idx_is_favorite;
+         CREATE INDEX IF NOT EXISTS idx_non_transfer ON clipboard_items(meta_type, id);
+         CREATE INDEX IF NOT EXISTS idx_hotkey ON clipboard_items(id) WHERE custom_hotkey <> '';
+         CREATE INDEX IF NOT EXISTS idx_fav_sort ON clipboard_items(pinned DESC, updated_at DESC)
+             WHERE is_favorite = 1;
+         CREATE INDEX IF NOT EXISTS idx_deletable ON clipboard_items(created_at, id)
+             WHERE meta_type != 'transfer' AND pinned = 0 AND is_favorite = 0
+               AND custom_hotkey = '' AND note = '';",
+    )
+}
+
+/// Whether `clipboard_items` has every column the perf-index predicates use.
+fn perf_index_columns_present(conn: &Connection) -> rusqlite::Result<bool> {
+    let mut stmt = conn.prepare("PRAGMA table_info(clipboard_items)")?;
+    let columns: Vec<String> = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok([
+        "created_at",
+        "updated_at",
+        "meta_type",
+        "is_favorite",
+        "note",
+        "custom_hotkey",
+        "pinned",
+    ]
+    .iter()
+    .all(|required| columns.iter().any(|column| column == required)))
 }
 
 /// v10: local-only pin flag plus the index that serves the pinned-first list

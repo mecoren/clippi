@@ -476,7 +476,7 @@ fn run_qr_analysis(job: &AnalysisJob, needs_refresh: &AtomicBool) {
     match crate::core::qr::detect_qr(path) {
         Ok(Some(text)) => {
             let resolved = crate::core::paths::resolve_db_path(&job.db_path);
-            if let Ok(db) = crate::core::db::Database::open(&resolved.to_string_lossy()) {
+            if let Ok(db) = crate::core::db::Database::open_for_job(&resolved.to_string_lossy()) {
                 if let Ok(Some(existing)) = db.get_by_hash(job.content_hash) {
                     let mut rd = RichData::from_json(&existing.rich_data);
                     if rd.qr_text.is_none() {
@@ -506,7 +506,7 @@ fn run_ocr_analysis(job: &AnalysisJob, needs_refresh: &AtomicBool) {
     match engine.recognize(path) {
         Ok(text) if !text.trim().is_empty() => {
             let resolved = crate::core::paths::resolve_db_path(&job.db_path);
-            if let Ok(db) = crate::core::db::Database::open(&resolved.to_string_lossy()) {
+            if let Ok(db) = crate::core::db::Database::open_for_job(&resolved.to_string_lossy()) {
                 if let Ok(Some(existing)) = db.get_by_hash(job.content_hash) {
                     let mut rd = RichData::from_json(&existing.rich_data);
                     if rd.ocr_text.is_none() {
@@ -526,7 +526,7 @@ fn run_ocr_analysis(job: &AnalysisJob, needs_refresh: &AtomicBool) {
 /// Full extraction and URL validation are deferred until the user clicks.
 fn run_link_analysis(job: &AnalysisJob, needs_refresh: &AtomicBool) {
     let path = crate::core::paths::resolve_db_path(&job.db_path);
-    let Ok(db) = crate::core::db::Database::open(&path.to_string_lossy()) else {
+    let Ok(db) = crate::core::db::Database::open_for_job(&path.to_string_lossy()) else {
         return;
     };
     let Ok(Some(item)) = db.get_by_hash(job.content_hash) else {

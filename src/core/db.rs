@@ -109,6 +109,32 @@ const MAINTENANCE_DELETABLE_PREDICATE: &str = "meta_type != 'transfer' \
          SELECT 1 FROM item_tags WHERE item_tags.item_id = clipboard_items.id \
      )";
 
+/// How many rows the history limit may delete.
+///
+/// `created_at >= ''` is a deliberate, always-true range predicate (the column
+/// is `TEXT NOT NULL`): it makes SQLite drive the count from `idx_deletable`
+/// instead of scanning the wide item rows. Without it the planner prefers a
+/// table scan or the near-useless `is_favorite` index, and this query runs on
+/// the UI thread after every capture once the user has set `max_items`.
+fn prune_deletable_count_sql() -> String {
+    format!(
+        "SELECT COUNT(*) FROM clipboard_items WHERE {MAINTENANCE_DELETABLE_PREDICATE} \
+         AND created_at >= ''"
+    )
+}
+
+/// The titlebar aggregate, served by the v12 indexes.
+///
+/// `MAX(custom_hotkey <> '')` used to scan every row; the two flags are
+/// `EXISTS` probes that stop at the first matching entry of a tiny partial
+/// index. The count is the same value as the old `count_clipboard_items()`
+/// (transfer rows excluded), read from a narrow covering index.
+const TITLEBAR_STATS_SQL: &str = "SELECT
+        EXISTS(SELECT 1 FROM clipboard_items WHERE custom_hotkey <> ''),
+        EXISTS(SELECT 1 FROM clipboard_items WHERE is_favorite = 1),
+        (SELECT COUNT(*) FROM clipboard_items WHERE meta_type != 'transfer')
+     ";
+
 /// Predicate selecting the rows a "clear clipboard history" call deletes.
 /// Each `include_*` flag turns one protection off instead of deleting that
 /// category by default, so favorites, tagged items, and noted items survive
@@ -238,6 +264,25 @@ fn list_item_select_columns() -> String {
     )
 }
 
+/// Connection-level pragmas shared by the UI connection and the job
+/// connections.
+///
+/// - WAL keeps readers (lists, analysis jobs) from blocking the capture write.
+/// - The page cache stays small (2 MB) on purpose: the app trims its working
+///   set when it hides, so a large private cache would be reclaimed anyway.
+/// - `mmap_size` maps up to 256 MB of the database read-only. Mapped reads skip
+///   the page-cache copy that the keyword scan and the background cleanups pay
+///   for: measured on a 20k-row / 207 MB history, one 1 600-row keyword scan
+///   drops from 66 ms to 31 ms without growing the SQLite heap. SQLite ignores
+///   the limit on filesystems that cannot map the file.
+fn apply_connection_pragmas(conn: &Connection) -> SqlResult<()> {
+    conn.execute_batch(
+        "PRAGMA journal_mode = WAL;
+         PRAGMA cache_size = -2000;
+         PRAGMA mmap_size = 268435456;",
+    )
+}
+
 impl Database {
     /// The actual SQLite file, or None for an in-memory database.
     pub fn file_path(&self) -> Option<&str> {
@@ -248,8 +293,7 @@ impl Database {
         let conn = Connection::open(path)?;
         // Wait up to 5s if the database is locked (e.g. previous process still exiting).
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
-        // --- WAL mode improves concurrency and reduces memory pressure. ---
-        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA cache_size = -2000;")?;
+        apply_connection_pragmas(&conn)?;
         let db = Self {
             conn,
             source_app_cache: RefCell::new(None),
@@ -258,6 +302,30 @@ impl Database {
         db.init_schema()?;
         db.prune_oversized_source_icons()?;
         Ok(db)
+    }
+
+    /// Open a connection for a short-lived background job.
+    ///
+    /// Jobs (OCR, QR, link analysis, page-title fetch) run while `AppState`
+    /// already holds the migrated schema, so they do not need to re-run the
+    /// migration chain or the startup maintenance pass. `open()` used to do
+    /// both for every job: `run_db_migrations` walks the whole migration list
+    /// and the schema-repair checks, and `prune_oversized_source_icons` runs a
+    /// full-table `UPDATE` (a write transaction) that serialises against the
+    /// capture path. On a large history that turned "one background analysis"
+    /// into a write-lock wait for the next clipboard capture.
+    ///
+    /// Only for databases the main window has already opened. A job never
+    /// creates or upgrades a schema.
+    pub fn open_for_job(path: &str) -> SqlResult<Self> {
+        let conn = Connection::open(path)?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        apply_connection_pragmas(&conn)?;
+        Ok(Self {
+            conn,
+            source_app_cache: RefCell::new(None),
+            titlebar_stats_cache: RefCell::new(None),
+        })
     }
 
     /// Flush WAL to main database file before copy/migration.
@@ -363,8 +431,7 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_hash ON clipboard_items(content_hash);
             CREATE INDEX IF NOT EXISTS idx_updated ON clipboard_items(updated_at DESC);
             CREATE INDEX IF NOT EXISTS idx_created ON clipboard_items(created_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_content_type ON clipboard_items(content_type);
-            CREATE INDEX IF NOT EXISTS idx_is_favorite ON clipboard_items(is_favorite);",
+            CREATE INDEX IF NOT EXISTS idx_content_type ON clipboard_items(content_type);",
         )?;
         // --- Tags tables ---
         self.conn.execute_batch(
@@ -780,6 +847,13 @@ impl Database {
     /// this from `reload_items()` — i.e. on every keystroke while a keyword is
     /// active — so without the cache each keystroke paid a whole-table
     /// `COUNT`/`MAX` scan.
+    ///
+    /// The query itself is served by the v12 partial/covering indexes: the two
+    /// flags are `EXISTS` probes that stop at the first matching index entry
+    /// instead of `MAX(…)` over every row, and the count is a narrow covering
+    /// range scan. `COUNT` is the same number as the old
+    /// `count_clipboard_items()`; callers read it from here so the refresh path
+    /// never pays a second whole-table scan for a value it already has.
     pub fn load_titlebar_stats(&self) -> SqlResult<TitlebarStats> {
         let revision = self.change_revision()?;
         if let Some(cache) = self.titlebar_stats_cache.borrow().as_ref() {
@@ -790,29 +864,25 @@ impl Database {
         // Counted so the cache test can prove a cache hit skipped the query.
         #[cfg(test)]
         TITLEBAR_STATS_QUERIES.with(|count| count.set(count.get() + 1));
-        let stats = self.conn.query_row(
-            "SELECT
-                COALESCE(MAX(custom_hotkey <> ''), 0),
-                COALESCE(MAX(is_favorite = 1), 0),
-                COUNT(CASE WHEN meta_type != 'transfer' THEN 1 END)
-             FROM clipboard_items",
-            [],
-            |row| {
-                Ok(TitlebarStats {
-                    has_hotkey_items: row.get::<_, i64>(0)? != 0,
-                    has_favorite_items: row.get::<_, i64>(1)? != 0,
-                    clearable_history_count: row.get::<_, i64>(2)? as u32,
-                })
-            },
-        )?;
+        let stats = self.conn.query_row(TITLEBAR_STATS_SQL, [], |row| {
+            Ok(TitlebarStats {
+                has_hotkey_items: row.get::<_, i64>(0)? != 0,
+                has_favorite_items: row.get::<_, i64>(1)? != 0,
+                clearable_history_count: row.get::<_, i64>(2)? as u32,
+            })
+        })?;
         *self.titlebar_stats_cache.borrow_mut() = Some(TitlebarStatsCache { revision, stats });
         Ok(stats)
     }
 
-    /// 库里的剪贴条目总数，不受任何筛选影响。标题栏用它显示「有多少条剪贴
-    /// 数据」，因此不能走列表分页的 `items.len()`（那一页永远只装得下
-    /// query_limit 条）。中转站条目是文件清单，不算剪贴数据，和
-    /// [`Self::count_clearable_history`] 一样排除。
+    /// 库里的剪贴条目总数，不受任何筛选影响。
+    ///
+    /// 生产路径不再单独查它：这个值与
+    /// [`Self::load_titlebar_stats`] 的 `clearable_history_count` 完全相同，
+    /// 而后者按 [`Self::change_revision`] 缓存。刷新路径（每次唤出、每次
+    /// 防抖按键、每次复制）因此只付一份缓存成本，而不是两次全表聚合。
+    /// 保留为测试专用，方便直接断言「中转站行不计入」的语义。
+    #[cfg(test)]
     pub fn count_clipboard_items(&self) -> SqlResult<u32> {
         self.conn.query_row(
             "SELECT COUNT(*) FROM clipboard_items WHERE meta_type != 'transfer'",
@@ -1809,13 +1879,9 @@ impl Database {
         if max_items == 0 {
             return Ok(Vec::new());
         }
-        let deletable_count: i64 = self.conn.query_row(
-            &format!(
-                "SELECT COUNT(*) FROM clipboard_items WHERE {MAINTENANCE_DELETABLE_PREDICATE}"
-            ),
-            [],
-            |row| row.get(0),
-        )?;
+        let deletable_count: i64 =
+            self.conn
+                .query_row(&prune_deletable_count_sql(), [], |row| row.get(0))?;
         if deletable_count <= max_items as i64 {
             return Ok(Vec::new());
         }
@@ -3952,6 +4018,95 @@ mod tests {
             5,
             "a commit from another connection must invalidate the cache"
         );
+    }
+
+    /// 文件库的读路径走 mmap 窗口；内存库无法映射，跳过。
+    #[test]
+    fn file_connections_use_the_mapped_read_window() {
+        let (_path, db) = temp_db("mmap-window");
+        let mapped: i64 = db
+            .conn
+            .query_row("PRAGMA mmap_size", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            mapped, 268_435_456,
+            "mmap_size must be applied to file connections"
+        );
+    }
+
+    /// 捕获/刷新路径上的聚合必须走索引。
+    ///
+    /// 这三个查询原先各自全表扫一遍（2 万条历史上单次 50–100 ms），而它们
+    /// 分别跑在每次唤出、每次防抖按键和每次复制上。这里用执行计划把「有人
+    /// 改了查询或索引名、悄悄退回全表扫描」挡在测试里。
+    #[test]
+    fn capture_aggregates_are_index_served() {
+        let db = Database::open(":memory:").unwrap();
+        for i in 0..2_000u64 {
+            insert_item(&db, i, "row", "2026-01-01T00:00:00Z");
+        }
+        // Model the real row width (text + inline icon). The planner only
+        // prefers a narrow index over the table when the table is actually
+        // wider than it; a fixture of tiny rows can legitimately choose the
+        // table scan that production must not use.
+        //
+        // Deliberately no ANALYZE: the app never runs it, and on this schema
+        // `sqlite_stat1` makes SQLite flip back to full table scans for these
+        // aggregates (measured), so the no-stats plan is the production plan.
+        db.conn
+            .execute(
+                "UPDATE clipboard_items SET full_text = ?1, source_app_icon = ?2",
+                rusqlite::params!["x".repeat(2_048), "A".repeat(2_400)],
+            )
+            .unwrap();
+        let cases: [(&str, String, &[&str]); 3] = [
+            (
+                "titlebar stats",
+                TITLEBAR_STATS_SQL.to_string(),
+                &["idx_non_transfer"],
+            ),
+            (
+                "prune count",
+                prune_deletable_count_sql(),
+                // Either narrow index is fine; what matters is that the wide
+                // table is not scanned.
+                &["idx_deletable", "idx_pinned_created"],
+            ),
+            (
+                "favorites page",
+                "SELECT id FROM clipboard_items WHERE is_favorite = 1 \
+                 ORDER BY pinned DESC, updated_at DESC LIMIT 200"
+                    .to_string(),
+                &["idx_fav_sort"],
+            ),
+        ];
+        for (name, sql, expected_indexes) in cases {
+            let mut stmt = db
+                .conn
+                .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+                .unwrap();
+            let plan: Vec<String> = stmt
+                .query_map([], |row| row.get::<_, String>(3))
+                .unwrap()
+                .map(|row| row.unwrap())
+                .collect();
+            assert!(
+                !plan.iter().any(|step| step.contains("TEMP B-TREE")),
+                "{name} sorts in memory: {plan:?}"
+            );
+            assert!(
+                !plan
+                    .iter()
+                    .any(|step| step.starts_with("SCAN clipboard_items") && !step.contains("USING")),
+                "{name} scans the whole table: {plan:?}"
+            );
+            assert!(
+                expected_indexes
+                    .iter()
+                    .any(|index| plan.iter().any(|step| step.contains(index))),
+                "{name} must be served by one of {expected_indexes:?}: {plan:?}"
+            );
+        }
     }
 
     #[test]

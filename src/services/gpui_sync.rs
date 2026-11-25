@@ -66,7 +66,10 @@ pub struct GpuiSyncService {
 impl GpuiSyncService {
     pub fn new(settings: &AppSettings, dirty: Arc<AtomicBool>) -> Self {
         let path = settings.resolve_db_path();
-        let db = Database::open(&path.to_string_lossy())
+        // The main window opened (and migrated) this database first; the sync
+        // worker only needs a connection. `Database::open` here would run the
+        // migration pass and the startup icon-prune UPDATE a second time.
+        let db = Database::open_for_job(&path.to_string_lossy())
             .unwrap_or_else(|e| panic!("Failed to open sync database at {path:?}: {e}"));
         let mut service = Self {
             db: Arc::new(Mutex::new(db)),
