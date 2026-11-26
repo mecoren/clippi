@@ -1,32 +1,33 @@
 //! Offline kaomoji data; category IDs match scripts/update-kaomoji-data.py.
 use super::emoji::EmojiEntry;
+use super::i18n_keys::I18nKey;
 use std::sync::OnceLock;
 
-pub const CATEGORIES: &[(&str, &str, &str)] = &[
-    ("可爱", "Cute", "♡"),
-    ("难过与哭泣", "Sad & crying", "☂"),
-    ("摸摸头", "Headpats", "♡"),
-    ("偷看", "Peeking", "◉"),
-    ("经典", "Classics", "☆"),
-    ("掀桌与投掷", "Table flips & throws", "ϟ"),
-    ("吃吃喝喝", "Food & drink", "☕"),
-    ("动物", "Animals", "ω"),
-    ("开心", "Happy", "☺"),
-    ("害羞", "Shy", "⁄"),
-    ("惊讶", "Surprised", "!"),
-    ("表情混搭", "Emoji mix", "✦"),
-    ("软萌", "Soft & cute", "♡"),
-    ("笑脸", "Smiling", "☺"),
-    ("闪闪发光", "Sparkles", "✧"),
-    ("宅与追星", "Fandom", "☆"),
-    ("喜欢与爱", "Love", "♥"),
-    ("吐舌与卖萌", "Playful", "♪"),
-    ("倒地", "Falling over", "↓"),
-    ("文字画", "ASCII art", "▧"),
-    ("困困", "Sleepy", "☾"),
-    ("生气", "Angry", "ϟ"),
-    ("加油", "Cheering", "⚑"),
-    ("打招呼", "Greetings", "✌"),
+pub const CATEGORIES: &[(I18nKey, &str)] = &[
+    (I18nKey::KaomojiCategoryCute, "♡"),
+    (I18nKey::KaomojiCategorySad, "☂"),
+    (I18nKey::KaomojiCategoryHeadpats, "♡"),
+    (I18nKey::KaomojiCategoryPeeking, "◉"),
+    (I18nKey::KaomojiCategoryClassics, "☆"),
+    (I18nKey::KaomojiCategoryTableFlips, "ϟ"),
+    (I18nKey::KaomojiCategoryFood, "☕"),
+    (I18nKey::KaomojiCategoryAnimals, "ω"),
+    (I18nKey::KaomojiCategoryHappy, "☺"),
+    (I18nKey::KaomojiCategoryShy, "⁄"),
+    (I18nKey::KaomojiCategorySurprised, "!"),
+    (I18nKey::KaomojiCategoryMix, "✦"),
+    (I18nKey::KaomojiCategorySoft, "♡"),
+    (I18nKey::KaomojiCategorySmiling, "☺"),
+    (I18nKey::KaomojiCategorySparkles, "✧"),
+    (I18nKey::KaomojiCategoryFandom, "☆"),
+    (I18nKey::KaomojiCategoryLove, "♥"),
+    (I18nKey::KaomojiCategoryPlayful, "♪"),
+    (I18nKey::KaomojiCategoryFalling, "↓"),
+    (I18nKey::KaomojiCategoryAsciiArt, "▧"),
+    (I18nKey::KaomojiCategorySleepy, "☾"),
+    (I18nKey::KaomojiCategoryAngry, "ϟ"),
+    (I18nKey::KaomojiCategoryCheering, "⚑"),
+    (I18nKey::KaomojiCategoryGreetings, "✌"),
 ];
 
 pub fn entries() -> &'static [EmojiEntry] {

@@ -36,7 +36,13 @@ pub fn fetch_and_store_title(url: &str, content_hash: u64, db_path: &str) -> boo
     }
     rd.page_title = Some(title);
     let json = rd.to_json();
-    db.update_rich_data(existing.id, &json).is_ok()
+    db.update_rich_data_checked(
+        existing.id,
+        existing.content_hash,
+        &existing.rich_data,
+        &json,
+    )
+    .unwrap_or(false)
 }
 
 /// Retry titles damaged by the former UTF-8-only decoder when a link is revisited.

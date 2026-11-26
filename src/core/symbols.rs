@@ -1,21 +1,22 @@
 //! Unicode-derived offline symbols; category IDs match update-symbol-data.py.
 use super::emoji::EmojiEntry;
+use super::i18n_keys::I18nKey;
 use std::sync::OnceLock;
 
-pub const CATEGORIES: &[(&str, &str, &str)] = &[
-    ("常用", "Common", "☆"),
-    ("箭头", "Arrows", "↔"),
-    ("数学", "Math", "±"),
-    ("标点", "Punctuation", "「"),
-    ("单位", "Units", "℃"),
-    ("货币", "Currency", "¥"),
-    ("几何图形", "Geometric shapes", "◇"),
-    ("制表线", "Box drawing", "┼"),
-    ("杂项", "Miscellaneous", "☀"),
-    ("技术", "Technical", "⌘"),
-    ("字母类", "Letterlike", "ℓ"),
-    ("数字", "Numbers", "①"),
-    ("希腊字母", "Greek letters", "Ω"),
+pub const CATEGORIES: &[(I18nKey, &str)] = &[
+    (I18nKey::SymbolCategoryCommon, "☆"),
+    (I18nKey::SymbolCategoryArrows, "↔"),
+    (I18nKey::SymbolCategoryMath, "±"),
+    (I18nKey::SymbolCategoryPunctuation, "「"),
+    (I18nKey::SymbolCategoryUnits, "℃"),
+    (I18nKey::SymbolCategoryCurrency, "¥"),
+    (I18nKey::SymbolCategoryGeometric, "◇"),
+    (I18nKey::SymbolCategoryBoxDrawing, "┼"),
+    (I18nKey::SymbolCategoryMisc, "☀"),
+    (I18nKey::SymbolCategoryTechnical, "⌘"),
+    (I18nKey::SymbolCategoryLetterlike, "ℓ"),
+    (I18nKey::SymbolCategoryNumbers, "①"),
+    (I18nKey::SymbolCategoryGreek, "Ω"),
 ];
 pub const COMMON: &str = "✓✔✕✖★☆♡♥●○■□◆◇※•…—©®™←↑→↓↔±×÷≈≠≤≥∞√∑∫℃℉°㎡㎥㎏%‰¥￥$€£Ωαβπ①②③";
 

@@ -485,7 +485,6 @@ pub enum WindowManagerEvent {
     /// Pin state changed (unpinned on hotkey show, or toggled by titlebar).
     PinnedChanged(bool),
     /// Tray menu "Settings" clicked — switch to settings view.
-    /// TODO: Implement when settings panel GPUI migration is complete.
     OpenSettings,
     /// Hotkey recording completed (success or error) — RootView should
     /// notify SettingsPanel to re-render with updated hotkey / recording state.
@@ -1526,7 +1525,10 @@ impl WindowManager {
         self.maintenance_job_running = true;
 
         std::thread::spawn(move || {
-            let result = match crate::core::db::Database::open(&db_path.to_string_lossy()) {
+            // Maintenance runs against the schema the main window already
+            // opened; `open` would re-run the migration chain and the icon
+            // prune (a write transaction) just to delete rows.
+            let result = match crate::core::db::Database::open_for_job(&db_path.to_string_lossy()) {
                 Ok(db) => {
                     let stats = crate::core::cache_cleanup::run_cleanup_with_options(
                         &db,
@@ -1574,7 +1576,10 @@ impl WindowManager {
         self.maintenance_job_running = true;
 
         std::thread::spawn(move || {
-            let result = match crate::core::db::Database::open(&db_path.to_string_lossy()) {
+            // Maintenance runs against the schema the main window already
+            // opened; `open` would re-run the migration chain and the icon
+            // prune (a write transaction) just to delete rows.
+            let result = match crate::core::db::Database::open_for_job(&db_path.to_string_lossy()) {
                 Ok(db) => {
                     // Clear clipboard history in a transaction.
                     let clear_result = match db.clear_clipboard_history(
@@ -3911,14 +3916,6 @@ impl WindowManager {
         );
 
         cx.emit(WindowManagerEvent::ClipboardChanged);
-    }
-
-    #[allow(dead_code)]
-    pub fn show_toast(&self, message: impl Into<String>, cx: &mut Context<Self>) {
-        self.state.update(cx, |state, cx| {
-            state.show_toast(message);
-            cx.notify();
-        });
     }
 
     pub fn show_warning_toast(&self, message: impl Into<String>, cx: &mut Context<Self>) {
@@ -7927,7 +7924,10 @@ impl WindowManager {
         self.maintenance_job_running = true;
 
         std::thread::spawn(move || {
-            let result = match crate::core::db::Database::open(&db_path.to_string_lossy()) {
+            // Maintenance runs against the schema the main window already
+            // opened; `open` would re-run the migration chain and the icon
+            // prune (a write transaction) just to delete rows.
+            let result = match crate::core::db::Database::open_for_job(&db_path.to_string_lossy()) {
                 Ok(db) => {
                     let stats = crate::core::cache_cleanup::run_cleanup_with_options(
                         &db,

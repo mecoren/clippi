@@ -517,13 +517,7 @@ impl SettingsPanel {
                 _ => (PillTone::Idle, I18nKey::SyncStatusOffline.text()),
             }
         };
-        let interval = backend.config.sync_interval_secs.unwrap_or_else(|| {
-            if backend.config.backend_type == "webdav" {
-                600
-            } else {
-                60
-            }
-        });
+        let interval = backend.effective_sync_interval_secs;
         let stats = format!(
             "{} · {} {} · {} {}",
             format_last_sync(&backend.config.last_sync_at),

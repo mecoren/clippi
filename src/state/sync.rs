@@ -5,6 +5,9 @@ use crate::core::settings::{AppSettings, BackendConfig};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackendStatus {
     pub config: BackendConfig,
+    /// Per-backend interval, or the global default when the backend leaves it
+    /// unset. Shown in the UI so the displayed cadence matches the scheduler.
+    pub effective_sync_interval_secs: u64,
     pub status: String,
     pub status_message: String,
     pub syncing: bool,
@@ -30,6 +33,8 @@ impl SyncState {
                 .cloned()
                 .map(|config| BackendStatus {
                     service_label: service_label(&config),
+                    effective_sync_interval_secs: config
+                        .effective_sync_interval(settings.sync_interval_secs),
                     config,
                     status: "offline".into(),
                     status_message: String::new(),
@@ -63,6 +68,8 @@ pub fn service_label(config: &BackendConfig) -> String {
     } else if lower.contains("icloud") {
         "iCloud".into()
     } else {
-        "Local".into()
+        crate::core::i18n_keys::I18nKey::TransferLocal
+            .text()
+            .to_string()
     }
 }

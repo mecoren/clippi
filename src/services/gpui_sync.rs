@@ -60,6 +60,8 @@ pub struct GpuiSyncService {
     favorites_only: bool,
     include_images: bool,
     compress_images: bool,
+    max_items: u32,
+    global_sync_interval: u64,
     last_message: String,
 }
 
@@ -79,6 +81,8 @@ impl GpuiSyncService {
             favorites_only: settings.sync_favorites_only,
             include_images: settings.sync_include_images,
             compress_images: settings.sync_compress_images,
+            max_items: settings.max_items,
+            global_sync_interval: settings.sync_interval_secs,
             last_message: String::new(),
         };
         service.reload_from_settings(settings);
@@ -94,6 +98,8 @@ impl GpuiSyncService {
         self.favorites_only = settings.sync_favorites_only;
         self.include_images = settings.sync_include_images;
         self.compress_images = settings.sync_compress_images;
+        self.max_items = settings.max_items;
+        self.global_sync_interval = settings.sync_interval_secs;
         self.backends = settings
             .sync_backends
             .iter()
@@ -227,7 +233,10 @@ impl GpuiSyncService {
         runtime
             .last_sync
             .map(|last| {
-                last.elapsed() >= Duration::from_secs(runtime.backend.sync_interval().max(1))
+                let interval = runtime
+                    .config
+                    .effective_sync_interval(self.global_sync_interval);
+                last.elapsed() >= Duration::from_secs(interval)
             })
             .unwrap_or(true)
     }
@@ -252,6 +261,7 @@ impl GpuiSyncService {
         let favorites_only = self.favorites_only;
         let include_images = self.include_images;
         let compress_images = self.compress_images;
+        let max_items = self.max_items;
 
         std::thread::spawn(move || {
             let cycle = run_sync_cycle_for_backend(
@@ -263,6 +273,10 @@ impl GpuiSyncService {
                 include_images,
                 compress_images,
             );
+            // Enforce the local history limit only after the push completed:
+            // pruning before push would remove rows from the remote snapshot
+            // even though this device merely trims its own view.
+            prune_after_sync(&db, max_items, cycle.success);
             *pending.lock().expect("sync result lock poisoned") =
                 Some(BackendSyncResult { backend_id, cycle });
             running.store(false, Ordering::SeqCst);
@@ -326,6 +340,9 @@ impl GpuiSyncService {
                 .iter()
                 .map(|runtime| UiBackendStatus {
                     config: runtime.config.clone(),
+                    effective_sync_interval_secs: runtime
+                        .config
+                        .effective_sync_interval(self.global_sync_interval),
                     status: if runtime.is_running.load(Ordering::Relaxed) {
                         "syncing".into()
                     } else {
@@ -443,7 +460,9 @@ fn summarize_sync_error(error: &str) -> String {
 
 pub fn format_last_sync(rfc3339: &str) -> String {
     if rfc3339.is_empty() {
-        return "Never synced".into();
+        return crate::core::i18n_keys::I18nKey::SyncNeverSynced
+            .text()
+            .to_string();
     }
     chrono::DateTime::parse_from_rfc3339(rfc3339)
         .map(|time| crate::core::types::format_relative_time(&time.to_utc()))
@@ -497,6 +516,32 @@ fn run_sync_cycle_for_backend(
         stats: MergeStats::default(),
         snapshot_counts: None,
         did_push: false,
+    }
+}
+
+/// Enforce the local max-items limit after a completed sync cycle.
+///
+/// Runs after the push on purpose: the remote snapshot must keep rows that
+/// this device trims locally, otherwise a device with a smaller limit would
+/// delete history for every other device. The next pull may re-import them;
+/// this keeps them out of the list in the meantime.
+fn prune_after_sync(db: &Mutex<Database>, max_items: u32, success: bool) {
+    if !success || max_items == 0 {
+        return;
+    }
+    let db = match db.lock() {
+        Ok(db) => db,
+        Err(e) => {
+            log::warn!("sync: skipping post-sync prune, database lock: {e}");
+            return;
+        }
+    };
+    match db.prune_items_over_limit(max_items) {
+        Ok(pruned) if !pruned.is_empty() => {
+            log::info!("sync: pruned {} item(s) over the local limit", pruned.len());
+        }
+        Ok(_) => {}
+        Err(e) => log::error!("sync: post-sync prune failed: {e}"),
     }
 }
 
@@ -930,10 +975,6 @@ mod tests {
             self.pushes.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
-
-        fn sync_interval(&self) -> u64 {
-            60
-        }
     }
 
     struct BlobMemoryBackend {
@@ -962,10 +1003,6 @@ mod tests {
         fn push(&self, payload: &SyncPayload) -> Result<(), String> {
             *self.pushed.lock().expect("payload lock") = Some(payload.clone());
             Ok(())
-        }
-
-        fn sync_interval(&self) -> u64 {
-            60
         }
 
         fn upload_blob(&self, hash_hex: &str, ext: &str, data: &[u8]) -> Result<(), String> {
@@ -1005,10 +1042,6 @@ mod tests {
             Ok(())
         }
 
-        fn sync_interval(&self) -> u64 {
-            60
-        }
-
         fn upload_blob(&self, _hash_hex: &str, _ext: &str, _data: &[u8]) -> Result<(), String> {
             Err("simulated blob failure".into())
         }
@@ -1034,10 +1067,6 @@ mod tests {
                 Ok(())
             }
         }
-
-        fn sync_interval(&self) -> u64 {
-            60
-        }
     }
 
     struct RecordingDownloadBackend {
@@ -1055,10 +1084,6 @@ mod tests {
 
         fn push(&self, _payload: &SyncPayload) -> Result<(), String> {
             Ok(())
-        }
-
-        fn sync_interval(&self) -> u64 {
-            60
         }
 
         fn download_blob(&self, hash_hex: &str, ext: &str) -> Result<Vec<u8>, String> {
@@ -1152,6 +1177,51 @@ mod tests {
         assert_eq!(result.snapshot_counts, Some((1, 0)));
         assert!(!result.did_push);
         assert_eq!(backend.pushes.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn post_sync_prune_trims_local_history_only_after_success() {
+        let db = Database::open(":memory:").expect("open in-memory database");
+        for (hash, text, updated) in [
+            (1, "oldest", "2026-01-01T00:00:00Z"),
+            (2, "middle", "2026-01-02T00:00:00Z"),
+            (3, "newest", "2026-01-03T00:00:00Z"),
+        ] {
+            db.insert_sync_item_raw(&SyncItem {
+                content_type: "plain_text".into(),
+                full_text: text.into(),
+                content_hash: hash,
+                created_at: updated.into(),
+                updated_at: updated.into(),
+                rich_data: String::new(),
+                is_favorite: false,
+                note: String::new(),
+                size: text.len() as i64,
+                tags: vec![],
+                meta_type: String::new(),
+                image_width: 0,
+                image_height: 0,
+                image_blob: String::new(),
+            })
+            .expect("insert sync item");
+        }
+        let db = Mutex::new(db);
+        let count = |db: &Mutex<Database>| {
+            db.lock()
+                .unwrap()
+                .load_titlebar_stats()
+                .unwrap()
+                .clearable_history_count
+        };
+
+        prune_after_sync(&db, 2, false);
+        assert_eq!(count(&db), 3, "a failed cycle must not trim history");
+
+        prune_after_sync(&db, 2, true);
+        assert_eq!(count(&db), 2);
+
+        prune_after_sync(&db, 0, true);
+        assert_eq!(count(&db), 2, "max_items = 0 disables the limit");
     }
 
     #[test]

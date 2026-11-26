@@ -1539,10 +1539,6 @@ mod tests {
             Err("unused".into())
         }
 
-        fn sync_interval(&self) -> u64 {
-            60
-        }
-
         fn pull_file_manifest(
             &self,
         ) -> Result<crate::core::transfer_types::ManifestSnapshot, String> {

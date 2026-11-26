@@ -734,12 +734,44 @@ impl SettingsPanel {
                                     }
                                     match migrate_database(&old, &new_path) {
                                         Ok(()) => {
-                                            state.update(cx, |s, _cx| {
-                                                s.settings.db_path = path_str;
-                                                s.settings.save();
-                                            });
-                                            let _ = crate::core::settings::spawn_new_process();
-                                            cx.update(|cx| cx.quit());
+                                            let previous =
+                                                cx.read_entity(&state, |s, _cx| s.settings.clone());
+                                            let mut migrated = previous.clone();
+                                            migrated.db_path = path_str;
+                                            if let Err(e) = migrated.save_result() {
+                                                task_panel.update(cx, |_panel, cx| {
+                                                    cx.emit(SettingsEvent::DataError(format!(
+                                                        "{}: {e}",
+                                                        I18nKey::ErrDataOp.text()
+                                                    )));
+                                                });
+                                                return;
+                                            }
+                                            match crate::core::settings::spawn_new_process() {
+                                                Ok(()) => {
+                                                    state.update(cx, |s, _cx| {
+                                                        s.settings = migrated;
+                                                    });
+                                                    cx.update(|cx| cx.quit());
+                                                }
+                                                Err(e) => {
+                                                    log::error!(
+                                                        "restart after database migration failed: {e}"
+                                                    );
+                                                    if let Err(e) = previous.save_result() {
+                                                        log::error!(
+                                                            "database migration rollback failed: {e}"
+                                                        );
+                                                    }
+                                                    task_panel.update(cx, |_panel, cx| {
+                                                        cx.emit(SettingsEvent::DataToast(
+                                                            I18nKey::ToastRestartFailed
+                                                                .text()
+                                                                .to_owned(),
+                                                        ));
+                                                    });
+                                                }
+                                            }
                                         }
                                         Err(e) => {
                                             task_panel.update(cx, |_panel, cx| {
@@ -1459,13 +1491,32 @@ impl SettingsPanel {
             // ── Fresh migration: target is empty ──
             match migrate_database(&old_path, &target_db) {
                 Ok(()) => {
-                    self.finalize_reset(
-                        &target_config,
-                        &new_db_path,
-                        &exe_dir,
-                        dialog.selected,
-                        cx,
-                    );
+                    // The merge branch copies images too; keep both paths in
+                    // sync so the new directory owns its cache and thumbnails.
+                    let copied = crate::core::paths::merge_cache_dirs(&old_path, &target_db);
+                    if copied > 0 {
+                        log::info!("reset: copied {copied} cached files");
+                    }
+                    // The copied database still stores absolute paths into the
+                    // old data directory; rewrite them to the new one.
+                    match remap_migrated_paths(&old_path, &target_db) {
+                        Ok(changed) => {
+                            if changed > 0 {
+                                log::info!("reset: rewrote {changed} cached paths");
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("reset: {e}");
+                            cx.emit(SettingsEvent::DataError(format!(
+                                "{}: {e}",
+                                I18nKey::ErrDataOp.text()
+                            )));
+                            return;
+                        }
+                    }
+                    let mut settings = self.state.read(cx).settings.clone();
+                    settings.db_path = new_db_path.to_string();
+                    self.finalize_reset(&target_config, settings, &exe_dir, dialog.selected, cx);
                 }
                 Err(e) => {
                     cx.emit(SettingsEvent::DataError(e));
@@ -1487,34 +1538,37 @@ impl SettingsPanel {
         cx: &mut Context<Self>,
     ) {
         // ── 1. Open the target database and merge the current DB into it. ──
-        match crate::core::db::Database::open(&target_db.to_string_lossy()) {
-            Ok(target) => {
-                match target.merge_from(old_path) {
-                    Ok(stats) => {
-                        log::info!(
-                            "reset: merged DB — items +{}/~{} tags +{}/~{}",
-                            stats.items_added,
-                            stats.items_updated,
-                            stats.tags_added,
-                            stats.tags_updated,
-                        );
-                    }
-                    Err(e) => {
-                        log::error!("reset: DB merge failed, falling back to copy: {e}");
-                        // Fall back to simple copy on merge failure.
-                        if let Err(e2) = migrate_database(old_path, target_db) {
-                            cx.emit(SettingsEvent::DataError(e2));
-                            return;
-                        }
-                    }
-                }
+        // A failed merge must never fall back to copying the source over the
+        // target: the target already holds its own history, and the user chose
+        // "merge" on that promise. Abort and leave both databases untouched.
+        let target = match crate::core::db::Database::open(&target_db.to_string_lossy()) {
+            Ok(target) => target,
+            Err(e) => {
+                log::error!("reset: failed to open target DB: {e}");
+                cx.emit(SettingsEvent::DataError(format!(
+                    "{}: {e}",
+                    I18nKey::ErrDataOp.text()
+                )));
+                return;
+            }
+        };
+        match target.merge_from(old_path) {
+            Ok(stats) => {
+                log::info!(
+                    "reset: merged DB — items +{}/~{} tags +{}/~{}",
+                    stats.items_added,
+                    stats.items_updated,
+                    stats.tags_added,
+                    stats.tags_updated,
+                );
             }
             Err(e) => {
-                log::error!("reset: failed to open target DB, falling back to copy: {e}");
-                if let Err(e2) = migrate_database(old_path, target_db) {
-                    cx.emit(SettingsEvent::DataError(e2));
-                    return;
-                }
+                log::error!("reset: DB merge failed: {e}");
+                cx.emit(SettingsEvent::DataError(format!(
+                    "{}: {e}",
+                    I18nKey::ErrDataOp.text()
+                )));
+                return;
             }
         }
 
@@ -1548,17 +1602,29 @@ impl SettingsPanel {
             s.db_path = new_db_path.to_string();
             s
         };
-        self.state.update(cx, |s, _cx| {
-            s.settings = merged;
-        });
-
-        // ── 3. Merge images directories. ──
-        let copied = crate::core::paths::merge_images_dir(old_path, target_db);
+        // ── 3. Merge cached files (images + file cache). ──
+        let copied = crate::core::paths::merge_cache_dirs(old_path, target_db);
         if copied > 0 {
-            log::info!("reset: copied {copied} image files");
+            log::info!("reset: copied {copied} cached files");
+        }
+        // ── 4. Rewrite cached absolute paths to the new directory. ──
+        match remap_migrated_paths(old_path, target_db) {
+            Ok(changed) => {
+                if changed > 0 {
+                    log::info!("reset: rewrote {changed} cached paths");
+                }
+            }
+            Err(e) => {
+                log::error!("reset: {e}");
+                cx.emit(SettingsEvent::DataError(format!(
+                    "{}: {e}",
+                    I18nKey::ErrDataOp.text()
+                )));
+                return;
+            }
         }
 
-        self.finalize_reset(target_config, new_db_path, exe_dir, selected, cx);
+        self.finalize_reset(target_config, merged, exe_dir, selected, cx);
     }
 
     /// Save config to target location, clean up exe-dir config if switching to
@@ -1566,32 +1632,49 @@ impl SettingsPanel {
     fn finalize_reset(
         &mut self,
         target_config: &std::path::Path,
-        new_db_path: &str,
+        settings: crate::core::settings::AppSettings,
         exe_dir: &std::path::Path,
         selected: StorageMode,
         cx: &mut Context<Self>,
     ) {
-        // Update in-memory db_path (may have been overridden by merge).
-        self.state.update(cx, |s, _cx| {
-            s.settings.db_path = new_db_path.to_string();
-        });
-
-        // Save config to the target location explicitly.
-        let settings = self.state.read(cx).settings.clone();
-        if let Ok(content) = toml::to_string_pretty(&settings) {
-            if let Some(parent) = target_config.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            let _ = std::fs::write(target_config, content);
+        // Save config to the target location explicitly. Use the same atomic
+        // temp+rename path as normal settings saves: a crash mid-write must not
+        // leave a truncated `clippi.toml` for the restarted process.
+        if let Some(parent) = target_config.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Err(e) = settings.save_atomic_to(target_config) {
+            log::error!("reset: failed to save target config: {e}");
+            cx.emit(SettingsEvent::DataError(e));
+            return;
         }
 
         // When switching to system mode, remove the old config from the
         // exe dir so that is_portable_mode() returns false on next startup.
         if selected == StorageMode::System {
-            let _ = std::fs::remove_file(exe_dir.join("clippi.toml"));
+            if let Err(e) = std::fs::remove_file(exe_dir.join("clippi.toml")) {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    log::error!("reset: failed to remove portable config: {e}");
+                    cx.emit(SettingsEvent::DataError(format!(
+                        "{}: {e}",
+                        I18nKey::ErrDataOp.text()
+                    )));
+                    return;
+                }
+            }
         }
 
-        let _ = crate::core::settings::spawn_new_process();
+        match crate::core::settings::spawn_new_process() {
+            Ok(()) => {
+                self.state.update(cx, |s, _cx| s.settings = settings);
+            }
+            Err(e) => {
+                // The target config/database are already in place; a manual
+                // restart will pick them up. Quit as before instead of leaving
+                // a process whose in-memory settings and open DB disagree.
+                log::error!("reset: failed to start the restarted process: {e}");
+            }
+        }
         cx.quit();
     }
 
@@ -1803,4 +1886,23 @@ impl SettingsPanel {
             )
             .into_any_element()
     }
+}
+
+/// Rewrite cached absolute paths in a database that was just copied or merged
+/// into a new data directory, so image previews and file entries keep working
+/// after the old directory is gone.
+fn remap_migrated_paths(
+    old_db: &std::path::Path,
+    new_db: &std::path::Path,
+) -> Result<usize, String> {
+    let old_dir = old_db
+        .parent()
+        .ok_or_else(|| "source database has no parent directory".to_string())?;
+    let new_dir = new_db
+        .parent()
+        .ok_or_else(|| "target database has no parent directory".to_string())?;
+    let db = crate::core::db::Database::open_for_job(&new_db.to_string_lossy())
+        .map_err(|e| format!("open migrated database: {e}"))?;
+    db.remap_cached_paths(old_dir, new_dir)
+        .map_err(|e| format!("rewrite cached paths: {e}"))
 }

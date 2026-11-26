@@ -13,6 +13,7 @@ use super::rich_preview;
 use super::search_highlight;
 use super::widgets::{self, solid};
 use crate::core::color::detect_color;
+use crate::core::i18n_keys::I18nKey;
 use crate::core::secret::sensitive_preview_to_text_with_types;
 use crate::core::types::{
     format_relative_time, path_is_native, url_domain, url_path, url_site_name, ClipboardItem,
@@ -1047,7 +1048,11 @@ impl QuickPasteView {
     /// Items for the floating tooltip menu: (label, mode, is_selected).
     fn tooltip_items(&self) -> Vec<(&'static str, String, bool)> {
         if self.ctrl_held && self.mutation_blocked {
-            return vec![("松开按键后继续", "blocked".to_string(), false)];
+            return vec![(
+                I18nKey::QuickReleaseToContinue.text(),
+                "blocked".to_string(),
+                false,
+            )];
         }
         if self.ctrl_held && !self.available_alt_modes.is_empty() {
             return self
@@ -1056,18 +1061,20 @@ impl QuickPasteView {
                 .enumerate()
                 .map(|(i, mode)| {
                     let label = match mode.as_str() {
-                        "bitmap" => "粘贴为位图",
-                        "path" => "粘贴图片路径",
-                        "ocr" => "粘贴OCR文本",
-                        "rgb" => "粘贴为RGB",
-                        "hex" => "粘贴为HEX",
-                        "file_path" => "粘贴文件路径",
-                        "default" => "粘贴",
-                        "favorite" if self.advanced_favorite => "取消收藏",
-                        "favorite" => "收藏",
-                        "delete" if self.pending_delete == self.alt_mode_item_id => "确认删除",
-                        "delete" => "删除",
-                        _ => "高级粘贴",
+                        "bitmap" => I18nKey::CtxPasteImageBitmap.text(),
+                        "path" => I18nKey::CtxPasteImagePath.text(),
+                        "ocr" => I18nKey::CtxPasteOcr.text(),
+                        "rgb" => I18nKey::CtxPasteAsRgb.text(),
+                        "hex" => I18nKey::CtxPasteAsHex.text(),
+                        "file_path" => I18nKey::CtxPasteFilePath.text(),
+                        "default" => I18nKey::CtxPaste.text(),
+                        "favorite" if self.advanced_favorite => I18nKey::CtxUnfav.text(),
+                        "favorite" => I18nKey::CtxFav.text(),
+                        "delete" if self.pending_delete == self.alt_mode_item_id => {
+                            I18nKey::ConfirmDeleteSingleTitle.text()
+                        }
+                        "delete" => I18nKey::CtxDelete.text(),
+                        _ => I18nKey::QuickAdvancedPaste.text(),
                     };
                     (label, mode.clone(), i == self.current_alt_index)
                 })
@@ -1142,9 +1149,9 @@ impl Render for QuickPasteView {
         // 未聚焦且没有输入时只显示提示文本，聚焦后提示文本让位给输入内容与光标。
         let query_text: SharedString = self.query.clone().into();
         let empty_text: SharedString = if self.query.is_empty() {
-            "No clipboard items".into()
+            I18nKey::ListNoItems.text().into()
         } else {
-            "没有匹配的条目".into()
+            I18nKey::QuickNoMatches.text().into()
         };
 
         // 搜索框文本层：空且未聚焦时是「搜索」提示文本，否则是用户输入。
@@ -1156,7 +1163,7 @@ impl Render for QuickPasteView {
                     .text_ellipsis()
                     .text_size(typography::font(type_role::BODY))
                     .text_color(ink_3)
-                    .child("搜索")
+                    .child(I18nKey::QuickSearchPlaceholder.text())
                     .into_any_element()
             })
         } else {
@@ -2044,7 +2051,11 @@ impl Render for QuickPasteView {
                                 IconSize::Sm.scaled(),
                                 p.ink_3,
                             ))
-                            .child(div().whitespace_nowrap().child("Enter 粘贴"))
+                            .child(
+                                div()
+                                    .whitespace_nowrap()
+                                    .child(I18nKey::QuickHintEnterPaste.text()),
+                            )
                             .child(
                                 div()
                                     .whitespace_nowrap()
@@ -2052,9 +2063,9 @@ impl Render for QuickPasteView {
                                         s.font_weight(typography::LABEL_WEIGHT).text_color(accent)
                                     })
                                     .child(if self.shift_held {
-                                        "Shift 纯文本粘贴"
+                                        I18nKey::QuickHintShiftPlainHeld.text()
                                     } else {
-                                        "Shift 纯文本"
+                                        I18nKey::QuickHintShiftPlain.text()
                                     }),
                             )
                             .child(
@@ -2063,7 +2074,10 @@ impl Render for QuickPasteView {
                                     .when(self.ctrl_held, |s| {
                                         s.font_weight(typography::LABEL_WEIGHT).text_color(accent)
                                     })
-                                    .child(format!("{} 高级功能", advanced_modifier_label())),
+                                    .child(
+                                        I18nKey::QuickHintAdvanced
+                                            .fmt(&[advanced_modifier_label()]),
+                                    ),
                             ),
                     )
                     // Search field. The popup never takes focus, so this renders
@@ -2170,14 +2184,19 @@ fn preview_parts(
                 let name = std::path::Path::new(&path)
                     .file_name()
                     .and_then(|value| value.to_str())
-                    .unwrap_or("Image")
+                    .unwrap_or(I18nKey::FilterImageLabel.text())
                     .to_string();
                 return (name, Some(path));
             }
             let label = if item.image_width > 0 && item.image_height > 0 {
-                format!("Image {}×{}", item.image_width, item.image_height)
+                format!(
+                    "{} {}×{}",
+                    I18nKey::FilterImageLabel.text(),
+                    item.image_width,
+                    item.image_height
+                )
             } else {
-                "Image".to_string()
+                I18nKey::FilterImageLabel.text().to_string()
             };
             return (label, None);
         }

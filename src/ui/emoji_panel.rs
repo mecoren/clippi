@@ -13,17 +13,17 @@ use crate::core::i18n_keys::I18nKey;
 use crate::core::{kaomoji, symbols};
 use crate::state::app::AppState;
 
-const EMOJI_CATEGORIES: &[(&str, &str, &str)] = &[
-    ("最近使用", "Recent", "ClockIcon"),
-    ("笑脸与情感", "Smileys & emotion", "FaceSmileIcon"),
-    ("人物与手势", "People & body", "HandIcon"),
-    ("动物与自然", "Animals & nature", "LeafIcon"),
-    ("食物与饮料", "Food & drink", "AppleIcon"),
-    ("旅行与地点", "Travel & places", "PlaneIcon"),
-    ("活动", "Activities", "TrophyIcon"),
-    ("物品", "Objects", "LightbulbIcon"),
-    ("符号", "Symbols", "HashIcon"),
-    ("旗帜", "Flags", "FlagIcon"),
+const EMOJI_CATEGORIES: &[(I18nKey, &str)] = &[
+    (I18nKey::EmojiRecent, "ClockIcon"),
+    (I18nKey::EmojiCategorySmileys, "FaceSmileIcon"),
+    (I18nKey::EmojiCategoryPeople, "HandIcon"),
+    (I18nKey::EmojiCategoryNature, "LeafIcon"),
+    (I18nKey::EmojiCategoryFood, "AppleIcon"),
+    (I18nKey::EmojiCategoryTravel, "PlaneIcon"),
+    (I18nKey::EmojiCategoryActivities, "TrophyIcon"),
+    (I18nKey::EmojiCategoryObjects, "LightbulbIcon"),
+    (I18nKey::EmojiSymbols, "HashIcon"),
+    (I18nKey::EmojiCategoryFlags, "FlagIcon"),
 ];
 
 // The recent row can be shorter than the regular grid and has a heading below it.
@@ -119,7 +119,7 @@ impl EmojiPanel {
         self.rebuild(cx);
     }
 
-    fn categories(&self) -> Vec<(&'static str, &'static str, &'static str)> {
+    fn categories(&self) -> Vec<(I18nKey, &'static str)> {
         match self.kind {
             1 => std::iter::once(EMOJI_CATEGORIES[0])
                 .chain(kaomoji::CATEGORIES.iter().copied())
@@ -132,12 +132,7 @@ impl EmojiPanel {
     }
 
     fn category_label(&self) -> &'static str {
-        let item = self.categories()[self.category];
-        if crate::core::i18n::is_en() {
-            item.1
-        } else {
-            item.0
-        }
+        self.categories()[self.category].0.text()
     }
 
     fn rebuild(&mut self, cx: &mut Context<Self>) {
@@ -334,7 +329,7 @@ impl Render for EmojiPanel {
         let text_2 = p.ink_2;
         let mut tabs = filter_toolbar().gap(px(4.)).mb(px(4.));
         for (index, label) in [
-            "Emoji",
+            I18nKey::EmojiTab.text(),
             I18nKey::EmojiKaomoji.text(),
             I18nKey::EmojiSymbols.text(),
         ]
@@ -367,8 +362,8 @@ impl Render for EmojiPanel {
             );
         }
         let mut choices_ui = Vec::new();
-        for (index, &(zh, en, icon)) in categories.iter().enumerate() {
-            let label = if crate::core::i18n::is_en() { en } else { zh };
+        for (index, &(label_key, icon)) in categories.iter().enumerate() {
+            let label = label_key.text();
             let color = if self.category == index {
                 p.accent
             } else {
@@ -582,7 +577,9 @@ impl Render for EmojiPanel {
 
 #[cfg(test)]
 mod tests {
-    use super::vertical_selection;
+    use super::{vertical_selection, EMOJI_CATEGORIES};
+    use crate::core::i18n_keys::I18nKey;
+    use crate::core::{kaomoji, symbols};
 
     #[test]
     fn vertical_navigation_respects_partial_recent_row() {
@@ -602,5 +599,21 @@ mod tests {
         assert_eq!(vertical_selection(24, true, 8, 0, 25), 24);
         assert_eq!(vertical_selection(0, true, 8, 0, 0), 0);
         assert_eq!(vertical_selection(0, true, 8, 1, 1), 0);
+    }
+
+    #[test]
+    fn picker_category_labels_are_registered_i18n_keys() {
+        let categories = EMOJI_CATEGORIES
+            .iter()
+            .chain(kaomoji::CATEGORIES)
+            .chain(symbols::CATEGORIES);
+        for &(label, _) in categories {
+            assert!(
+                I18nKey::ALL.contains(&label),
+                "picker category uses an unregistered key: {label:?}"
+            );
+        }
+        assert_eq!(I18nKey::EmojiTab.chinese(), "Emoji");
+        assert_eq!(I18nKey::EmojiTab.english(), "Emoji");
     }
 }

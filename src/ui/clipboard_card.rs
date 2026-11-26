@@ -834,7 +834,7 @@ fn image_display_name(item: &ClipboardItem) -> String {
                 .and_then(|name| name.to_str())
                 .filter(|name| !name.is_empty())
         })
-        .unwrap_or("Image")
+        .unwrap_or(crate::core::i18n_keys::I18nKey::FilterImageLabel.text())
         .to_string()
 }
 

@@ -832,32 +832,8 @@ fn asset_patterns_for(
 
 /// Open the releases page in the system browser.
 pub fn open_releases_page(url: &str) {
-    #[cfg(target_os = "windows")]
-    {
-        let url_utf16: Vec<u16> = url.encode_utf16().chain(std::iter::once(0)).collect();
-        // SAFETY: All string arguments are NUL-terminated UTF-16. `ShellExecuteW`
-        // is called with `SW_SHOW` to open the URL in the default browser —
-        // a read-only operation with respect to our process.
-        unsafe {
-            use windows_sys::Win32::UI::Shell::ShellExecuteW;
-            use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOW;
-            ShellExecuteW(
-                std::ptr::null_mut(),
-                "open\0".encode_utf16().collect::<Vec<u16>>().as_ptr(),
-                url_utf16.as_ptr(),
-                std::ptr::null(),
-                std::ptr::null(),
-                SW_SHOW,
-            );
-        }
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let _ = std::process::Command::new("open").arg(url).spawn();
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    {
-        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+    if let Err(error) = crate::platform::open_target::open(url) {
+        log::warn!("Failed to open releases page: {error}");
     }
 }
 

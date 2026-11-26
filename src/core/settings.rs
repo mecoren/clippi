@@ -3,9 +3,15 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::filters::BUILTIN_TYPE_KEYS;
 use super::i18n_keys::I18nKey;
+
+/// Set when the live config exists but could not be read at startup and no
+/// usable backup was available. Saving would replace a file the user still has
+/// on disk with defaults, so writes are refused for the rest of the session.
+static CONFIG_READ_FAILED: AtomicBool = AtomicBool::new(false);
 
 #[cfg(target_os = "windows")]
 use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE};
@@ -58,6 +64,14 @@ pub struct BackendConfig {
     pub webdav_password: String,
 }
 
+impl BackendConfig {
+    /// Scheduler interval: the per-backend value when set, otherwise the
+    /// global `sync_interval_secs`. Clamped to at least one second.
+    pub fn effective_sync_interval(&self, global_secs: u64) -> u64 {
+        self.sync_interval_secs.unwrap_or(global_secs).max(1)
+    }
+}
+
 /// User-configurable entry for a single content-type filter button.
 /// Order in the Vec determines display order in the filter bar.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,9 +99,11 @@ pub struct LatestHotkeyEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
+    #[serde(default = "default_theme")]
     pub theme: String,
     #[serde(default = "default_theme_color")]
     pub theme_color: String,
+    #[serde(default = "default_hotkey")]
     pub hotkey: String,
     #[serde(default)]
     pub replace_system_win_v: bool,
@@ -105,15 +121,23 @@ pub struct AppSettings {
     /// 非空 = 注册并生效（spec §2）。TOML 标量，旧配置缺失时按空值加载。
     #[serde(default)]
     pub paste_plain_hotkey: String,
+    #[serde(default)]
     pub auto_start: bool,
+    #[serde(default = "default_true")]
     pub auto_hide: bool,
+    #[serde(default)]
     pub db_path: String,
+    #[serde(default)]
     pub sort_by_created: bool, // true=sort by creation time, false=sort by update time
     #[serde(default)]
     pub search_favorites_first: bool, // prioritize favorite items in keyword search results
+    #[serde(default = "default_window_position_mode")]
     pub window_position_mode: String, // "center" | "follow" | "remember"
+    #[serde(default = "default_saved_window_position")]
     pub saved_window_x: i32,
+    #[serde(default = "default_saved_window_position")]
     pub saved_window_y: i32,
+    #[serde(default = "default_card_height_mode")]
     pub card_height_mode: String, // "low" | "medium" | "high" | "auto"
     /// 纯文本内容预览：卡片内容区、悬停预览与独立预览窗口只显示原始文本，
     /// 不做富文本 / 链接 / 颜色等样式还原（EcoPaste 式扁平预览）。默认关闭，
@@ -144,7 +168,7 @@ pub struct AppSettings {
     /// 显示/隐藏时的淡入淡出；快捷粘贴窗与标签侧栏始终瞬时。
     #[serde(default)]
     pub window_motion: Option<bool>,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub silent_start: bool,
     #[serde(default)]
     pub show_source_app: bool,
@@ -184,7 +208,7 @@ pub struct AppSettings {
     pub sync_auto_enabled: bool, // auto-sync toggle (dirty flag + interval)
     #[serde(default)]
     pub saved_enabled_backend_ids: Vec<String>, // remember state before master off
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub sync_favorites_only: bool, // only sync favorited items
     #[serde(default)]
     pub sync_include_images: bool, // include image items in sync
@@ -317,8 +341,34 @@ pub struct AppSettings {
     pub alt_shortcuts_enabled: bool,
 }
 
+fn default_theme() -> String {
+    "system".to_string()
+}
+
+fn default_hotkey() -> String {
+    "Alt+V".to_string()
+}
+
+fn default_saved_window_position() -> i32 {
+    -1
+}
+
 fn default_preview_hover_enabled() -> bool {
     true
+}
+
+/// Older configs may predate a `#[serde(default)]`-less field; a missing key
+/// must not reset every other setting by failing the whole parse.
+fn default_true() -> bool {
+    true
+}
+
+fn default_window_position_mode() -> String {
+    "center".to_string()
+}
+
+fn default_card_height_mode() -> String {
+    "auto".to_string()
 }
 
 fn default_preview_hover_delay_ms() -> u32 {
@@ -523,6 +573,24 @@ impl Default for AppSettings {
     }
 }
 
+/// Read the live config, retrying briefly: antivirus scanners and cloud-sync
+/// clients can hold `clippi.toml` for a few milliseconds during startup.
+fn read_config_with_retry(path: &Path) -> std::io::Result<String> {
+    let mut last_error = None;
+    for attempt in 0..3 {
+        match std::fs::read_to_string(path) {
+            Ok(content) => return Ok(content),
+            Err(error) => {
+                last_error = Some(error);
+                if attempt < 2 {
+                    std::thread::sleep(std::time::Duration::from_millis(40));
+                }
+            }
+        }
+    }
+    Err(last_error.expect("read loop records at least one error"))
+}
+
 impl AppSettings {
     pub fn show_source_app_filter(&self) -> bool {
         self.show_source_app && self.source_app_filter_enabled
@@ -530,27 +598,52 @@ impl AppSettings {
 
     pub fn load() -> Self {
         let path = Self::config_path();
+        let mut save_blocked = false;
         let mut settings: Self = if path.exists() {
-            let content = match std::fs::read_to_string(&path) {
-                Ok(c) => c,
+            match read_config_with_retry(&path) {
+                Ok(content) => match toml::from_str(&content) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        log::error!("配置文件解析失败: {e}");
+                        let backup = path.with_extension("toml.bak");
+                        if !backup.exists() {
+                            let _ = std::fs::copy(&path, &backup);
+                            log::warn!("已备份损坏的配置文件到 {}", backup.display());
+                        }
+                        Self::default()
+                    }
+                },
                 Err(e) => {
                     log::error!("无法读取配置文件 {}: {e}", path.display());
-                    return Self::default();
-                }
-            };
-            match toml::from_str(&content) {
-                Ok(s) => s,
-                Err(e) => {
-                    log::error!("配置文件解析失败: {e}");
+                    // A sharing violation (antivirus, cloud-sync client) is not
+                    // evidence that the config is gone, and the file on disk may
+                    // be newer than our backup. Keep this session read-only for
+                    // config: use the backup in memory, but never write defaults
+                    // or stale values over the user's file.
+                    save_blocked = true;
                     let backup = path.with_extension("toml.bak");
-                    let _ = std::fs::copy(&path, &backup);
-                    log::warn!("已备份损坏的配置文件到 {}", backup.display());
-                    Self::default()
+                    match std::fs::read_to_string(&backup)
+                        .ok()
+                        .and_then(|content| toml::from_str::<Self>(&content).ok())
+                    {
+                        Some(settings) => {
+                            log::warn!(
+                                "配置不可读；本次会话使用备份 {} 且不会写入 clippi.toml",
+                                backup.display()
+                            );
+                            settings
+                        }
+                        None => {
+                            log::error!("配置不可读且无可用备份；本次会话不会写入 clippi.toml");
+                            Self::default()
+                        }
+                    }
                 }
             }
         } else {
             Self::default()
         };
+        CONFIG_READ_FAILED.store(save_blocked, Ordering::SeqCst);
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         {
             let scale = crate::platform::monitor::get_scale_factor(
@@ -720,6 +813,11 @@ impl AppSettings {
     pub fn save_result(&self) -> Result<(), String> {
         if cfg!(test) {
             return Ok(());
+        }
+        if CONFIG_READ_FAILED.load(Ordering::SeqCst) {
+            return Err(
+                "clippi.toml could not be read at startup; refusing to overwrite it".into(),
+            );
         }
         let path = Self::config_path();
         if let Some(parent) = path.parent() {
@@ -1860,6 +1958,18 @@ mod tests {
     }
 
     #[test]
+    fn backend_interval_uses_the_global_default_only_when_unset() {
+        let mut backend = bk("b", "Backend");
+        assert_eq!(backend.effective_sync_interval(300), 300);
+
+        backend.sync_interval_secs = Some(45);
+        assert_eq!(backend.effective_sync_interval(300), 45);
+
+        backend.sync_interval_secs = Some(0);
+        assert_eq!(backend.effective_sync_interval(300), 1);
+    }
+
+    #[test]
     fn migrate_webdav_fields_preserves_legacy_url_as_root() {
         let mut settings = AppSettings::default();
         settings.sync_backends.push(BackendConfig {
@@ -2231,6 +2341,46 @@ mod tests {
         let parsed: AppSettings = toml::from_str(&legacy_config).unwrap();
 
         assert!(parsed.paste_plain_hotkey.is_empty());
+    }
+
+    #[test]
+    fn empty_config_parses_into_fresh_install_defaults() {
+        let parsed: AppSettings = toml::from_str("").unwrap();
+        let defaults = AppSettings::default();
+        assert_eq!(parsed.theme, defaults.theme);
+        assert_eq!(parsed.hotkey, defaults.hotkey);
+        assert_eq!(parsed.saved_window_x, defaults.saved_window_x);
+        assert_eq!(parsed.saved_window_y, defaults.saved_window_y);
+    }
+
+    #[test]
+    fn missing_boolean_and_mode_fields_match_fresh_install_defaults() {
+        let serialized = toml::to_string(&AppSettings::default()).unwrap();
+        let omitted = [
+            "silent_start",
+            "sync_favorites_only",
+            "auto_hide",
+            "window_position_mode",
+            "card_height_mode",
+        ];
+        let legacy = serialized
+            .lines()
+            .filter(|line| {
+                !omitted
+                    .iter()
+                    .any(|key| line.starts_with(&format!("{key} =")))
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let parsed: AppSettings = toml::from_str(&legacy).unwrap();
+        let defaults = AppSettings::default();
+
+        assert_eq!(parsed.silent_start, defaults.silent_start);
+        assert_eq!(parsed.sync_favorites_only, defaults.sync_favorites_only);
+        assert_eq!(parsed.auto_hide, defaults.auto_hide);
+        assert_eq!(parsed.window_position_mode, defaults.window_position_mode);
+        assert_eq!(parsed.card_height_mode, defaults.card_height_mode);
     }
 
     #[test]

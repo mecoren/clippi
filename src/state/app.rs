@@ -537,7 +537,11 @@ impl AppState {
     }
 
     /// Open the database and load initial data.
-    pub fn new(settings: AppSettings) -> Self {
+    ///
+    /// Returns an error instead of panicking so startup can show the user why
+    /// the database could not be opened (lock, read-only path, corruption)
+    /// rather than exiting silently with only a log line.
+    pub fn try_new(settings: AppSettings) -> Result<Self, String> {
         let db_path = settings.resolve_db_path();
         crate::core::paths::init_images_dir(&settings.db_path);
         let order_by = if settings.sort_by_created {
@@ -553,7 +557,7 @@ impl AppState {
         // 增量分页：首屏只取一页，其余行在滚动接近页尾时按需扩容。
         let loaded_limit = LIST_PAGE_STEP.min(query_limit);
         let db = Database::open(&db_path.to_string_lossy())
-            .unwrap_or_else(|e| panic!("Failed to open database at {db_path:?}: {e}"));
+            .map_err(|e| format!("Failed to open database at {db_path:?}: {e}"))?;
         // Startup cleanup is deferred to the first WindowManager poll tick
         // which checks cleanup_last_date / retention_cleanup_last_date and
         // schedules the work on a background thread.
@@ -593,7 +597,7 @@ impl AppState {
         // `max(items.len())` 只是统计读取失败时的兜底：列表页永远是总数的
         // 子集，正常情况下取不到更大值，失败时才不至于把标题栏显示成 0。
         let total_item_count = stats.clearable_history_count.max(items.len() as u32);
-        Self {
+        Ok(Self {
             source_app_icons: if settings.show_source_app_filter() {
                 db.source_app_icon_paths().unwrap_or_else(|error| {
                     log::error!("Failed to load source app icons: {error}");
@@ -674,7 +678,7 @@ impl AppState {
             sync,
             update_available: None,
             update_phase: UpdatePhase::Idle,
-        }
+        })
     }
 
     /// Check whether a mutation on this item should mark sync as dirty.
@@ -1797,6 +1801,12 @@ impl AppState {
             }
         };
         let mark_dirty = self.should_mark_sync_dirty(&existing);
+        // The row keeps its identity but changes content_hash. Remote devices
+        // still carry the old hash until they pull this edit; without a
+        // tombstone the merge would re-import the pre-edit content as a new
+        // item. Record the deletion only when the content actually changed.
+        let old_hash = existing.content_hash;
+        let new_hash = Self::hash_text(text);
         let (content_type, meta_type, rebuilt_rich_data) =
             Self::storage_for_editor_type(editor_type, text);
         // Saving an RTF entry whose text was not touched keeps the stored
@@ -1816,6 +1826,18 @@ impl AppState {
         {
             Ok(true) => {
                 if mark_dirty {
+                    if old_hash != new_hash {
+                        let device = crate::services::backends::local_folder::hostname();
+                        if let Err(e) = self.db.record_item_deletion(
+                            old_hash,
+                            &chrono::Utc::now().to_rfc3339(),
+                            &device,
+                        ) {
+                            log::error!(
+                                "apply_content_edit({id}): tombstone old content {old_hash}: {e}"
+                            );
+                        }
+                    }
                     self.sync_dirty.store(true, Ordering::SeqCst);
                 }
                 // Incremental update: preserve scroll position (consistent with
@@ -1832,9 +1854,7 @@ impl AppState {
                     item.image_height = 0;
                     item.size = text.chars().count() as i64;
                     item.updated_at = chrono::Utc::now();
-                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                    std::hash::Hash::hash(&text, &mut hasher);
-                    item.content_hash = std::hash::Hasher::finish(&hasher);
+                    item.content_hash = new_hash;
                 }
                 true
             }
@@ -2301,15 +2321,19 @@ impl AppState {
             }
 
             // ── Lazy drive-label fill for old path items ──────────
-            let rd = RichData::from_json(&item.rich_data);
+            // The main connection is already open and migrated; opening a
+            // second one here would re-run the migration chain and the icon
+            // prune just to write one column.
+            let mut rd = RichData::from_json(&item.rich_data);
             if rd.drive_label.is_none() {
                 if let Some(label) = crate::core::types::path_drive_label(&item.full_text) {
-                    let resolved = crate::core::paths::resolve_db_path(&self.settings.db_path);
-                    if let Ok(db) = crate::core::db::Database::open(&resolved.to_string_lossy()) {
-                        let mut new_rd = rd;
-                        new_rd.drive_label = Some(label);
-                        let _ = db.update_rich_data(item.id, &new_rd.to_json());
-                    }
+                    rd.drive_label = Some(label);
+                    let _ = self.db.update_rich_data_checked(
+                        item.id,
+                        item.content_hash,
+                        &item.rich_data,
+                        &rd.to_json(),
+                    );
                 }
             }
 
@@ -2560,10 +2584,21 @@ impl AppState {
                         Ok(Some(text)) => {
                             let mut next_rich = RichData::from_json(&item.rich_data);
                             next_rich.qr_text = Some(text.clone());
-                            if let Err(e) = self.db.update_rich_data(id, &next_rich.to_json()) {
-                                log::error!("qr_detect: update rich_data failed for {id}: {e}");
+                            let updated = match self.db.update_rich_data_checked(
+                                item.id,
+                                item.content_hash,
+                                &item.rich_data,
+                                &next_rich.to_json(),
+                            ) {
+                                Ok(updated) => updated,
+                                Err(e) => {
+                                    log::error!("qr_detect: update rich_data failed for {id}: {e}");
+                                    false
+                                }
+                            };
+                            if updated {
+                                self.reload_items();
                             }
-                            self.reload_items();
                             Some(text)
                         }
                         Ok(None) => None,
@@ -2629,12 +2664,25 @@ impl AppState {
                     Ok(text) if !text.trim().is_empty() => {
                         let mut next_rich = RichData::from_json(&existing_rich);
                         next_rich.ocr_text = Some(text.clone());
-                        match self.db.update_rich_data(id, &next_rich.to_json()) {
-                            Ok(_) => {
+                        let checked = item.as_ref().map_or(Ok(false), |item| {
+                            self.db.update_rich_data_checked(
+                                item.id,
+                                item.content_hash,
+                                &item.rich_data,
+                                &next_rich.to_json(),
+                            )
+                        });
+                        match checked {
+                            Ok(true) => {
                                 // OCR changes the card payload and potentially
                                 // its measured height. Do not reuse the stale
                                 // incremental list cache after this action.
                                 self.usage_sync_requires_full_reload = true;
+                            }
+                            Ok(false) => {
+                                log::info!(
+                                    "paste_ocr: entry {id} changed while OCR ran; dropping result"
+                                );
                             }
                             Err(e) => {
                                 log::error!("paste_ocr: update rich_data failed for {id}: {e}");
@@ -3826,41 +3874,8 @@ fn editor_text(item: &ClipboardItem) -> String {
 }
 
 fn open_system_target(target: &str) {
-    #[cfg(target_os = "windows")]
-    {
-        use windows_sys::Win32::UI::Shell::ShellExecuteW;
-        use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOW;
-
-        let operation: Vec<u16> = "open\0".encode_utf16().collect();
-        let target_utf16: Vec<u16> = target.encode_utf16().chain(std::iter::once(0)).collect();
-        unsafe {
-            let ret = ShellExecuteW(
-                std::ptr::null_mut(),
-                operation.as_ptr(),
-                target_utf16.as_ptr(),
-                std::ptr::null(),
-                std::ptr::null(),
-                SW_SHOW,
-            );
-            // ShellExecuteW returns a value > 32 on success; <= 32 is an error.
-            if (ret as isize) <= 32 {
-                log::error!(
-                    "ShellExecuteW failed for '{}': error code {}",
-                    target,
-                    ret as isize,
-                );
-            }
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        let _ = std::process::Command::new("open").arg(target).spawn();
-    }
-
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    {
-        let _ = std::process::Command::new("xdg-open").arg(target).spawn();
+    if let Err(error) = crate::platform::open_target::open(target) {
+        log::error!("Failed to open {target:?}: {error}");
     }
 }
 
@@ -6056,6 +6071,59 @@ mod tests {
         assert!(
             !dirty.load(Ordering::SeqCst),
             "non-favorite item in fav-only mode: should NOT set dirty"
+        );
+    }
+
+    #[test]
+    fn save_edited_item_tombstones_the_pre_edit_content_hash() {
+        let (mut state, _dirty) = test_state();
+        state.settings.sync_favorites_only = false;
+        let mut item = make_item(1, ContentType::PlainText, false, "original");
+        // make_item fabricates a hash; real rows hash their text, and the
+        // unchanged-content case depends on that invariant.
+        item.content_hash = AppState::hash_text("original");
+        state.db.upsert(&item).unwrap();
+        state.items.push(item.clone());
+
+        assert!(state.save_edited_item(1, "edited", "plain"));
+        assert!(
+            state.db.is_item_tombstoned(item.content_hash).unwrap(),
+            "old content hash must be tombstoned so remote copies do not resurrect"
+        );
+        assert!(
+            !state
+                .db
+                .is_item_tombstoned(AppState::hash_text("edited"))
+                .unwrap(),
+            "the new content must stay importable"
+        );
+    }
+
+    #[test]
+    fn save_edited_item_does_not_tombstone_unchanged_content() {
+        let (mut state, _dirty) = test_state();
+        state.settings.sync_favorites_only = false;
+        let mut item = make_item(1, ContentType::PlainText, false, "original");
+        item.content_hash = AppState::hash_text("original");
+        state.db.upsert(&item).unwrap();
+        state.items.push(item.clone());
+
+        assert!(state.save_edited_item(1, "original", "plain"));
+        assert!(!state.db.is_item_tombstoned(item.content_hash).unwrap());
+    }
+
+    #[test]
+    fn save_edited_item_does_not_tombstone_out_of_sync_scope_content() {
+        let (mut state, _dirty) = test_state();
+        state.settings.sync_favorites_only = true;
+        let item = make_item(1, ContentType::PlainText, false, "original");
+        state.db.upsert(&item).unwrap();
+        state.items.push(item.clone());
+
+        assert!(state.save_edited_item(1, "edited", "plain"));
+        assert!(
+            !state.db.is_item_tombstoned(item.content_hash).unwrap(),
+            "an item outside sync scope must not emit a remote deletion"
         );
     }
 

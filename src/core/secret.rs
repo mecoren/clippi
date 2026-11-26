@@ -14,12 +14,6 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-// ── Rule version ────────────────────────────────────────────────────────────
-/// Increment when detection rules change.  Used to invalidate preview caches
-/// and to gate one-shot historical backfill.
-#[allow(dead_code)]
-pub const SECRET_DETECTION_RULE_VERSION: u16 = 2;
-
 // ── Detection result types ──────────────────────────────────────────────────
 
 /// Fine-grained secret category — used for detection strategy, testing, and

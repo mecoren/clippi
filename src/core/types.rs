@@ -234,8 +234,8 @@ pub enum PathObjectKind {
 
 /// Explainable reason behind an `Unknown` or `Protected` status.
 ///
-/// The full reason list is defined by the cleanup design (docs/
-/// stale-item-cleanup-design.md §8). Some variants are reserved for later
+/// The reason list is consumed by the cleanup module
+/// ([`crate::core::cache_cleanup`]). Some variants are reserved for later
 /// phases (volume identity, cloud providers, probe budgets, platform path
 /// status modules) and are not yet constructed on every platform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1092,43 +1092,6 @@ pub fn path_exists(text: &str) -> bool {
         return true;
     }
     std::path::Path::new(text).exists()
-}
-
-/// Mask sensitive content for preview display.
-/// DEPRECATED: use `crate::core::secret::sensitive_preview_parts` instead.
-/// Email: show first 3 chars of local part + "****" + domain (e.g. "abc****@gmail.com")
-/// Phone: show first 3 chars + "****" + last 4 chars (e.g. "138****5678")
-#[allow(dead_code)]
-pub fn mask_sensitive_preview(text: &str, meta_type: &str) -> String {
-    match meta_type {
-        "email" => {
-            if let Some(at) = text.find('@') {
-                let local = &text[..at];
-                let domain = &text[at..];
-                let visible = local.chars().take(3).collect::<String>();
-                format!("{}****{}", visible, domain)
-            } else {
-                text.to_string()
-            }
-        }
-        "phone" => {
-            let cleaned: String = text.chars().filter(|c| !c.is_whitespace()).collect();
-            if cleaned.len() <= 7 {
-                return text.to_string();
-            }
-            let prefix: String = cleaned.chars().take(3).collect();
-            let suffix: String = cleaned
-                .chars()
-                .rev()
-                .take(4)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect();
-            format!("{}****{}", prefix, suffix)
-        }
-        _ => text.to_string(),
-    }
 }
 
 #[cfg(test)]

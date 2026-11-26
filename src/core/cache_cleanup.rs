@@ -215,13 +215,29 @@ pub struct CleanupSyncScope {
 
 /// Remove image + thumbnail files that are no longer referenced by any
 /// clipboard item in the database.
+///
+/// A capture writes the image file first and inserts the database row a moment
+/// later (the UI poll), so a file with no row yet is not necessarily an orphan.
+/// Files younger than [`ORPHAN_FILE_GRACE`] are left for the next pass.
+const ORPHAN_FILE_GRACE: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
 fn clean_orphan_images(db: &Database, stats: &mut CleanupStats) {
-    clean_orphan_images_in(db, &crate::core::paths::images_dir(), stats)
+    clean_orphan_images_in(
+        db,
+        &crate::core::paths::images_dir(),
+        ORPHAN_FILE_GRACE,
+        stats,
+    )
 }
 
 /// Same as `clean_orphan_images` but against an explicit cache directory
 /// (used by tests to avoid touching the real images directory).
-fn clean_orphan_images_in(db: &Database, images_dir: &Path, stats: &mut CleanupStats) {
+fn clean_orphan_images_in(
+    db: &Database,
+    images_dir: &Path,
+    min_age: std::time::Duration,
+    stats: &mut CleanupStats,
+) {
     if !images_dir.exists() {
         return; // Nothing to scan — complete.
     }
@@ -270,6 +286,17 @@ fn clean_orphan_images_in(db: &Database, images_dir: &Path, stats: &mut CleanupS
         let Some(hash) = image_hash_from_file_name(name) else {
             continue;
         };
+        // The row that will reference this file may still be in flight.
+        if min_age > std::time::Duration::ZERO
+            && path
+                .metadata()
+                .and_then(|meta| meta.modified())
+                .ok()
+                .and_then(|modified| modified.elapsed().ok())
+                .is_some_and(|age| age < min_age)
+        {
+            continue;
+        }
         if !referenced.contains(&hash) {
             match fs::remove_file(&path) {
                 Ok(()) => stats.orphan_images += 1,
@@ -1674,7 +1701,7 @@ mod tests {
             scan_complete: true,
             ..CleanupStats::default()
         };
-        clean_orphan_images_in(&db, &images, &mut stats);
+        clean_orphan_images_in(&db, &images, std::time::Duration::ZERO, &mut stats);
 
         assert_eq!(stats.orphan_images, 4);
         assert_eq!(stats.cache_remove_failed, 0);
@@ -1686,6 +1713,34 @@ mod tests {
         assert!(!images.join("4444444444444444.jpeg").exists());
         assert!(images.join("thumb_2222222222222222.5.tmp.png").exists());
         assert!(images.join("notes.png").exists());
+
+        drop(db);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A file written by an in-flight capture has no referencing row yet; the
+    /// orphan sweep must leave it for the next pass.
+    #[test]
+    fn fresh_orphan_is_kept_during_the_grace_window() {
+        let dir = temp_dir("orphan-grace");
+        let images = dir.join("images");
+        std::fs::create_dir_all(&images).unwrap();
+        std::fs::write(images.join("2222222222222222.png"), b"png").unwrap();
+        let db = Database::open(":memory:").unwrap();
+        let mut stats = CleanupStats {
+            scan_complete: true,
+            ..CleanupStats::default()
+        };
+
+        clean_orphan_images_in(
+            &db,
+            &images,
+            std::time::Duration::from_secs(600),
+            &mut stats,
+        );
+
+        assert_eq!(stats.orphan_images, 0);
+        assert!(images.join("2222222222222222.png").exists());
 
         drop(db);
         std::fs::remove_dir_all(dir).unwrap();
@@ -1788,7 +1843,7 @@ mod tests {
         run_stale_scan(&db, t0, None, &mut stats);
         assert_eq!(stats.stale_items, 1);
         assert_eq!(db.count_all_items_for_test(), 0);
-        clean_orphan_images_in(&db, &images, &mut stats);
+        clean_orphan_images_in(&db, &images, std::time::Duration::ZERO, &mut stats);
         assert_eq!(stats.orphan_images, 1);
         assert!(!images.join(format!("thumb_{hash}.png")).exists());
 

@@ -342,10 +342,15 @@ impl ConfigSnapshot {
         let version = header
             .get("schema_version")
             .and_then(|v| v.as_u64())
-            .ok_or_else(|| ConfigSyncError::InvalidSnapshot("missing schema_version".to_string()))?
-            as u32;
-        if version != CURRENT_SCHEMA_VERSION {
-            return Err(ConfigSyncError::UnsupportedVersion(version));
+            .ok_or_else(|| {
+                ConfigSyncError::InvalidSnapshot("missing schema_version".to_string())
+            })?;
+        // Compare as u64: truncating to u32 would turn e.g. 2^32+1 into the
+        // supported version 1 and let an unsupported snapshot through.
+        if version != u64::from(CURRENT_SCHEMA_VERSION) {
+            return Err(ConfigSyncError::UnsupportedVersion(
+                version.min(u64::from(u32::MAX)) as u32,
+            ));
         }
 
         let snapshot: Self = serde_json::from_value(header)
@@ -1068,6 +1073,19 @@ mod tests {
         assert!(matches!(
             result,
             Err(ConfigSyncError::UnsupportedVersion(2))
+        ));
+    }
+
+    /// A version wider than u32 must not wrap into a supported one.
+    #[test]
+    fn rejects_schema_version_that_would_truncate_to_a_supported_one() {
+        let mut json = snapshot_json("system");
+        json["schema_version"] = serde_json::json!(u64::from(u32::MAX) + 2); // 2^32 + 1
+        let data = serde_json::to_vec(&json).unwrap();
+        let result = ConfigSnapshot::from_slice(&data);
+        assert!(matches!(
+            result,
+            Err(ConfigSyncError::UnsupportedVersion(_))
         ));
     }
 

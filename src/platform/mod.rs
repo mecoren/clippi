@@ -4,6 +4,7 @@ pub mod accent;
 pub mod blacklist;
 pub mod clipboard;
 pub mod drag_out;
+pub mod error_dialog;
 pub mod focus;
 #[cfg(target_os = "windows")]
 pub(crate) mod focus_restore;
@@ -15,6 +16,7 @@ pub mod ime;
 pub mod keyboard_hook;
 pub mod monitor;
 pub mod motion;
+pub mod open_target;
 pub mod paste;
 pub mod preview_flyout;
 pub mod preview_overlay;

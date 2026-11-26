@@ -280,7 +280,8 @@ fn apply_connection_pragmas(conn: &Connection) -> SqlResult<()> {
     conn.execute_batch(
         "PRAGMA journal_mode = WAL;
          PRAGMA cache_size = -2000;
-         PRAGMA mmap_size = 268435456;",
+         PRAGMA mmap_size = 268435456;
+         PRAGMA foreign_keys = ON;",
     )
 }
 
@@ -538,36 +539,50 @@ impl Database {
         // A local clipboard capture always ends any sync-pending state: the
         // item now exists locally with a real captured path. (Sync merge uses
         // insert_sync_item_raw / update_sync_item instead and is unaffected.)
+        //
+        // One statement, not UPDATE-then-INSERT: `content_hash` is unique
+        // since v14, so ON CONFLICT removes the window where two writers both
+        // saw "no row" and inserted duplicates.
         let (list_preview, list_preview_len) = list_preview_columns(&item.rich_data);
-        let changed = self.conn.execute(
-            "UPDATE clipboard_items SET updated_at = ?1, content_type = ?3, image_path = ?4, rich_data = ?5, file_data = ?6, image_width = ?7, image_height = ?8, size = ?9, meta_type = ?10, existence_observed_at = CASE WHEN ?11 = '' THEN existence_observed_at ELSE ?11 END, sync_pending = 0, list_preview = ?12, list_preview_len = ?13 WHERE content_hash = ?2",
-            params![item.updated_at.to_rfc3339(), item.content_hash as i64, item.content_type.as_str(), item.image_path, item.rich_data, item.file_data, item.image_width as i64, item.image_height as i64, item.size, item.meta_type, item.existence_observed_at, list_preview, list_preview_len],
+        self.conn.execute(
+            "INSERT INTO clipboard_items (content_type, full_text, content_hash, created_at, updated_at, image_path, rich_data, file_data, source_app_name, source_app_icon, image_width, image_height, size, meta_type, existence_observed_at, list_preview, list_preview_len)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+             ON CONFLICT(content_hash) WHERE meta_type != 'transfer' DO UPDATE SET
+                 updated_at = excluded.updated_at,
+                 content_type = excluded.content_type,
+                 image_path = excluded.image_path,
+                 rich_data = excluded.rich_data,
+                 file_data = excluded.file_data,
+                 image_width = excluded.image_width,
+                 image_height = excluded.image_height,
+                 size = excluded.size,
+                 meta_type = excluded.meta_type,
+                 existence_observed_at = CASE WHEN excluded.existence_observed_at = ''
+                                              THEN clipboard_items.existence_observed_at
+                                              ELSE excluded.existence_observed_at END,
+                 sync_pending = 0,
+                 list_preview = excluded.list_preview,
+                 list_preview_len = excluded.list_preview_len",
+            params![
+                item.content_type.as_str(),
+                item.full_text,
+                item.content_hash as i64,
+                item.created_at.to_rfc3339(),
+                item.updated_at.to_rfc3339(),
+                item.image_path,
+                item.rich_data,
+                item.file_data,
+                item.source_app_name,
+                item.source_app_icon,
+                item.image_width as i64,
+                item.image_height as i64,
+                item.size,
+                item.meta_type,
+                item.existence_observed_at,
+                list_preview,
+                list_preview_len,
+            ],
         )?;
-        if changed == 0 {
-            self.conn.execute(
-                "INSERT INTO clipboard_items (content_type, full_text, content_hash, created_at, updated_at, image_path, rich_data, file_data, source_app_name, source_app_icon, image_width, image_height, size, meta_type, existence_observed_at, list_preview, list_preview_len)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
-                params![
-                    item.content_type.as_str(),
-                    item.full_text,
-                    item.content_hash as i64,
-                    item.created_at.to_rfc3339(),
-                    item.updated_at.to_rfc3339(),
-                    item.image_path,
-                    item.rich_data,
-                    item.file_data,
-                    item.source_app_name,
-                    item.source_app_icon,
-                    item.image_width as i64,
-                    item.image_height as i64,
-                    item.size,
-                    item.meta_type,
-                    item.existence_observed_at,
-                    list_preview,
-                    list_preview_len,
-                ],
-            )?;
-        }
         Ok(())
     }
 
@@ -610,12 +625,44 @@ impl Database {
         Ok(())
     }
 
-    /// Update only the rich_data column for a given item.
+    /// Update `rich_data` only while the row still matches the snapshot the
+    /// caller read.
+    ///
+    /// Enrichment jobs (page title, OCR, QR, drive label) read an entry, do
+    /// slow work, then write back. If the user edited the entry meanwhile, the
+    /// hash or payload changed and the stale result must be dropped instead of
+    /// clobbering the newer content. `updated_at` is deliberately untouched:
+    /// metadata is not a user edit.
+    pub fn update_rich_data_checked(
+        &self,
+        id: i64,
+        content_hash: u64,
+        expected_rich_data: &str,
+        rich_data: &str,
+    ) -> SqlResult<bool> {
+        let (list_preview, list_preview_len) = list_preview_columns(rich_data);
+        let changed = self.conn.execute(
+            "UPDATE clipboard_items SET rich_data = ?1, list_preview = ?2, list_preview_len = ?3 \
+             WHERE id = ?4 AND content_hash = ?5 AND rich_data = ?6",
+            params![
+                rich_data,
+                list_preview,
+                list_preview_len,
+                id,
+                content_hash as i64,
+                expected_rich_data
+            ],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Unconditional rich_data write, kept for tests that inject payloads.
+    #[cfg(test)]
     pub fn update_rich_data(&self, id: i64, rich_data: &str) -> SqlResult<()> {
         let (list_preview, list_preview_len) = list_preview_columns(rich_data);
         self.conn.execute(
-            "UPDATE clipboard_items SET rich_data = ?1, updated_at = ?2, list_preview = ?3, list_preview_len = ?4 WHERE id = ?5",
-            params![rich_data, chrono::Utc::now().to_rfc3339(), list_preview, list_preview_len, id],
+            "UPDATE clipboard_items SET rich_data = ?1, list_preview = ?2, list_preview_len = ?3 WHERE id = ?4",
+            params![rich_data, list_preview, list_preview_len, id],
         )?;
         Ok(())
     }
@@ -800,8 +847,12 @@ impl Database {
     }
 
     pub fn get_by_hash(&self, hash: u64) -> SqlResult<Option<ClipboardItem>> {
+        // A hidden transfer backing row may share the hash of the visible
+        // history item it belongs to. Callers looking up history must get the
+        // ordinary row; transfer rows are read through `get_transfer_items`.
         let query = format!(
-            "SELECT {} FROM clipboard_items WHERE content_hash = ?1",
+            "SELECT {} FROM clipboard_items WHERE content_hash = ?1 \
+             ORDER BY (meta_type = 'transfer') ASC, id ASC LIMIT 1",
             item_select_columns()
         );
         let mut stmt = self.conn.prepare(&query)?;
@@ -994,9 +1045,12 @@ impl Database {
         };
         let now = chrono::Utc::now().to_rfc3339();
         let size = text.chars().count() as i64;
+        // Keep the cached list preview in step with the payload; otherwise a
+        // same-length rewrite would look "fresh" to the read-side stamp check.
+        let (list_preview, list_preview_len) = list_preview_columns(rich_data);
         let updated = self.conn.execute(
-            "UPDATE clipboard_items SET full_text = ?1, content_hash = ?2, content_type = ?3, updated_at = ?4, rich_data = ?5, image_path = '', file_data = '', image_width = 0, image_height = 0, size = ?6, meta_type = ?7 WHERE id = ?8",
-            params![text, hash as i64, content_type, now, rich_data, size, meta_type, id],
+            "UPDATE clipboard_items SET full_text = ?1, content_hash = ?2, content_type = ?3, updated_at = ?4, rich_data = ?5, image_path = '', file_data = '', image_width = 0, image_height = 0, size = ?6, meta_type = ?7, list_preview = ?9, list_preview_len = ?10 WHERE id = ?8",
+            params![text, hash as i64, content_type, now, rich_data, size, meta_type, id, list_preview, list_preview_len],
         )?;
         Ok(updated > 0)
     }
@@ -1007,8 +1061,11 @@ impl Database {
         let now = chrono::Utc::now().to_rfc3339();
         let uid = new_tag_uid();
         // --- Clear any existing tombstone — the user is recreating a tag ---
-        // --- that was previously deleted. ---
-        let _ = self.remove_tag_tombstone(&uid, name);
+        // --- that was previously deleted. Clear by name: the tombstone was ---
+        // --- recorded under the old tag's uid, not the fresh one below. ---
+        let _ = self
+            .conn
+            .execute("DELETE FROM deleted_tags WHERE name = ?1", params![name]);
         self.conn.execute(
             "INSERT INTO tags (uid, name, color, updated_at) VALUES (?1, ?2, ?3, ?4)",
             params![uid, name, color, now],
@@ -1420,11 +1477,13 @@ impl Database {
             String::new()
         };
 
-        self.conn.execute(
-            "INSERT INTO clipboard_items (content_type, full_text, content_hash, created_at, updated_at,
+        let (list_preview, list_preview_len) = list_preview_columns(&item.rich_data);
+        let inserted = self.conn.execute(
+            "INSERT OR IGNORE INTO clipboard_items (content_type, full_text, content_hash, created_at, updated_at,
              rich_data, is_favorite, note, source_app_name, size, meta_type,
-             image_path, image_width, image_height, file_data, sync_pending)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+             image_path, image_width, image_height, file_data, sync_pending,
+             list_preview, list_preview_len)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             rusqlite::params![
                 content_type,
                 item.full_text,
@@ -1442,8 +1501,18 @@ impl Database {
                 item.image_height,
                 "", // file_data — not synced yet
                 is_image as i32, // sync-owned image: blob may not be downloaded yet
+                list_preview,
+                list_preview_len,
             ],
         )?;
+        if inserted == 0 {
+            // A capture won the race between the merge's hash lookup and this
+            // insert. Keep that row and reuse its id for tag associations.
+            if let Some(existing) = self.get_by_hash(item.content_hash)? {
+                return Ok(existing.id);
+            }
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
         Ok(self.conn.last_insert_rowid())
     }
 
@@ -1464,11 +1533,13 @@ impl Database {
             String::new()
         };
 
+        let (list_preview, list_preview_len) = list_preview_columns(&item.rich_data);
         self.conn.execute(
             "UPDATE clipboard_items SET full_text = ?1, content_type = ?2, updated_at = ?3,
              rich_data = ?4, is_favorite = ?5, note = ?6, size = ?7, meta_type = ?8,
              image_path = ?9, image_width = ?10, image_height = ?11,
-             sync_pending = CASE WHEN ?13 = 'image' THEN 1 ELSE sync_pending END
+             sync_pending = CASE WHEN ?13 = 'image' THEN 1 ELSE sync_pending END,
+             list_preview = ?14, list_preview_len = ?15
              WHERE id = ?12",
             rusqlite::params![
                 item.full_text,
@@ -1484,6 +1555,8 @@ impl Database {
                 item.image_height,
                 id,
                 item.content_type,
+                list_preview,
+                list_preview_len,
             ],
         )?;
         Ok(())
@@ -2316,15 +2389,20 @@ impl Database {
     }
 
     /// Delete a local item by content_hash (triggered by remote tombstone).
+    ///
+    /// Transfer-station backing rows are local bookkeeping and are deliberately
+    /// allowed to share a hash with a visible item; a remote tombstone for the
+    /// visible content must not take the transfer row (and its cached file)
+    /// with it.
     pub fn delete_item_by_hash(&self, content_hash: u64) -> SqlResult<bool> {
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
             "DELETE FROM stale_item_observations WHERE item_id IN \
-             (SELECT id FROM clipboard_items WHERE content_hash = ?1)",
+             (SELECT id FROM clipboard_items WHERE content_hash = ?1 AND meta_type != 'transfer')",
             params![content_hash as i64],
         )?;
         let affected = tx.execute(
-            "DELETE FROM clipboard_items WHERE content_hash = ?1",
+            "DELETE FROM clipboard_items WHERE content_hash = ?1 AND meta_type != 'transfer'",
             params![content_hash as i64],
         )?;
         tx.commit()?;
@@ -2408,6 +2486,24 @@ impl Database {
         Ok(())
     }
 
+    /// Move every item association from one tag onto another.
+    ///
+    /// Used when a sync rename would collide with a tag created independently
+    /// on this device (`tags.name` is UNIQUE). When both tags point at the same
+    /// item, the older `used_at` wins so the merged tag keeps its history.
+    pub fn merge_tag_associations(&self, from_id: i64, into_id: i64) -> SqlResult<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "INSERT INTO item_tags (tag_id, item_id, used_at)
+             SELECT ?1, item_id, used_at FROM item_tags WHERE tag_id = ?2
+             ON CONFLICT(tag_id, item_id) DO UPDATE SET used_at = MIN(used_at, excluded.used_at)",
+            params![into_id, from_id],
+        )?;
+        tx.execute("DELETE FROM item_tags WHERE tag_id = ?1", params![from_id])?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Create tag with explicit timestamp (for sync merge).
     /// Caller must ensure the tag does not already exist.
     pub fn create_tag_with_timestamp(
@@ -2470,8 +2566,24 @@ impl Database {
         self.conn
             .execute("ATTACH DATABASE ?1 AS source", params![source_str.as_ref()])?;
 
-        // Rollback on error: best-effort DETACH.
-        let result = self.merge_from_attached();
+        // Rollback on error: the merge is all-or-nothing, because callers
+        // treat a failed merge as "target unchanged". Without this, the six
+        // statements below would each auto-commit and leave a half-merged
+        // target behind.
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let result = match self.merge_from_attached() {
+            Ok(stats) => match self.conn.execute_batch("COMMIT") {
+                Ok(()) => Ok(stats),
+                Err(e) => {
+                    let _ = self.conn.execute_batch("ROLLBACK");
+                    Err(e)
+                }
+            },
+            Err(e) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(e)
+            }
+        };
         let _ = self.conn.execute("DETACH DATABASE source", params![]);
         self.checkpoint()?;
         result
@@ -2489,14 +2601,17 @@ impl Database {
              (content_type, full_text, content_hash, created_at, updated_at,
               image_path, rich_data, file_data, is_favorite, note,
               source_app_name, source_app_icon, image_width, image_height, size, meta_type,
-              existence_observed_at, sync_pending)
+              existence_observed_at, sync_pending, list_preview, list_preview_len)
              SELECT content_type, full_text, content_hash, created_at, updated_at,
                     image_path, rich_data, file_data, is_favorite, note,
                     source_app_name, source_app_icon, image_width, image_height, size,
-                    COALESCE(meta_type, ''), existence_observed_at, sync_pending
+                    COALESCE(meta_type, ''), existence_observed_at, sync_pending,
+                    list_preview, list_preview_len
              FROM source.clipboard_items s
-             WHERE s.content_hash NOT IN (
-                 SELECT content_hash FROM main.clipboard_items
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM main.clipboard_items m
+                 WHERE m.content_hash = s.content_hash
+                   AND (m.meta_type != 'transfer' OR s.meta_type = 'transfer')
              )",
             params![],
         )?;
@@ -2522,10 +2637,14 @@ impl Database {
                  size           = (SELECT s.size            FROM source.clipboard_items s WHERE s.content_hash = main.clipboard_items.content_hash),
                  meta_type      = (SELECT COALESCE(s.meta_type, '') FROM source.clipboard_items s WHERE s.content_hash = main.clipboard_items.content_hash),
                  existence_observed_at = (SELECT CASE WHEN s.existence_observed_at = '' THEN main.clipboard_items.existence_observed_at ELSE s.existence_observed_at END FROM source.clipboard_items s WHERE s.content_hash = main.clipboard_items.content_hash),
-                 sync_pending   = (SELECT s.sync_pending    FROM source.clipboard_items s WHERE s.content_hash = main.clipboard_items.content_hash)
+                 sync_pending   = (SELECT s.sync_pending    FROM source.clipboard_items s WHERE s.content_hash = main.clipboard_items.content_hash),
+                 list_preview   = (SELECT s.list_preview    FROM source.clipboard_items s WHERE s.content_hash = main.clipboard_items.content_hash),
+                 list_preview_len = (SELECT s.list_preview_len FROM source.clipboard_items s WHERE s.content_hash = main.clipboard_items.content_hash)
              WHERE EXISTS (
                  SELECT 1 FROM source.clipboard_items s
                  WHERE s.content_hash = main.clipboard_items.content_hash
+                   AND s.meta_type != 'transfer'
+                   AND main.clipboard_items.meta_type != 'transfer'
                    AND s.updated_at > main.clipboard_items.updated_at
              )",
             params![],
@@ -2564,6 +2683,8 @@ impl Database {
              JOIN source.tags            st  ON st.id  = sit.tag_id
              JOIN source.clipboard_items sci ON sci.id = sit.item_id
              JOIN main.clipboard_items   mi  ON mi.content_hash = sci.content_hash
+                 AND ((sci.meta_type = 'transfer' AND mi.meta_type = 'transfer')
+                   OR (sci.meta_type != 'transfer' AND mi.meta_type != 'transfer'))
              JOIN main.tags              mt  ON mt.uid          = st.uid",
             params![],
         )?;
@@ -2591,6 +2712,72 @@ impl Database {
             tags_added,
             tags_updated,
         })
+    }
+
+    /// Rewrite cached absolute paths after the data directory moved.
+    ///
+    /// Copying a database to a new data directory (storage migration) keeps
+    /// `image_path`, image `full_text` and `file_data` pointing at the old
+    /// `<data>/images` / `<data>/file_cache` trees. Callers copy the files and
+    /// then call this so previews and file entries keep working. Returns the
+    /// number of rows that changed.
+    pub fn remap_cached_paths(&self, old_data_dir: &Path, new_data_dir: &Path) -> SqlResult<usize> {
+        let rows: Vec<(i64, String, String, String)> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, image_path, full_text, file_data FROM clipboard_items \
+                 WHERE image_path != '' OR file_data != ''",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })?;
+            rows.collect::<SqlResult<Vec<_>>>()?
+        };
+        if rows.is_empty() {
+            return Ok(0);
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        let mut changed = 0;
+        for (id, image_path, full_text, file_data) in rows {
+            let new_image =
+                crate::core::paths::remap_cached_path(&image_path, old_data_dir, new_data_dir);
+            let image_changed = new_image != image_path;
+            let text_is_image_path =
+                image_changed && !image_path.is_empty() && full_text == image_path;
+            let new_text = if text_is_image_path {
+                new_image.clone()
+            } else {
+                full_text
+            };
+            let (new_file_data, file_changed) = if file_data.is_empty() {
+                (file_data, false)
+            } else {
+                match serde_json::from_str::<serde_json::Value>(&file_data) {
+                    Ok(mut json) => {
+                        crate::core::paths::remap_cached_paths_json(
+                            &mut json,
+                            old_data_dir,
+                            new_data_dir,
+                        );
+                        let updated = json.to_string();
+                        let changed = updated != file_data;
+                        (updated, changed)
+                    }
+                    // Leave malformed payloads untouched rather than dropping them.
+                    Err(_) => (file_data, false),
+                }
+            };
+            if !image_changed && !text_is_image_path && !file_changed {
+                continue;
+            }
+            tx.execute(
+                "UPDATE clipboard_items SET image_path = ?1, full_text = ?2, file_data = ?3 \
+                 WHERE id = ?4",
+                params![new_image, new_text, new_file_data, id],
+            )?;
+            changed += 1;
+        }
+        tx.commit()?;
+        Ok(changed)
     }
 
     /// Find clipboard items that are candidates for stale-item cleanup.
@@ -3310,6 +3497,78 @@ mod tests {
     }
 
     #[test]
+    fn deleting_an_item_cascades_its_tag_links() {
+        let db = Database::open(":memory:").unwrap();
+        insert_item(&db, 1, "tagged", "2026-01-01T00:00:00Z");
+        let id = item_id(&db, 1);
+        let tag_id = db.create_tag("work", "#FF0000").unwrap();
+        db.add_item_tag(id, tag_id).unwrap();
+
+        db.delete_item(id).unwrap();
+
+        let links: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM item_tags", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(links, 0, "item_tags must not outlive their item");
+        assert_eq!(count_tags(&db), 1, "the tag itself must survive");
+    }
+
+    #[test]
+    fn merging_tag_associations_moves_links_and_keeps_earliest_use() {
+        let db = Database::open(":memory:").unwrap();
+        insert_item(&db, 1, "one", "2026-01-01T00:00:00Z");
+        insert_item(&db, 2, "two", "2026-01-01T00:00:00Z");
+        let from = db.create_tag("from", "#111111").unwrap();
+        let into = db.create_tag("into", "#222222").unwrap();
+        let one = item_id(&db, 1);
+        let two = item_id(&db, 2);
+        db.conn
+            .execute(
+                "INSERT INTO item_tags (tag_id, item_id, used_at) VALUES
+                 (?1, ?2, '2026-01-02T00:00:00Z'),
+                 (?1, ?3, '2026-01-05T00:00:00Z'),
+                 (?4, ?3, '2026-01-01T00:00:00Z')",
+                rusqlite::params![from, one, two, into],
+            )
+            .unwrap();
+
+        db.merge_tag_associations(from, into).unwrap();
+
+        let links: Vec<(i64, i64, String)> = db
+            .conn
+            .prepare("SELECT tag_id, item_id, used_at FROM item_tags ORDER BY item_id")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(links.len(), 2);
+        assert!(links.iter().all(|(tag_id, _, _)| *tag_id == into));
+        assert_eq!(links[0].2, "2026-01-02T00:00:00Z");
+        assert_eq!(links[1].2, "2026-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn create_tag_clears_a_tombstone_recorded_under_the_old_uid() {
+        let db = Database::open(":memory:").unwrap();
+        db.record_tag_deletion("old-uid", "work", "2026-01-01T00:00:00Z", "a")
+            .unwrap();
+
+        db.create_tag("work", "#FF0000").unwrap();
+
+        let remaining: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM deleted_tags WHERE name = 'work'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining, 0, "recreating a tag must clear its tombstone");
+    }
+
+    #[test]
     fn record_tag_deletion_upserts_by_uid() {
         let (_path, db) = temp_db("tag-tombstone-upsert");
         db.record_tag_deletion("tag-1", "old", "2026-01-01T00:00:00Z", "a")
@@ -3346,6 +3605,185 @@ mod tests {
         assert_eq!(stats.items_added, 1);
         assert_eq!(stats.items_updated, 0);
         assert_eq!(count_items(&tgt), 2); // both items present
+    }
+
+    #[test]
+    fn merge_rolls_back_when_a_later_statement_fails() {
+        let (src_path, src) = temp_db("src-rollback");
+        let (_tgt_path, tgt) = temp_db("tgt-rollback");
+
+        insert_item(&src, 100, "hello", "2025-01-01T00:00:00Z");
+        insert_item(&tgt, 200, "world", "2025-01-01T00:00:00Z");
+
+        // Step 1 would insert the source item, step 5 then fails on the
+        // missing table. The merge must leave the target untouched.
+        src.conn.execute_batch("DROP TABLE item_tags").unwrap();
+        assert!(tgt.merge_from(&src_path).is_err());
+        assert_eq!(count_items(&tgt), 1);
+    }
+
+    #[test]
+    fn remap_cached_paths_rewrites_image_and_file_data_paths() {
+        let (_path, db) = temp_db("remap");
+        let old = std::env::temp_dir().join("clippi-remap-old");
+        let new = std::env::temp_dir().join("clippi-remap-new");
+        let image = old.join("images").join("a.png");
+        let cached = old.join("file_cache").join("doc.txt");
+        let file_data =
+            serde_json::json!({"files": [{"name": "doc.txt", "path": cached}]}).to_string();
+        db.conn
+            .execute(
+                "INSERT INTO clipboard_items \
+                 (content_type, full_text, content_hash, created_at, updated_at, image_path, file_data) \
+                 VALUES ('image', ?1, 9001, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z', ?1, ?2)",
+                rusqlite::params![image.to_string_lossy(), file_data],
+            )
+            .unwrap();
+
+        assert_eq!(db.remap_cached_paths(&old, &new).unwrap(), 1);
+
+        let (image_path, full_text, file_data): (String, String, String) = db
+            .conn
+            .query_row(
+                "SELECT image_path, full_text, file_data FROM clipboard_items \
+                 WHERE content_hash = 9001",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            image_path,
+            new.join("images").join("a.png").to_string_lossy()
+        );
+        assert_eq!(full_text, image_path);
+        let json: serde_json::Value = serde_json::from_str(&file_data).unwrap();
+        assert_eq!(
+            json["files"][0]["path"].as_str().unwrap(),
+            new.join("file_cache").join("doc.txt").to_string_lossy()
+        );
+
+        // A second pass has nothing left to rewrite.
+        assert_eq!(db.remap_cached_paths(&old, &new).unwrap(), 0);
+    }
+
+    #[test]
+    fn merge_keeps_transfer_backing_rows_separate_from_ordinary_items() {
+        let (src_path, src) = temp_db("src-transfer-merge");
+        let (_tgt_path, tgt) = temp_db("tgt-transfer-merge");
+
+        // Source has the visible history row; the target only has the hidden
+        // transfer backing row, which deliberately shares its content hash.
+        insert_item(&src, 100, "file.bin", "2026-02-01T00:00:00Z");
+        tgt.conn
+            .execute(
+                "INSERT INTO clipboard_items
+                     (content_type, full_text, content_hash, created_at, updated_at, meta_type)
+                 VALUES ('file', 'file.bin', 100, '2026-01-01T00:00:00Z',
+                         '2026-01-01T00:00:00Z', 'transfer')",
+                [],
+            )
+            .unwrap();
+
+        let stats = tgt.merge_from(&src_path).unwrap();
+        assert_eq!(stats.items_added, 1, "the ordinary row must be added");
+        assert_eq!(count_items(&tgt), 2);
+
+        let transfer: i64 = tgt
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM clipboard_items
+                 WHERE content_hash = 100 AND meta_type = 'transfer'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let ordinary: i64 = tgt
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM clipboard_items
+                 WHERE content_hash = 100 AND meta_type != 'transfer'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!((ordinary, transfer), (1, 1));
+
+        // A newer source row updates the ordinary row only; the transfer
+        // backing row must not be rewritten or trip the unique index.
+        src.conn
+            .execute(
+                "UPDATE clipboard_items SET updated_at = '2026-03-01T00:00:00Z'
+                 WHERE content_hash = 100",
+                [],
+            )
+            .unwrap();
+        tgt.merge_from(&src_path).unwrap();
+        assert_eq!(count_items(&tgt), 2);
+        let transfer_meta: String = tgt
+            .conn
+            .query_row(
+                "SELECT meta_type FROM clipboard_items
+                 WHERE content_hash = 100 AND meta_type = 'transfer'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(transfer_meta, "transfer");
+    }
+
+    #[test]
+    fn hash_lookup_prefers_the_ordinary_row_over_transfer_backing() {
+        let db = Database::open(":memory:").unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO clipboard_items
+                     (content_type, full_text, content_hash, created_at, updated_at, meta_type)
+                 VALUES ('file', 'file.bin', 77, '2026-01-01T00:00:00Z',
+                         '2026-01-01T00:00:00Z', 'transfer')",
+                [],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO clipboard_items
+                     (content_type, full_text, content_hash, created_at, updated_at, meta_type)
+                 VALUES ('plain_text', 'file.bin', 77, '2026-01-02T00:00:00Z',
+                         '2026-01-02T00:00:00Z', '')",
+                [],
+            )
+            .unwrap();
+
+        let item = db.get_by_hash(77).unwrap().unwrap();
+        assert_ne!(item.meta_type, "transfer");
+        assert_eq!(item.content_type, ContentType::PlainText);
+    }
+
+    #[test]
+    fn hash_deletion_leaves_transfer_backing_rows_alone() {
+        let db = Database::open(":memory:").unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO clipboard_items
+                     (content_type, full_text, content_hash, created_at, updated_at, meta_type)
+                 VALUES ('file', 'file.bin', 88, '2026-01-01T00:00:00Z',
+                         '2026-01-01T00:00:00Z', 'transfer')",
+                [],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO clipboard_items
+                     (content_type, full_text, content_hash, created_at, updated_at, meta_type)
+                 VALUES ('plain_text', 'file.bin', 88, '2026-01-02T00:00:00Z',
+                         '2026-01-02T00:00:00Z', '')",
+                [],
+            )
+            .unwrap();
+
+        assert!(db.delete_item_by_hash(88).unwrap());
+        let remaining = db.get_by_hash(88).unwrap().unwrap();
+        assert_eq!(remaining.meta_type, "transfer");
+        assert_eq!(db.get_transfer_items().unwrap().len(), 1);
     }
 
     #[test]
@@ -4349,6 +4787,103 @@ mod tests {
             stamp, payload_len,
             "update_rich_data must restamp the preview"
         );
+    }
+
+    #[test]
+    fn background_rich_data_writes_keep_the_item_timestamp() {
+        let (_path, db) = temp_db("rich-data-keeps-updated-at");
+        let item = ClipboardItem::new_text(1, "text", ContentType::PlainText, None, None);
+        db.upsert(&item).unwrap();
+        let id = item_id(&db, item.content_hash);
+        let before: String = db
+            .conn
+            .query_row(
+                "SELECT updated_at FROM clipboard_items WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        let rich = RichData {
+            page_title: Some("title".into()),
+            ..Default::default()
+        };
+        db.update_rich_data(id, &rich.to_json()).unwrap();
+
+        let after: String = db
+            .conn
+            .query_row(
+                "SELECT updated_at FROM clipboard_items WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            before, after,
+            "background enrichment must not count as a user edit"
+        );
+    }
+
+    #[test]
+    fn checked_rich_data_write_is_dropped_when_the_entry_changed() {
+        let (_path, db) = temp_db("rich-data-guard");
+        let item = ClipboardItem::new_text(1, "text", ContentType::PlainText, None, None);
+        db.upsert(&item).unwrap();
+        let id = item_id(&db, item.content_hash);
+        let rich = RichData {
+            page_title: Some("title".into()),
+            ..Default::default()
+        };
+
+        assert!(db
+            .update_rich_data_checked(id, item.content_hash, &item.rich_data, &rich.to_json())
+            .unwrap());
+        let enriched = db.get_by_id(id).unwrap().unwrap().rich_data;
+        assert_ne!(enriched, item.rich_data);
+
+        // A second writer still holding the pre-enrichment snapshot loses.
+        assert!(!db
+            .update_rich_data_checked(id, item.content_hash, &item.rich_data, &rich.to_json())
+            .unwrap());
+
+        // A content edit invalidates even a writer that read the enriched payload.
+        db.update_content_with_rich_data(id, "edited", "plain_text", "", "{}")
+            .unwrap();
+        assert!(!db
+            .update_rich_data_checked(id, item.content_hash, &enriched, &rich.to_json())
+            .unwrap());
+        assert_eq!(db.get_by_id(id).unwrap().unwrap().rich_data, "{}");
+    }
+
+    #[test]
+    fn content_edits_keep_the_list_preview_stamp_current() {
+        let (_path, db) = temp_db("content-edit-preview");
+        let before = RichData {
+            html: Some("<p>before</p>".into()),
+            ..Default::default()
+        };
+        let item = ClipboardItem::new_text(1, "before", ContentType::RichText, None, Some(&before));
+        db.upsert(&item).unwrap();
+        let id = item_id(&db, item.content_hash);
+
+        let after = RichData {
+            html: Some("<p>after</p>".into()),
+            ..Default::default()
+        };
+        db.update_content_with_rich_data(id, "after", "rich_text", "html", &after.to_json())
+            .unwrap();
+
+        let (preview, stamp, payload_len): (String, i64, i64) = db
+            .conn
+            .query_row(
+                "SELECT list_preview, list_preview_len, length(cast(rich_data AS BLOB)) \
+                 FROM clipboard_items WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(stamp, payload_len, "the cached preview must be current");
+        assert!(preview.contains("after"));
     }
 
     /// 比较两份预览 JSON 的语义：读侧走 `from_json`，缺键与 null 等价。

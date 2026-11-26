@@ -330,49 +330,6 @@ fn create_folder_selected(
     result
 }
 
-fn remap(value: &str, old: &Path, new: &Path) -> String {
-    let path = super::paths::without_verbatim_prefix(Path::new(value));
-    let old = super::paths::without_verbatim_prefix(old);
-    for cache in ["images", "file_cache"] {
-        if let Ok(relative) = path.strip_prefix(old.join(cache)) {
-            // Reject traversal rather than rewriting a path outside the cache.
-            if relative
-                .components()
-                .all(|c| matches!(c, Component::Normal(_)))
-            {
-                let mut target = new.join(cache);
-                for component in relative.components() {
-                    target.push(component.as_os_str());
-                }
-                return target.to_string_lossy().into_owned();
-            }
-        }
-    }
-    value.to_owned()
-}
-
-fn remap_json(value: &mut serde_json::Value, old: &Path, new: &Path) {
-    match value {
-        serde_json::Value::Object(fields) => {
-            for (key, value) in fields {
-                if matches!(key.as_str(), "path" | "local_path" | "cache_path") {
-                    if let Some(path) = value.as_str() {
-                        *value = remap(path, old, new).into();
-                    }
-                } else {
-                    remap_json(value, old, new);
-                }
-            }
-        }
-        serde_json::Value::Array(values) => {
-            for value in values {
-                remap_json(value, old, new);
-            }
-        }
-        _ => {}
-    }
-}
-
 /// Check the full archive inventory and its advertised contents.
 fn validate_snapshot(source: &Path) -> Result<Manifest, String> {
     let manifest: Manifest =
@@ -468,7 +425,7 @@ fn restore_folder_selected(
         conn.execute_batch("BEGIN IMMEDIATE")
             .map_err(|e| e.to_string())?;
         for (id, image, text, file_data) in rows {
-            let new_image = remap(&image, &manifest.data_dir, &target);
+            let new_image = super::paths::remap_cached_path(&image, &manifest.data_dir, &target);
             let text = if !image.is_empty() && text == image {
                 new_image.clone()
             } else {
@@ -479,7 +436,7 @@ fn restore_folder_selected(
             } else {
                 let mut json: serde_json::Value =
                     serde_json::from_str(&file_data).map_err(|e| e.to_string())?;
-                remap_json(&mut json, &manifest.data_dir, &target);
+                super::paths::remap_cached_paths_json(&mut json, &manifest.data_dir, &target);
                 json.to_string()
             };
             conn.execute(

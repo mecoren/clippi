@@ -386,10 +386,6 @@ impl WebDAVBackend {
 }
 
 impl SyncBackend for WebDAVBackend {
-    fn sync_interval(&self) -> u64 {
-        self.config.sync_interval_secs.unwrap_or(600)
-    }
-
     fn check_status(&self) -> BackendStatus {
         if self.config.webdav_url.is_empty() {
             return BackendStatus::Error(I18nKey::SyncErrNoUrl.text().into());

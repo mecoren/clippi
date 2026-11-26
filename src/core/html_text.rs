@@ -105,6 +105,25 @@ fn valid_html_range(html: &str, start: usize, end: usize) -> bool {
     true
 }
 
+/// Byte offset just past the `>` that closes the tag starting at `open`.
+///
+/// Ignores `>` inside quoted attribute values (`<body onclick="a>b">`). A
+/// naive `find('>')` would place a fragment marker inside the opening tag,
+/// which `valid_html_range` then rejects.
+fn tag_end_after(html: &str, open: usize) -> Option<usize> {
+    let bytes = html.as_bytes();
+    let mut quote = None;
+    for (i, &byte) in bytes.iter().enumerate().skip(open + 1) {
+        match (quote, byte) {
+            (Some(expected), actual) if actual == expected => quote = None,
+            (None, b'\'' | b'"') => quote = Some(byte),
+            (None, b'>') => return Some(i + 1),
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Encode HTML as CF_HTML, preserving the selected fragment and its context.
 #[cfg(any(target_os = "windows", test))]
 pub fn encode_cf_html(html: &str) -> String {
@@ -121,7 +140,7 @@ pub fn encode_cf_html(html: &str) -> String {
     if fragment_marker_range(&document).is_none() {
         document = strip_fragment_markers(&document);
         let body_range = find_case_insensitive(&document, "<body").and_then(|body_start| {
-            let start = body_start + document[body_start..].find('>')? + 1;
+            let start = tag_end_after(&document, body_start)?;
             let end = start + find_case_insensitive(&document[start..], "</body")?;
             Some((start, end))
         });
@@ -306,7 +325,7 @@ fn fragment_marker_range(html: &str) -> Option<(usize, usize)> {
 /// Content inside `<body>...</body>`, when both tags exist.
 fn extract_body_inner(html: &str) -> Option<String> {
     let body_tag_start = find_case_insensitive(html, "<body")?;
-    let after_open = html[body_tag_start..].find('>')? + body_tag_start + 1;
+    let after_open = tag_end_after(html, body_tag_start)?;
     let close_rel = find_case_insensitive(&html[after_open..], "</body")?;
     let close_start = after_open + close_rel;
     Some(html[after_open..close_start].to_string())
@@ -1129,6 +1148,20 @@ lang=EN-US><o:p></o:p></span></span></b></p>
             normalize_clipboard_html(&payload),
             "<span style='color:#ff6600'>测试文本</span>"
         );
+    }
+
+    #[test]
+    fn cf_html_body_attribute_with_quoted_gt_is_encoded_without_panicking() {
+        let html = r#"<html><body onclick="if(a>b){}">hi</body></html>"#;
+        let payload = encode_cf_html(html);
+
+        assert_eq!(normalize_clipboard_html(&payload), "hi");
+    }
+
+    #[test]
+    fn body_inner_ignores_gt_inside_a_quoted_attribute() {
+        let html = r#"<html><body data-x="a>b">hi</body></html>"#;
+        assert_eq!(extract_body_inner(html).as_deref(), Some("hi"));
     }
 
     #[test]

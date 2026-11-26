@@ -270,27 +270,6 @@ pub fn btn_small(
     button_face(p, id.into(), text.into(), glyph, tone, true, None)
 }
 
-/// 小号按钮 + 自定义字号图标（`size` 为中心图标边长）：保留 8 px 内边距，
-/// 不按方形图标钮收窄，用于"图标 + 文案"里需要更大字形的一行。
-pub fn btn_small_glyph(
-    p: &Palette,
-    id: impl Into<ElementId>,
-    text: impl Into<SharedString>,
-    glyph: &str,
-    size: f32,
-    tone: Tone,
-) -> Button {
-    button_face(
-        p,
-        id.into(),
-        text.into(),
-        Some(glyph),
-        tone,
-        true,
-        Some(px(size)),
-    )
-}
-
 /// 卡片/工具条上的 24×24 幽灵图标钮：无底无描边，悬停出 `hover` 面并把
 /// 图标提亮到强调色；禁用态压到 35% 且不响应。用于后端卡片这类「一行三个
 /// 小动作」的位置，替代页面各自拼的 `icon_button` / `disabled_icon_button`。
@@ -802,31 +781,6 @@ pub fn select(
     )
 }
 
-/// 紧凑下拉（Argus `select.compact`）：18 高、无描边无底，只按当前选项定宽，
-/// 悬停/展开时浮出 `control-hover` 面。用在设置行的副标题位置。
-#[allow(clippy::too_many_arguments)]
-pub fn select_compact(
-    p: &Palette,
-    id: impl Into<SharedString>,
-    name: impl Into<SharedString>,
-    options: &[String],
-    selected: Option<usize>,
-    open: bool,
-    on_toggle: impl Fn(&mut Window, &mut App) + 'static,
-) -> Button {
-    select_with(
-        p,
-        id.into(),
-        name.into(),
-        options,
-        selected,
-        open,
-        false,
-        true,
-        on_toggle,
-    )
-}
-
 #[allow(clippy::too_many_arguments)]
 fn select_with(
     p: &Palette,
@@ -1278,20 +1232,6 @@ pub fn flyout_shadow(dark: bool) -> Vec<BoxShadow> {
     ]
 }
 
-/// 菜单/下拉面板：`flyout` 不透明面 + 1 px 描边 + 8 px 圆角，无阴影
-/// （Argus 的菜单同样不带投影，层级靠面与描边）。
-pub fn menu_panel(p: &Palette) -> Div {
-    div()
-        .rounded(Radius::Lg.scaled())
-        .border_1()
-        .border_color(p.stroke)
-        .bg(solid(p.flyout))
-        .shadow_none()
-        .p(Space::Xs.scaled())
-        .flex()
-        .flex_col()
-}
-
 /// 菜单项：等宽图标列 + 文案，悬停出 `hover` 底。`danger` 用危险红。
 pub fn menu_item(
     p: &Palette,
@@ -1333,18 +1273,6 @@ pub fn dialog_panel(p: &Palette) -> Div {
         .flex()
         .flex_col()
         .overflow_hidden()
-}
-
-/// 对话框标题行。
-pub fn dialog_title(p: &Palette, text: &str) -> Div {
-    div()
-        .px(Space::Xl.scaled())
-        .pt(Space::Xl.scaled())
-        .pb(Space::Sm.scaled())
-        .text_size(typography::font(type_role::TITLE))
-        .font_weight(typography::LABEL_WEIGHT)
-        .text_color(p.ink)
-        .child(text.to_owned())
 }
 
 /// 列表滚动条：统一宽度与"滚动时出现"策略。

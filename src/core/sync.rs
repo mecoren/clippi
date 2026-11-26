@@ -36,9 +36,6 @@ pub trait SyncBackend: Send + Sync {
     fn pull(&self, bypass_cache: bool) -> Result<SyncPayload, String>;
     fn push(&self, payload: &SyncPayload) -> Result<(), String>;
 
-    /// Per-backend sync interval in seconds. Returns 0 to use the global default.
-    fn sync_interval(&self) -> u64;
-
     /// Called after a successful push. Backends can override to clean up
     /// temporary or conflict files (e.g., clippi_sync-*.json).
     fn post_push_cleanup(&self) -> Result<(), String> {
@@ -800,9 +797,10 @@ pub fn merge_remote_into_local(
             } else if let Ok(Some(deleted_at)) =
                 db.get_tag_tombstone_deleted_at(&remote_tag.uid, &remote_tag.name)
             {
-                let remote_ts = parse_rfc3339(&remote_tag.updated_at);
-                let del_ts = parse_rfc3339(&deleted_at);
-                if remote_ts.is_some_and(|r| del_ts.is_some_and(|d| d >= r)) {
+                // An unparseable tombstone must not be discarded: dropping it
+                // here recreates a tag the user deleted. Compare lexically in
+                // that case instead of treating the tombstone as absent.
+                if !rfc3339_newer(&remote_tag.updated_at, &deleted_at) {
                     continue; // tombstone is newer or same age, skip
                 }
                 // --- Remote tag is newer — fall through to clear tombstone and import. ---
@@ -847,6 +845,25 @@ pub fn merge_remote_into_local(
                     let remote_ts = parse_rfc3339(&remote_tag.updated_at);
                     let local_ts = parse_rfc3339(&local_tag.updated_at);
                     if remote_ts.is_some_and(|r| local_ts.is_none_or(|l| r > l)) {
+                        // A rename can collide with a tag this device created
+                        // independently (`tags.name` is UNIQUE). Merge the two
+                        // instead of failing the whole merge on every cycle.
+                        if remote_tag.name != local_tag.name {
+                            if let Ok(Some(conflict)) = db.get_tag_by_name(&remote_tag.name) {
+                                if conflict.id != local_tag.id {
+                                    db.merge_tag_associations(conflict.id, local_tag.id)
+                                        .map_err(|e| format!("merge tag associations: {e}"))?;
+                                    db.delete_tag(conflict.id)
+                                        .map_err(|e| format!("delete conflicting tag: {e}"))?;
+                                    log::info!(
+                                        "sync: merged conflicting tag {:?} (uid={}) into {:?}",
+                                        conflict.name,
+                                        conflict.uid,
+                                        local_tag.name
+                                    );
+                                }
+                            }
+                        }
                         if !remote_tag.uid.is_empty()
                             && local_tag.uid != remote_tag.uid
                             && local_tag.uid == crate::core::db::legacy_tag_uid(&local_tag.name)
@@ -1922,6 +1939,68 @@ mod tests {
             .expect("tag exists");
         assert_eq!(tag.name, "new");
         assert_eq!(tag.color, "#00FF00");
+    }
+
+    #[test]
+    fn test_merge_unparseable_tag_tombstone_does_not_recreate_tag() {
+        let db = Database::open(":memory:").expect("open :memory:");
+        db.record_tag_deletion("tag-1", "gone", "zzz-invalid", "remote")
+            .expect("record tombstone");
+        let db = std::sync::Mutex::new(db);
+        let mut remote = make_payload(
+            vec![],
+            vec![make_tag_with_uid(
+                "tag-1",
+                "gone",
+                "#00FF00",
+                "2026-05-14T10:00:00Z",
+            )],
+        );
+
+        merge_remote_into_local(&db, &mut remote, "local")
+            .expect("merge must tolerate malformed timestamps");
+
+        let db = db.lock().unwrap();
+        assert!(
+            db.get_tag_by_uid("tag-1").expect("lookup").is_none(),
+            "an unparseable tombstone must still win, not recreate the tag"
+        );
+        assert!(db.is_tag_tombstoned("tag-1", "gone").unwrap());
+    }
+
+    #[test]
+    fn test_merge_remote_rename_merges_conflicting_local_tag() {
+        let db = Database::open(":memory:").expect("open :memory:");
+        db.create_tag_with_uid_and_timestamp("tag-1", "old", "#FF0000", "2026-05-14T09:00:00Z")
+            .expect("create tag");
+        db.create_tag_with_uid_and_timestamp("tag-2", "new", "#0000FF", "2026-05-14T09:00:00Z")
+            .expect("create conflicting tag");
+        let db = std::sync::Mutex::new(db);
+        let mut remote = make_payload(
+            vec![],
+            vec![make_tag_with_uid(
+                "tag-1",
+                "new",
+                "#00FF00",
+                "2026-05-14T10:00:00Z",
+            )],
+        );
+
+        merge_remote_into_local(&db, &mut remote, "local")
+            .expect("a name collision must not fail the whole merge");
+
+        let db = db.lock().unwrap();
+        let tag = db
+            .get_tag_by_uid("tag-1")
+            .expect("lookup")
+            .expect("renamed tag exists");
+        assert_eq!(tag.name, "new");
+        assert_eq!(tag.color, "#00FF00");
+        assert!(
+            db.get_tag_by_uid("tag-2").expect("lookup").is_none(),
+            "the conflicting tag is folded into the renamed one"
+        );
+        assert_eq!(db.get_all_tags().unwrap().len(), 1);
     }
 
     #[test]

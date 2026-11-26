@@ -139,6 +139,14 @@ const DB_MIGRATIONS: &[DbMigration] = &[
         // Also kept in [`ensure_list_preview_columns`] for the repair path.
         sql: "",
     },
+    DbMigration {
+        version: 14,
+        description: "Merge duplicate content hashes and enforce one row per hash",
+        // Duplicates predate the unique index (concurrent capture/sync races).
+        // Rows are merged first so the index can be created without losing
+        // notes, favorites, tags or hotkeys.
+        sql: "",
+    },
 ];
 
 /// Run all pending database migrations, updating `PRAGMA user_version`.
@@ -187,12 +195,136 @@ pub fn run_db_migrations(conn: &Connection) -> rusqlite::Result<()> {
             if migration.version == 13 {
                 ensure_list_preview_columns(conn)?;
             }
+            if migration.version == 14 {
+                dedupe_content_hashes(conn)?;
+            }
             conn.pragma_update(None, "user_version", migration.version)?;
         }
     }
 
     repair_db_schema(conn)?;
 
+    Ok(())
+}
+
+/// Merge rows sharing a `content_hash` and enforce one row per hash.
+///
+/// Duplicates were possible before v14: capture and sync used checked-then-
+/// inserted without a unique constraint, so two writers could both insert the
+/// same content. A duplicate is folded into the newest row (favorites, pin,
+/// note, tags, hotkey, icon, image path, existence evidence and rich-data
+/// fields) before it is deleted, so deduplication does not throw away state
+/// the user can see.
+fn dedupe_content_hashes(conn: &Connection) -> rusqlite::Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    let hashes: Vec<i64> = {
+        let mut stmt = tx.prepare(
+            "SELECT content_hash FROM clipboard_items \
+             WHERE meta_type != 'transfer' \
+             GROUP BY content_hash HAVING COUNT(*) > 1",
+        )?;
+        let rows = stmt.query_map([], |row| row.get(0))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    for hash in hashes {
+        merge_duplicate_hash(&tx, hash)?;
+    }
+    // `idx_hash` stays: lookups by hash alone cannot use a partial index
+    // (SQLite must still consider transfer rows). The partial unique index
+    // adds enforcement without replacing the lookup index. Transfer-station
+    // backing rows are deliberately allowed to share a hash with the visible
+    // item that owns them, so uniqueness only covers ordinary history rows.
+    tx.execute_batch(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_hash_uq
+             ON clipboard_items(content_hash) WHERE meta_type != 'transfer';",
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
+fn merge_duplicate_hash(conn: &Connection, hash: i64) -> rusqlite::Result<()> {
+    let keeper: i64 = conn.query_row(
+        "SELECT id FROM clipboard_items WHERE content_hash = ?1 AND meta_type != 'transfer' \
+         ORDER BY updated_at DESC, id DESC LIMIT 1",
+        params![hash],
+        |row| row.get(0),
+    )?;
+    let duplicates: Vec<i64> = {
+        let mut stmt = conn.prepare(
+            "SELECT id FROM clipboard_items \
+             WHERE content_hash = ?1 AND meta_type != 'transfer' AND id != ?2",
+        )?;
+        let rows = stmt.query_map(params![hash, keeper], |row| row.get(0))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    for duplicate in duplicates {
+        // Tag links: the earliest use timestamp survives the merge.
+        conn.execute(
+            "INSERT INTO item_tags (tag_id, item_id, used_at)
+             SELECT tag_id, ?1, used_at FROM item_tags WHERE item_id = ?2
+             ON CONFLICT(tag_id, item_id) DO UPDATE SET used_at = MIN(used_at, excluded.used_at)",
+            params![keeper, duplicate],
+        )?;
+        conn.execute(
+            "DELETE FROM item_tags WHERE item_id = ?1",
+            params![duplicate],
+        )?;
+        // Stale-cleanup evidence: keep whichever row has one.
+        conn.execute(
+            "INSERT OR IGNORE INTO stale_item_observations
+             (item_id, content_hash, item_updated_at, first_missing_at, last_checked_at,
+              consecutive_missing_count, last_status, last_reason)
+             SELECT ?1, content_hash, item_updated_at, first_missing_at, last_checked_at,
+                    consecutive_missing_count, last_status, last_reason
+             FROM stale_item_observations WHERE item_id = ?2",
+            params![keeper, duplicate],
+        )?;
+        conn.execute(
+            "DELETE FROM stale_item_observations WHERE item_id = ?1",
+            params![duplicate],
+        )?;
+        // Fold user-visible metadata into the keeper before dropping the row.
+        // Every right-hand side still sees the duplicate row (?1).
+        conn.execute(
+            "UPDATE clipboard_items SET
+                 is_favorite = MAX(is_favorite, (SELECT is_favorite FROM clipboard_items WHERE id = ?1)),
+                 pinned = MAX(pinned, (SELECT pinned FROM clipboard_items WHERE id = ?1)),
+                 note = CASE WHEN note != '' THEN note
+                             ELSE (SELECT note FROM clipboard_items WHERE id = ?1) END,
+                 source_app_name = CASE WHEN source_app_name != '' THEN source_app_name
+                             ELSE (SELECT source_app_name FROM clipboard_items WHERE id = ?1) END,
+                 source_app_icon = CASE WHEN source_app_icon != '' THEN source_app_icon
+                             ELSE (SELECT source_app_icon FROM clipboard_items WHERE id = ?1) END,
+                 image_path = CASE WHEN image_path != '' THEN image_path
+                             ELSE (SELECT image_path FROM clipboard_items WHERE id = ?1) END,
+                 custom_hotkey = CASE WHEN custom_hotkey != '' THEN custom_hotkey
+                             ELSE (SELECT custom_hotkey FROM clipboard_items WHERE id = ?1) END,
+                 custom_hotkey_format = CASE WHEN custom_hotkey != '' THEN custom_hotkey_format
+                             ELSE (SELECT custom_hotkey_format FROM clipboard_items WHERE id = ?1) END,
+                 existence_observed_at = CASE WHEN existence_observed_at != '' THEN existence_observed_at
+                             ELSE (SELECT existence_observed_at FROM clipboard_items WHERE id = ?1) END,
+                 sync_pending = MAX(sync_pending, (SELECT sync_pending FROM clipboard_items WHERE id = ?1)),
+                 created_at = MIN(created_at, (SELECT created_at FROM clipboard_items WHERE id = ?1)),
+                 rich_data = CASE
+                     WHEN rich_data = '' THEN (SELECT rich_data FROM clipboard_items WHERE id = ?1)
+                     WHEN NOT json_valid(rich_data)
+                          OR NOT json_valid((SELECT rich_data FROM clipboard_items WHERE id = ?1))
+                     THEN rich_data
+                     ELSE json_patch(
+                         (SELECT rich_data FROM clipboard_items WHERE id = ?1),
+                         rich_data
+                     )
+                 END,
+                 list_preview = '',
+                 list_preview_len = 0
+             WHERE id = ?2",
+            params![duplicate, keeper],
+        )?;
+        conn.execute(
+            "DELETE FROM clipboard_items WHERE id = ?1",
+            params![duplicate],
+        )?;
+    }
     Ok(())
 }
 
@@ -956,5 +1088,120 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn v14_merges_duplicates_then_enforces_unique_hashes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("clippi.db");
+        // Build the current schema, then roll it back to the pre-v14 shape so
+        // the migration itself is what gets exercised.
+        drop(crate::core::db::Database::open(path.to_str().unwrap()).unwrap());
+
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch("DROP INDEX IF EXISTS idx_hash_uq; PRAGMA user_version = 13;")
+            .unwrap();
+        conn.execute_batch(
+            "INSERT INTO clipboard_items
+                 (content_type, full_text, content_hash, created_at, updated_at, rich_data,
+                  is_favorite, note, pinned, custom_hotkey, existence_observed_at, meta_type)
+             VALUES
+                 ('plain_text', 'same', 42, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z',
+                  '{\"html\":\"<p>x</p>\"}', 1, 'old note', 0, '', '2025-12-01T00:00:00Z', ''),
+                 ('plain_text', 'same', 42, '2026-02-01T00:00:00Z', '2026-02-01T00:00:00Z',
+                  '{\"ocr_text\":\"text\"}', 0, '', 1, 'Alt+1', '', ''),
+                 ('file', 'backing.bin', 42, '2026-01-15T00:00:00Z', '2026-01-15T00:00:00Z',
+                  '', 0, '', 0, '', '', 'transfer');
+             INSERT INTO tags (uid, name, color, updated_at)
+                 VALUES ('tag-1', 'work', '#ffffff', '2026-01-01T00:00:00Z');
+             INSERT INTO item_tags (tag_id, item_id, used_at)
+                 SELECT id, (SELECT MIN(id) FROM clipboard_items WHERE meta_type != 'transfer'),
+                        '2026-01-01T00:00:00Z'
+                 FROM tags WHERE uid = 'tag-1';",
+        )
+        .unwrap();
+
+        run_db_migrations(&conn).unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM clipboard_items WHERE content_hash = 42",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            count, 2,
+            "ordinary duplicates merge; transfer backing stays"
+        );
+        let ordinary_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM clipboard_items
+                 WHERE content_hash = 42 AND meta_type != 'transfer'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(ordinary_count, 1);
+        let transfer_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM clipboard_items
+                 WHERE content_hash = 42 AND meta_type = 'transfer'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(transfer_count, 1, "transfer backing row must survive");
+        let (favorite, note, pinned, hotkey, rich, created): (
+            i64,
+            String,
+            i64,
+            String,
+            String,
+            String,
+        ) = conn
+            .query_row(
+                "SELECT is_favorite, note, pinned, custom_hotkey, rich_data, created_at
+                 FROM clipboard_items WHERE content_hash = 42 AND meta_type != 'transfer'",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(favorite, 1, "favorite from the duplicate must survive");
+        assert_eq!(note, "old note");
+        assert_eq!(pinned, 1);
+        assert_eq!(hotkey, "Alt+1");
+        assert!(rich.contains("html") && rich.contains("ocr_text"), "{rich}");
+        assert_eq!(created, "2026-01-01T00:00:00Z");
+        let tag_links: i64 = conn
+            .query_row("SELECT COUNT(*) FROM item_tags", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(tag_links, 1, "tag link must move to the keeper");
+        assert!(
+            conn.execute(
+                "INSERT INTO clipboard_items
+                     (content_type, full_text, content_hash, created_at, updated_at)
+                 VALUES ('plain_text', 'same', 42, 'x', 'y')",
+                [],
+            )
+            .is_err(),
+            "the unique index must reject a second ordinary row for the same hash"
+        );
+        conn.execute(
+            "INSERT INTO clipboard_items
+                 (content_type, full_text, content_hash, created_at, updated_at, meta_type)
+             VALUES ('file', 'second-backing.bin', 42, 'x', 'y', 'transfer')",
+            [],
+        )
+        .unwrap();
     }
 }

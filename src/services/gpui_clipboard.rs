@@ -482,8 +482,17 @@ fn run_qr_analysis(job: &AnalysisJob, needs_refresh: &AtomicBool) {
                     if rd.qr_text.is_none() {
                         rd.qr_text = Some(text);
                         let json = rd.to_json();
-                        let _ = db.update_rich_data(existing.id, &json);
-                        needs_refresh.store(true, Ordering::SeqCst);
+                        if db
+                            .update_rich_data_checked(
+                                existing.id,
+                                existing.content_hash,
+                                &existing.rich_data,
+                                &json,
+                            )
+                            .unwrap_or(false)
+                        {
+                            needs_refresh.store(true, Ordering::SeqCst);
+                        }
                     }
                 }
             }
@@ -512,8 +521,17 @@ fn run_ocr_analysis(job: &AnalysisJob, needs_refresh: &AtomicBool) {
                     if rd.ocr_text.is_none() {
                         rd.ocr_text = Some(text);
                         let json = rd.to_json();
-                        let _ = db.update_rich_data(existing.id, &json);
-                        needs_refresh.store(true, Ordering::SeqCst);
+                        if db
+                            .update_rich_data_checked(
+                                existing.id,
+                                existing.content_hash,
+                                &existing.rich_data,
+                                &json,
+                            )
+                            .unwrap_or(false)
+                        {
+                            needs_refresh.store(true, Ordering::SeqCst);
+                        }
                     }
                 }
             }

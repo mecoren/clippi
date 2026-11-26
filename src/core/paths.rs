@@ -54,7 +54,95 @@ pub fn without_verbatim_prefix(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
-/// Cached portable-mode flag — true when the exe directory is writable.
+/// Rewrite an absolute path that points inside `<old_data_dir>/images` or
+/// `<old_data_dir>/file_cache` so it points at `<new_data_dir>` instead.
+///
+/// Cached paths are persisted absolutely, so moving the data directory (or
+/// restoring a backup) must rewrite them alongside the files. Paths outside
+/// those caches and paths containing `..` are returned unchanged.
+pub fn remap_cached_path(value: &str, old_data_dir: &Path, new_data_dir: &Path) -> String {
+    if value.is_empty() {
+        return String::new();
+    }
+    let path = without_verbatim_prefix(Path::new(value));
+    let old = without_verbatim_prefix(old_data_dir);
+    let new = without_verbatim_prefix(new_data_dir);
+    for cache in ["images", "file_cache"] {
+        let Some(relative) = strip_prefix_portable(&path, &old.join(cache)) else {
+            continue;
+        };
+        if relative
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+        {
+            let mut target = new.join(cache);
+            target.push(relative.as_os_str());
+            return target.to_string_lossy().into_owned();
+        }
+    }
+    value.to_owned()
+}
+
+/// Rewrite `path` / `local_path` / `cache_path` string fields inside a JSON
+/// payload (file-transfer metadata) from the old data directory to the new one.
+pub fn remap_cached_paths_json(
+    value: &mut serde_json::Value,
+    old_data_dir: &Path,
+    new_data_dir: &Path,
+) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            for (key, value) in fields {
+                if matches!(key.as_str(), "path" | "local_path" | "cache_path") {
+                    if let Some(path) = value.as_str() {
+                        *value = remap_cached_path(path, old_data_dir, new_data_dir).into();
+                    }
+                } else {
+                    remap_cached_paths_json(value, old_data_dir, new_data_dir);
+                }
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                remap_cached_paths_json(value, old_data_dir, new_data_dir);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// `Path::strip_prefix` compares components exactly, but NTFS is case
+/// insensitive: a stored path and the data directory can differ in case and
+/// still name the same file. Compare components without case on Windows.
+fn strip_prefix_portable(path: &Path, prefix: &Path) -> Option<PathBuf> {
+    let mut remaining = path.components();
+    for expected in prefix.components() {
+        let actual = remaining.next()?;
+        if !component_eq(actual, expected) {
+            return None;
+        }
+    }
+    let mut relative = PathBuf::new();
+    for component in remaining {
+        relative.push(component.as_os_str());
+    }
+    Some(relative)
+}
+
+fn component_eq(a: std::path::Component<'_>, b: std::path::Component<'_>) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        a.as_os_str()
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&b.as_os_str().to_string_lossy())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        a == b
+    }
+}
+
+/// Cached portable-mode flag — true when the exe directory holds a config file.
 static IS_PORTABLE: AtomicBool = AtomicBool::new(false);
 
 /// Initialise portable mode detection. Call once at startup.
@@ -79,7 +167,7 @@ fn exe_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// Returns true when the exe directory is writable (portable mode active).
+/// Returns true when portable mode is active (a config file exists next to the executable).
 pub fn is_portable_mode() -> bool {
     IS_PORTABLE.load(Ordering::Relaxed)
 }
@@ -127,33 +215,32 @@ pub fn system_data_dir() -> PathBuf {
     app_data_dir()
 }
 
-/// Merge images from the source data directory into the target data directory.
+/// Merge cached files from the source data directory into the target data
+/// directory.
 ///
+/// Covers `images/` and `file_cache/` — both are referenced by absolute paths
+/// stored in the database, so a data-directory move must carry them along.
 /// Copies only files that don't already exist in the target. Directories are
 /// traversed recursively. Non-fatal: logs warnings on individual copy failures
 /// and continues.
-pub fn merge_images_dir(source_db_path: &Path, target_db_path: &Path) -> usize {
-    let src_images = resolve_data_dir(source_db_path.to_string_lossy().as_ref()).join("images");
-    let dst_images = resolve_data_dir(target_db_path.to_string_lossy().as_ref()).join("images");
-
-    if !src_images.is_dir() {
-        return 0;
-    }
-    if let Err(e) = fs::create_dir_all(&dst_images) {
-        log::warn!(
-            "merge_images: failed to create target dir {}: {e}",
-            dst_images.display()
-        );
-        return 0;
-    }
-
+pub fn merge_cache_dirs(source_db_path: &Path, target_db_path: &Path) -> usize {
     let mut copied = 0usize;
-    copy_missing_recursive(&src_images, &dst_images, &mut copied);
-    log::info!(
-        "merge_images: copied {copied} files from {} to {}",
-        src_images.display(),
-        dst_images.display()
-    );
+    for cache in ["images", "file_cache"] {
+        let src = resolve_data_dir(source_db_path.to_string_lossy().as_ref()).join(cache);
+        let dst = resolve_data_dir(target_db_path.to_string_lossy().as_ref()).join(cache);
+        if !src.is_dir() {
+            continue;
+        }
+        if let Err(e) = fs::create_dir_all(&dst) {
+            log::warn!(
+                "merge_caches: failed to create target dir {}: {e}",
+                dst.display()
+            );
+            continue;
+        }
+        copy_missing_recursive(&src, &dst, &mut copied);
+    }
+    log::info!("merge_caches: copied {copied} cached files");
     copied
 }
 
@@ -170,9 +257,20 @@ fn copy_missing_recursive(src: &Path, dst: &Path, count: &mut usize) {
         let path = entry.path();
         let dest = dst.join(entry.file_name());
         if path.is_dir() {
+            if let Err(e) = fs::create_dir_all(&dest) {
+                log::warn!("merge_images: failed to create dir {}: {e}", dest.display());
+                continue;
+            }
             copy_missing_recursive(&path, &dest, count);
-        } else if !dest.exists() && fs::copy(&path, &dest).is_ok() {
-            *count += 1;
+        } else if !dest.exists() {
+            match fs::copy(&path, &dest) {
+                Ok(_) => *count += 1,
+                Err(e) => log::warn!(
+                    "merge_images: failed to copy {} to {}: {e}",
+                    path.display(),
+                    dest.display()
+                ),
+            }
         }
     }
 }
@@ -234,16 +332,32 @@ pub fn cache_app_icon(app_name: &str, icon_base64: &str) -> Option<PathBuf> {
         return None;
     }
     match base64::engine::general_purpose::STANDARD.decode(icon_base64) {
-        Ok(png) => match fs::write(&path, png) {
-            Ok(()) => Some(path),
-            Err(error) => {
-                log::warn!(
-                    "cache_app_icon: failed to write {}: {error}",
-                    path.display()
-                );
-                None
+        Ok(png) => {
+            // Publish with a temp file + rename: a concurrent renderer must
+            // never decode a half-written icon and cache the failure.
+            let unique = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0);
+            let tmp = path.with_extension(format!("png.tmp.{unique}"));
+            if let Err(error) = fs::write(&tmp, png) {
+                let _ = fs::remove_file(&tmp);
+                log::warn!("cache_app_icon: failed to write {}: {error}", tmp.display());
+                return None;
             }
-        },
+            if let Err(error) = fs::rename(&tmp, &path) {
+                let _ = fs::remove_file(&tmp);
+                // Another writer may have published the same icon first.
+                if !path.exists() {
+                    log::warn!(
+                        "cache_app_icon: failed to publish {}: {error}",
+                        path.display()
+                    );
+                    return None;
+                }
+            }
+            Some(path)
+        }
         Err(error) => {
             log::warn!("cache_app_icon: invalid icon for '{app_name}': {error}");
             None
@@ -488,6 +602,21 @@ pub fn migrate_portable_data() {
         return;
     }
 
+    // A database that was not closed cleanly still holds committed
+    // transactions in its WAL. Copy the companions with the database (the
+    // pre-rename migration does the same); otherwise those transactions are
+    // silently lost when portable mode starts.
+    for suffix in ["-wal", "-shm"] {
+        let system_companion = source.join(format!("{DB_FILE}{suffix}"));
+        if !system_companion.exists() {
+            continue;
+        }
+        let portable_companion = exe_dir().join(format!("{DB_FILE}{suffix}"));
+        if let Err(e) = fs::copy(&system_companion, &portable_companion) {
+            log::warn!("Portable: failed to migrate {suffix} file: {e}");
+        }
+    }
+
     // Copy config (if exists and not already present)
     let system_config = source.join(CONFIG_FILE);
     let portable_config = exe_dir().join(CONFIG_FILE);
@@ -571,6 +700,7 @@ fn copy_dir_recursive_missing(src: &Path, dst: &Path) {
 #[cfg(test)]
 mod tests {
     use super::{migrate_legacy_files_from, CONFIG_FILE, DB_FILE};
+    use std::path::Path;
 
     #[cfg(target_os = "windows")]
     #[test]
@@ -642,20 +772,27 @@ mod tests {
         let src_images = root.join("src").join("images");
         std::fs::create_dir_all(&src_images).unwrap();
         std::fs::write(src_images.join("a.png"), "a").unwrap();
+        let src_icons = src_images.join("icons");
+        std::fs::create_dir_all(&src_icons).unwrap();
+        std::fs::write(src_icons.join("app.png"), "icon").unwrap();
 
         // Target: images/ dir with a different file.
         let tgt_images = root.join("tgt").join("images");
         std::fs::create_dir_all(&tgt_images).unwrap();
         std::fs::write(tgt_images.join("b.png"), "b").unwrap();
 
-        let copied = super::merge_images_dir(&src_db, &tgt_db);
-        assert_eq!(copied, 1); // a.png copied, b.png already exists
+        let copied = super::merge_cache_dirs(&src_db, &tgt_db);
+        assert_eq!(copied, 2); // a.png + icons/app.png copied, b.png already exists
 
         // Verify a.png was copied.
         assert!(tgt_images.join("a.png").exists());
         assert_eq!(
             std::fs::read_to_string(tgt_images.join("a.png")).unwrap(),
             "a"
+        );
+        assert_eq!(
+            std::fs::read_to_string(tgt_images.join("icons").join("app.png")).unwrap(),
+            "icon"
         );
         // b.png unchanged.
         assert_eq!(
@@ -683,7 +820,7 @@ mod tests {
         let tgt_images = root.join("tgt").join("images");
         std::fs::create_dir_all(&tgt_images).unwrap();
 
-        let copied = super::merge_images_dir(&src_db, &tgt_db);
+        let copied = super::merge_cache_dirs(&src_db, &tgt_db);
         assert_eq!(copied, 0);
 
         std::fs::remove_dir_all(root).unwrap();
@@ -708,13 +845,82 @@ mod tests {
         let tgt_images = root.join("tgt").join("images");
         std::fs::create_dir_all(&tgt_images).unwrap();
 
-        let copied1 = super::merge_images_dir(&src_db, &tgt_db);
+        let copied1 = super::merge_cache_dirs(&src_db, &tgt_db);
         assert_eq!(copied1, 1);
 
         // Second merge: nothing new.
-        let copied2 = super::merge_images_dir(&src_db, &tgt_db);
+        let copied2 = super::merge_cache_dirs(&src_db, &tgt_db);
         assert_eq!(copied2, 0);
 
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn remap_cached_path_rewrites_images_and_file_cache() {
+        let old = Path::new("data-root");
+        let new = Path::new("moved-root");
+        let image = old.join("images").join("a.png");
+        let cached = old.join("file_cache").join("x").join("doc.txt");
+
+        assert_eq!(
+            super::remap_cached_path(&image.to_string_lossy(), old, new),
+            new.join("images").join("a.png").to_string_lossy()
+        );
+        assert_eq!(
+            super::remap_cached_path(&cached.to_string_lossy(), old, new),
+            new.join("file_cache")
+                .join("x")
+                .join("doc.txt")
+                .to_string_lossy()
+        );
+        assert_eq!(
+            super::remap_cached_path(&old.join("clippi.toml").to_string_lossy(), old, new),
+            old.join("clippi.toml").to_string_lossy()
+        );
+    }
+
+    #[test]
+    fn remap_cached_path_rejects_traversal() {
+        let old = Path::new("data-root");
+        let new = Path::new("moved-root");
+        let escape = old.join("images").join("..").join("secret.png");
+        assert_eq!(
+            super::remap_cached_path(&escape.to_string_lossy(), old, new),
+            escape.to_string_lossy()
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn remap_cached_path_matches_windows_case_insensitively() {
+        let old = Path::new(r"C:\Data\Root");
+        let new = Path::new(r"D:\Moved");
+        assert_eq!(
+            super::remap_cached_path(r"c:\data\root\images\a.png", old, new),
+            r"D:\Moved\images\a.png"
+        );
+    }
+
+    #[test]
+    fn remap_cached_paths_json_rewrites_only_path_fields() {
+        let old = Path::new("data-root");
+        let new = Path::new("moved-root");
+        let mut json = serde_json::json!({
+            "files": [{
+                "name": "doc.txt",
+                "path": old.join("file_cache").join("doc.txt"),
+                "note": old.join("images").join("a.png"),
+            }]
+        });
+        super::remap_cached_paths_json(&mut json, old, new);
+        assert_eq!(
+            json["files"][0]["path"].as_str().unwrap(),
+            new.join("file_cache").join("doc.txt").to_string_lossy()
+        );
+        // Only path-like keys are rewritten; user data stays untouched.
+        assert_eq!(
+            json["files"][0]["note"].as_str().unwrap(),
+            old.join("images").join("a.png").to_string_lossy()
+        );
     }
 }

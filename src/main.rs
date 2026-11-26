@@ -251,7 +251,7 @@ fn log_startup_data_shape(cx: &mut App, state: &Entity<AppState>) {
     let db_bytes = std::fs::metadata(&db_path)
         .map(|meta| meta.len())
         .unwrap_or(0);
-    // Same aggregate `AppState::new` loaded for the titlebar: non-transfer
+    // Same aggregate `AppState::try_new` loaded for the titlebar: non-transfer
     // history rows (transfer backing rows are internal, not user history).
     let history_rows = app.clearable_history_count();
     let query_limit = if settings.max_items == 0 {
@@ -441,6 +441,32 @@ fn main() {
             ..Default::default()
         };
 
+        // Open the database before creating the window: a failed open needs a
+        // visible explanation, and there is nowhere to render one without a
+        // working state (lock held, read-only path, corrupt file).
+        let silent_start = settings.silent_start;
+        let auto_check_updates = settings.auto_check_updates;
+        let startup_db_path = settings.resolve_db_path();
+        let state = match AppState::try_new(settings) {
+            Ok(state) => cx.new(|_cx| state),
+            Err(error) => {
+                log::error!("startup: cannot open database: {error}");
+                platform::error_dialog::show_fatal(
+                    core::i18n_keys::I18nKey::ErrDatabaseOpenTitle.text(),
+                    &core::i18n_keys::I18nKey::ErrDatabaseOpenBody.fmt(&[
+                        &startup_db_path.display().to_string(),
+                        &error,
+                    ]),
+                );
+                cx.quit();
+                return;
+            }
+        };
+        log_startup_data_shape(cx, &state);
+        log::info!("startup: state ready at +{}ms", startup_ms());
+        let window_manager = cx.new(|cx| WindowManager::new(state.clone(), cx));
+        log::info!("startup: window manager ready at +{}ms", startup_ms());
+
         cx.open_window(
             window_options,
             |window, cx| {
@@ -450,13 +476,6 @@ fn main() {
                         platform::window_frame::install(wh.hwnd.get());
                     }
                 }
-                let silent_start = settings.silent_start;
-                let auto_check = settings.auto_check_updates;
-                let state = cx.new(|_cx| AppState::new(settings));
-                log_startup_data_shape(cx, &state);
-                log::info!("startup: state ready at +{}ms", startup_ms());
-                let window_manager = cx.new(|cx| WindowManager::new(state.clone(), cx));
-                log::info!("startup: window manager ready at +{}ms", startup_ms());
 
                 // --- ── Store raw window handle + set initial position/size ── ---
                 #[cfg(target_os = "windows")]
@@ -687,7 +706,7 @@ fn main() {
                 // Defer startup actions until GPUI has completed the first render.
                 // Hotkey registration must happen on every desktop platform after
                 // the input pipeline and native window handle are ready.
-                for action in deferred_startup_actions(silent_start, auto_check) {
+                for action in deferred_startup_actions(silent_start, auto_check_updates) {
                     let wm = window_manager.clone();
                     cx.defer(move |cx| match action {
                         DeferredStartupAction::InitializeHotkey => {
