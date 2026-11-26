@@ -117,12 +117,12 @@ git push origin wait
   - 右键/三点菜单 `src/ui/context_menu.rs` 的 `RawMenuItem.label`。
   漏登记的 tooltip 会落到兜底分支 `_ => action.to_string()`，界面上直接显示 `toggle_pin` 这种内部动作名（已发生过一次）。
 - 中英文两栏都要填且语义一致；禁止 `("中文", "")`、禁止只改中文栏。同义文案优先复用已有 key（如置顶复用 `CtxPin` / `CtxUnpin` / `CtxBatchPin`），新 key 按现有分组位置插入，不重复登记。
-- 提交前自查：对每个新增动作名 `rg "<action>" src/` 确认文案映射存在。**目前没有 i18n 单测兜底**（`i18n_keys.rs` 只有数据、没有校验），漏登记不会被 `cargo test` 拦住，只能靠这一步人工过。
+- 提交前自查：对每个新增动作名 `rg "<action>" src/` 确认文案映射存在。`i18n_keys.rs` 的单测会校验两栏非空、无首尾空白、英文栏不含中文、占位符一致，但**不校验动作名与文案的映射**；漏登记动作名仍不会被 `cargo test` 拦住，只能靠这一步人工过。
 - 语言切换后自查一遍：「设置 → 语言」切到 English 再看新界面，确认没有残留中文或空字符串。
 
 ### 6.3 UI
 
-- 颜色、圆角、间距、字号优先取 `src/ui/theme.rs` 的令牌，新代码不新增硬编码颜色字面量。历史遗留的大量散落字面量见 `docs/ui-design-review.md`，处理时不要顺势扩大。
+- 颜色、圆角、间距、字号优先取 `src/ui/design/` 的令牌（颜色走 `palette::Palette::current`，圆角/间距走 `size::{Radius, Space, Ctrl}`，字号走 `typography::font`），新代码不新增硬编码颜色字面量。`design/mod.rs` 的门禁测试会扫描 `src/ui`：颜色字面量、写死的圆角与页面层缓动都会让 `cargo test` 失败。历史遗留问题见 `docs/ui-design-review.md`，处理时不要顺势扩大。
 
 ### 6.4 依赖与构建配置
 

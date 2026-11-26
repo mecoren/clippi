@@ -1,5 +1,7 @@
 # Clippi UI 重设计 · 需求文档
 
+> **历史快照**：正文中的「289 处硬编码颜色」等数字是改造前的基线，现已过期；当前约束见 `AGENTS.md` 第 6.3 节与 `src/ui/design/mod.rs` 的门禁测试。
+
 > 版本：v1.0（2026-11-17）
 > 配套文档：[design.md](./design.md)（设计与设计系统方案）
 > 参考实现：`C:\Develop\project\00_AI\Argus`（下称 Argus）

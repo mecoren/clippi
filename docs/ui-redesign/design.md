@@ -542,7 +542,7 @@ gpui_kit::application()
 
 | 门禁 | 实现 |
 |---|---|
-| 颜色/圆角/间距/字号 lint | `scripts/ui_design_lint.py`（rg 驱动，规则 = requirements.md AC-1~AC-9），CI 与 pre-push 钩子 |
+| 颜色/圆角/间距/字号 lint | `src/ui/design/mod.rs` 的门禁单测（扫描 `src/ui`：颜色字面量、写死的圆角、页面层缓动），`cargo test` 执行 |
 | 截图对照 | 每阶段基线目录 + 比对脚本（像素 diff ≤ 0.1% 视为通过；DPI × 主题矩阵） |
 | 性能 | 主列表 1000 条滚动帧率对比：`CLIPPI_FRAME_TRACE=<文件>` 启动，`frame_trace` 每 120 帧落一行 `n/avg/p95/max`，滚动 4 s 后取中位数对比；`cargo build --release` 体积阈值 |
 | 单测 | 现有 ui 单测全保留；新增：palette 缓存命中、token 解析、segments 锚点、motion 曲线端点值 |
